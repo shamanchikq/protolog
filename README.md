@@ -1,6 +1,6 @@
-# ProtoLog Pro 🧬
+# ProtoLog 🧬
 
-ProtoLog Pro is a tracking application built with **Flutter** designed for managing and visualizing protocols for anabolic compounds, peptides, and ancillaries. It features an Pharmacokinetic (PK) plotter to estimate active blood serum levels over time.
+ProtoLog is a tracking application built with **Flutter** designed for managing and visualizing protocols for anabolic compounds, peptides, and ancillaries. It features an Pharmacokinetic (PK) plotter to estimate active blood serum levels over time.
 
 ## 🚀 Features
 
