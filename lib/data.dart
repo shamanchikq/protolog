@@ -16,6 +16,8 @@ const Map<String, CompoundDefinition> BASE_LIBRARY = {
   // Trenbolone
   'Trenbolone Acetate': CompoundDefinition(id: 'temp', base: 'Trenbolone', ester: 'Acetate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 1.0, defaultHalfLife: 1.0, timeToPeak: 0.5, ratio: 0.87, unit: Unit.mg, colorValue: 0xFFEF4444),
   'Trenbolone Enanthate': CompoundDefinition(id: 'temp', base: 'Trenbolone', ester: 'Enanthate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 5.5, defaultHalfLife: 5.5, timeToPeak: 1.5, ratio: 0.70, unit: Unit.mg, colorValue: 0xFFEF4444),
+  'Trenbolone Hexahydrobenzylcarbonate': CompoundDefinition(id: 'temp', base: 'Trenbolone', ester: 'Hexahydrobenzylcarbonate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 6.0, defaultHalfLife: 6.0, timeToPeak: 1.8, ratio: 0.68, unit: Unit.mg, colorValue: 0xFFEF4444),
+  'Tri-Tren': CompoundDefinition(id: 'temp', base: 'Trenbolone', ester: 'Tri-Tren (Mix)', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 5.5, defaultHalfLife: 5.5, timeToPeak: 1.5, ratio: 0.72, unit: Unit.mg, colorValue: 0xFFEF4444),
 
   // Boldenone
   'Boldenone Undecylenate': CompoundDefinition(id: 'temp', base: 'Boldenone', ester: 'Undecylenate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 14.0, defaultHalfLife: 14.0, timeToPeak: 4.0, ratio: 0.61, unit: Unit.mg, colorValue: 0xFF6366F1),
@@ -36,6 +38,7 @@ const Map<String, CompoundDefinition> BASE_LIBRARY = {
   'Methasterone': CompoundDefinition(id: 'temp', base: 'Methasterone', ester: 'None', type: CompoundType.oral, graphType: GraphType.curve, halfLife: 0.35, defaultHalfLife: 0.35, timeToPeak: 0.1, ratio: 1, unit: Unit.mg, colorValue: 0xFFF43F5E),
   'Oxymetholone': CompoundDefinition(id: 'temp', base: 'Oxymetholone', ester: 'None', type: CompoundType.oral, graphType: GraphType.curve, halfLife: 0.35, defaultHalfLife: 0.35, timeToPeak: 0.1, ratio: 1, unit: Unit.mg, colorValue: 0xFFBE123C),
   'Stanozolol': CompoundDefinition(id: 'temp', base: 'Stanozolol', ester: 'None', type: CompoundType.oral, graphType: GraphType.curve, halfLife: 0.4, defaultHalfLife: 0.4, timeToPeak: 0.1, ratio: 1, unit: Unit.mg, colorValue: 0xFFF59E0B),
+  'Turinabol': CompoundDefinition(id: 'temp', base: 'Turinabol', ester: 'None', type: CompoundType.oral, graphType: GraphType.curve, halfLife: 0.35, defaultHalfLife: 0.35, timeToPeak: 0.1, ratio: 1.0, unit: Unit.mg, colorValue: 0xFFD946EF),
 
   // Peptides
   'HGH': CompoundDefinition(id: 'temp', base: 'HGH', ester: 'None', type: CompoundType.peptide, graphType: GraphType.event, halfLife: 0.15, defaultHalfLife: 0.15, timeToPeak: 0.1, ratio: 1, unit: Unit.iu, colorValue: 0xFF0EA5E9),
@@ -55,6 +58,8 @@ const Map<String, CompoundDefinition> BASE_LIBRARY = {
   'Tamoxifen': CompoundDefinition(id: 'temp', base: 'Tamoxifen', ester: 'None', type: CompoundType.ancillary, graphType: GraphType.event, halfLife: 6.0, defaultHalfLife: 6.0, timeToPeak: 0.5, ratio: 1, unit: Unit.mg, colorValue: 0xFF94A3B8),
   'Finasteride': CompoundDefinition(id: 'temp', base: 'Finasteride', ester: 'None', type: CompoundType.ancillary, graphType: GraphType.activeWindow, halfLife: 0.25, defaultHalfLife: 0.25, timeToPeak: 0.1, ratio: 1, unit: Unit.mg, colorValue: 0xFF94A3B8),
   'Dutasteride': CompoundDefinition(id: 'temp', base: 'Dutasteride', ester: 'None', type: CompoundType.ancillary, graphType: GraphType.activeWindow, halfLife: 35.0, defaultHalfLife: 35.0, timeToPeak: 0.5, ratio: 1, unit: Unit.mg, colorValue: 0xFF94A3B8),
+  'Clomiphene': CompoundDefinition(id: 'temp', base: 'Clomiphene', ester: 'None', type: CompoundType.ancillary, graphType: GraphType.event, halfLife: 2.5, defaultHalfLife: 2.5, timeToPeak: 0.5, ratio: 1.0, unit: Unit.mg, colorValue: 0xFF94A3B8),
+  'Enclomiphene': CompoundDefinition(id: 'temp', base: 'Enclomiphene', ester: 'None', type: CompoundType.ancillary, graphType: GraphType.event, halfLife: 0.5, defaultHalfLife: 0.5, timeToPeak: 0.15, ratio: 1.0, unit: Unit.mg, colorValue: 0xFF94A3B8),
 };
 
 const Map<String, Ester> ESTER_LIBRARY = {
@@ -66,7 +71,9 @@ const Map<String, Ester> ESTER_LIBRARY = {
   'Cypionate': Ester(name: 'Cypionate', halfLife: 5.0, timeToPeak: 1.8, molecularWeightRatio: 0.69),
   'Decanoate': Ester(name: 'Decanoate', halfLife: 7.0, timeToPeak: 2.5, molecularWeightRatio: 0.62),
   'Undecanoate': Ester(name: 'Undecanoate', halfLife: 20.9, timeToPeak: 6.0, molecularWeightRatio: 0.61),
+  'Hexahydrobenzylcarbonate': Ester(name: 'Hexahydrobenzylcarbonate', halfLife: 6.0, timeToPeak: 1.8, molecularWeightRatio: 0.68),
   'Sustanon': Ester(name: 'Sustanon (Mix)', halfLife: 15.0, timeToPeak: 1.0, molecularWeightRatio: 0.71),
+  'Tri-Tren': Ester(name: 'Tri-Tren (Mix)', halfLife: 5.5, timeToPeak: 1.5, molecularWeightRatio: 0.72),
   'None': Ester(name: 'None', halfLife: 0.15, timeToPeak: 0.1, molecularWeightRatio: 1.0),
 };
 
@@ -75,6 +82,12 @@ const List<Map<String, double>> SUSTANON_BLEND = [
   {'fraction': 0.24, 'halfLife': 2.5, 'timeToPeak': 1.0, 'ratio': 0.66},   // Phenylpropionate 60mg
   {'fraction': 0.24, 'halfLife': 4.0, 'timeToPeak': 1.5, 'ratio': 0.72},   // Isocaproate 60mg
   {'fraction': 0.40, 'halfLife': 7.0, 'timeToPeak': 2.5, 'ratio': 0.62},   // Decanoate 100mg
+];
+
+const List<Map<String, double>> TREN_BLEND = [
+  {'fraction': 0.20, 'halfLife': 1.0, 'timeToPeak': 0.5, 'ratio': 0.87},   // Acetate
+  {'fraction': 0.50, 'halfLife': 5.5, 'timeToPeak': 1.5, 'ratio': 0.70},   // Enanthate
+  {'fraction': 0.30, 'halfLife': 6.0, 'timeToPeak': 1.8, 'ratio': 0.68},   // Hexahydrobenzylcarbonate
 ];
 
 // Initial data for first time app load

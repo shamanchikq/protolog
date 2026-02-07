@@ -106,6 +106,18 @@ double _calculateActiveLevel(double dosage, double diffDays, double halfLife, do
       );
     }
     return level;
+  } else if (esterName.contains('Tri-Tren')) {
+    double level = 0;
+    for (var comp in TREN_BLEND) {
+      level += _calculateBatemanValue(
+        dosage * comp['fraction']!,
+        diffDays,
+        comp['halfLife']!,
+        comp['timeToPeak']!,
+        comp['ratio']!,
+      );
+    }
+    return level;
   }
   return _calculateBatemanValue(dosage, diffDays, halfLife, timeToPeak, ratio);
 }
@@ -155,7 +167,7 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
 
     final msSinceStart = inj.date.millisecondsSinceEpoch - startMs;
     final startPct = msSinceStart / totalDurationMs;
-    final fadeDurationMs = (halfLife * 6) * 86400000;
+    final fadeDurationMs = (halfLife * 4) * 86400000;
     final durationPct = fadeDurationMs / totalDurationMs;
 
     if (startPct + durationPct > 0 && startPct < 1.0) {
@@ -212,6 +224,24 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
     }
   }
 
+  final injectionMarkers = <InjectionMarkerData>[];
+  for (var inj in curveInjections) {
+    final ms = inj.date.millisecondsSinceEpoch - startMs;
+    final pct = ms / totalDurationMs;
+    if (pct >= 0 && pct <= 1.0) {
+      final baseInjs = injectionsByBase[inj.snapshot.base] ?? [];
+      double level = 0;
+      for (var other in baseInjs) {
+        final diffMs = inj.date.millisecondsSinceEpoch - other.date.millisecondsSinceEpoch;
+        if (diffMs >= 0) {
+          level += _calculateActiveLevel(other.dosage, diffMs / 86400000.0,
+              other.snapshot.halfLife, other.snapshot.timeToPeak, other.snapshot.ratio, other.snapshot.ester);
+        }
+      }
+      injectionMarkers.add(InjectionMarkerData(pct, level, inj.snapshot.type == CompoundType.oral, inj.snapshot.colorValue));
+    }
+  }
+
   if (settings.cumulative) {
     final List<Offset> totalPoints = [];
     double dailyMaxTotal = 0;
@@ -248,6 +278,7 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
     endDate: endDate,
     totalDurationMs: totalDurationMs,
     laneCount: uniquePeptideBases.length,
+    injectionMarkers: injectionMarkers,
   );
 }
 
@@ -454,6 +485,7 @@ class _MainScreenState extends State<MainScreen> {
         onSuccess: () => _onTabTapped(0),
         userCompounds: userCompounds,
         addUserCompound: _addUserCompound,
+        injections: injections,
       ); break;
       case 3: content = CompoundManager(
         userCompounds: userCompounds,
@@ -485,7 +517,6 @@ class _MainScreenState extends State<MainScreen> {
   Widget _buildDashboard() {
     final activeStats = _getActiveStats();
     double totalLoad = activeStats.where((s) => s.type == CompoundType.steroid).fold(0, (sum, item) => sum + item.activeAmount);
-
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -573,13 +604,31 @@ class _MainScreenState extends State<MainScreen> {
                   builder: (context, snapshot) {
                     if (!snapshot.hasData) return const SizedBox(height: 300, child: Center(child: CircularProgressIndicator(strokeWidth: 2)));
                     final swimlaneH = math.max(40.0, (snapshot.data!.laneCount * 24.0) + 20.0);
-                    return SizedBox(
-                        height: 300.0 + swimlaneH,
-                        width: double.infinity,
-                        child: Padding(
-                            padding: const EdgeInsets.fromLTRB(0, 0, 16, 16),
-                            child: RepaintBoundary(child: CustomPaint(painter: PKGraphPainter(graphData: snapshot.data!, settings: settings)))
-                        )
+                    return Column(
+                      children: [
+                        SizedBox(
+                            height: 300.0 + swimlaneH,
+                            width: double.infinity,
+                            child: Padding(
+                                padding: const EdgeInsets.fromLTRB(0, 0, 16, 16),
+                                child: RepaintBoundary(child: CustomPaint(painter: PKGraphPainter(graphData: snapshot.data!, settings: settings)))
+                            )
+                        ),
+                        if (snapshot.data!.curves.where((c) => c.baseName != 'Total Androgens').isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                            child: Wrap(
+                              spacing: 12, runSpacing: 4,
+                              children: snapshot.data!.curves
+                                .where((c) => c.baseName != 'Total Androgens')
+                                .map((c) => Row(mainAxisSize: MainAxisSize.min, children: [
+                                  Container(width: 8, height: 8, decoration: BoxDecoration(color: c.color, shape: BoxShape.circle)),
+                                  const SizedBox(width: 4),
+                                  Text(c.baseName, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                                ])).toList(),
+                            ),
+                          ),
+                      ],
                     );
                   },
                 ),
@@ -653,7 +702,18 @@ class _MainScreenState extends State<MainScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text("${inj.dosage} ${inj.snapshot.unit.toString().split('.').last}", style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold)),
-                IconButton(icon: const Icon(Icons.delete, size: 20, color: Colors.grey), onPressed: () => _deleteInjection(inj.id))
+                IconButton(icon: const Icon(Icons.delete, size: 20, color: Colors.grey), onPressed: () => showDialog(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    backgroundColor: const Color(0xFF1E293B),
+                    title: const Text('Delete Entry?'),
+                    content: Text('${inj.snapshot.base} ${inj.snapshot.ester != 'None' ? inj.snapshot.ester : ''} — ${inj.dosage} ${inj.snapshot.unit.toString().split('.').last}'),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                      TextButton(onPressed: () { Navigator.pop(ctx); _deleteInjection(inj.id); }, child: const Text('Delete', style: TextStyle(color: Colors.red))),
+                    ],
+                  ),
+                ))
               ],
             ),
           ),
@@ -682,8 +742,9 @@ class AddInjectionWizard extends StatefulWidget {
   final VoidCallback onSuccess;
   final List<CompoundDefinition> userCompounds;
   final Function(CompoundDefinition) addUserCompound;
+  final List<Injection> injections;
 
-  const AddInjectionWizard({super.key, required this.onAdd, required this.onCancel, required this.onSuccess, required this.userCompounds, required this.addUserCompound});
+  const AddInjectionWizard({super.key, required this.onAdd, required this.onCancel, required this.onSuccess, required this.userCompounds, required this.addUserCompound, required this.injections});
 
   @override
   State<AddInjectionWizard> createState() => _AddInjectionWizardState();
@@ -701,6 +762,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
   String volume = '';
   String _typeFilter = 'steroid';
   String? _selectedBase;
+  Injection? _lastForCompound;
 
   int _esterCountForBase(String base) {
     final Set<String> esters = {};
@@ -766,9 +828,17 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
   }
 
   void _onCompoundSelected(CompoundDefinition compound) {
+    final matches = widget.injections
+        .where((i) => i.snapshot.base == compound.base && i.snapshot.ester == compound.ester)
+        .toList()..sort((a, b) => b.date.compareTo(a.date));
+
     setState(() {
       selectedCompound = compound;
       unit = compound.unit;
+      _lastForCompound = matches.isNotEmpty ? matches.first : null;
+      if (_lastForCompound != null) {
+        dose = _lastForCompound!.dosage.toString();
+      }
       step = 2;
     });
   }
@@ -777,7 +847,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
     if (_selectedBase != null && step == 1) {
       setState(() => _selectedBase = null);
     } else {
-      setState(() { step = 1; _selectedBase = null; });
+      setState(() { step = 1; _selectedBase = null; _lastForCompound = null; });
     }
   }
 
@@ -921,6 +991,14 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
                       ],
                     ),
                   ),
+                  if (_lastForCompound != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Last: ${_lastForCompound!.dosage} ${_lastForCompound!.snapshot.unit.toString().split('.').last} — ${_formatDate(_lastForCompound!.date, 'MMM d')}',
+                        style: const TextStyle(fontSize: 11, color: Color(0xFF10B981)),
+                      ),
+                    ),
                   const SizedBox(height: 24),
 
                   Row(mainAxisAlignment: MainAxisAlignment.end, children: [TextButton.icon(icon: const Icon(Icons.calculate, size: 16), label: Text(calcMode ? "Manual Entry" : "Calc by Volume"), onPressed: () => setState(() => calcMode = !calcMode))]),
@@ -1182,7 +1260,7 @@ class PKGraphPainter extends CustomPainter {
 
       if (lane.type == GraphType.activeWindow) {
         final rect = Rect.fromLTWH(x, y + 14, w, 6);
-        final paint = Paint()..shader = LinearGradient(colors: [lane.color.withOpacity(0.95), lane.color.withOpacity(0.5), lane.color.withOpacity(0.25), lane.color.withOpacity(0.0)], stops: const [0.0, 0.166, 0.333, 1.0]).createShader(rect);
+        final paint = Paint()..shader = LinearGradient(colors: [lane.color.withOpacity(0.95), lane.color.withOpacity(0.45), lane.color.withOpacity(0.12), lane.color.withOpacity(0.0)], stops: const [0.0, 0.25, 0.5, 1.0]).createShader(rect);
         canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(2)), paint);
       } else {
         canvas.drawCircle(Offset(x, y + 17), 3, Paint()..color = lane.color);
@@ -1259,6 +1337,15 @@ class PKGraphPainter extends CustomPainter {
         textPainter.layout();
         textPainter.paint(canvas, Offset(paddingLeft - textPainter.width - 5, y - textPainter.height / 2));
       }
+    }
+
+    // Injection Markers
+    for (var marker in graphData.injectionMarkers) {
+      final x = paddingLeft + (marker.xPct * chartWidth);
+      final maxY = settings.normalized ? 1.0 : (marker.isOral ? graphData.maxOralMg : graphData.maxMg);
+      final yVal = settings.normalized ? 0.0 : marker.yLevel;
+      final y = chartHeight - ((yVal / maxY) * chartHeight);
+      canvas.drawCircle(Offset(x, y), 3.5, Paint()..color = Color(marker.colorValue));
     }
 
     // X-Axis Labels (Date/Time)

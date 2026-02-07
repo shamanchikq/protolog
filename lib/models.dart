@@ -167,6 +167,7 @@ class ComputedGraphData {
   final DateTime endDate;
   final int totalDurationMs;
   final int laneCount;
+  final List<InjectionMarkerData> injectionMarkers;
 
   ComputedGraphData({
     required this.curves,
@@ -178,6 +179,7 @@ class ComputedGraphData {
     required this.endDate,
     required this.totalDurationMs,
     required this.laneCount,
+    required this.injectionMarkers,
   });
 }
 
@@ -214,6 +216,14 @@ class ActiveCompoundStat {
   final String statusText;
 
   ActiveCompoundStat(this.name, this.activeAmount, this.mainValue, this.subLabel, this.colorValue, this.type, this.graphType, this.statusText);
+}
+
+class InjectionMarkerData {
+  final double xPct;
+  final double yLevel;
+  final bool isOral;
+  final int colorValue;
+  InjectionMarkerData(this.xPct, this.yLevel, this.isOral, this.colorValue);
 }
 
 class IsolateInput {
