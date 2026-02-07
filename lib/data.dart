@@ -1,13 +1,34 @@
 import 'models.dart';
 
 const Map<String, CompoundDefinition> BASE_LIBRARY = {
-  // Injectables
-  'Testosterone': CompoundDefinition(id: 'temp', base: 'Testosterone', ester: '', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 0, timeToPeak: 0, ratio: 1, unit: Unit.mg, colorValue: 0xFF10B981),
-  'Nandrolone': CompoundDefinition(id: 'temp', base: 'Nandrolone', ester: '', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 0, timeToPeak: 0, ratio: 1, unit: Unit.mg, colorValue: 0xFF3B82F6),
-  'Trenbolone': CompoundDefinition(id: 'temp', base: 'Trenbolone', ester: '', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 0, timeToPeak: 0, ratio: 1, unit: Unit.mg, colorValue: 0xFFEF4444),
-  'Masteron': CompoundDefinition(id: 'temp', base: 'Masteron', ester: '', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 0, timeToPeak: 0, ratio: 1, unit: Unit.mg, colorValue: 0xFFF59E0B),
-  'Primobolan': CompoundDefinition(id: 'temp', base: 'Primobolan', ester: '', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 0, timeToPeak: 0, ratio: 1, unit: Unit.mg, colorValue: 0xFF8B5CF6),
-  'Boldenone': CompoundDefinition(id: 'temp', base: 'Boldenone', ester: '', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 0, timeToPeak: 0, ratio: 1, unit: Unit.mg, colorValue: 0xFF6366F1),
+  // Testosterone
+  'Testosterone Suspension': CompoundDefinition(id: 'temp', base: 'Testosterone', ester: 'Suspension', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 0.5, defaultHalfLife: 0.5, timeToPeak: 0.25, ratio: 1.0, unit: Unit.mg, colorValue: 0xFF10B981),
+  'Testosterone Propionate': CompoundDefinition(id: 'temp', base: 'Testosterone', ester: 'Propionate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 0.8, defaultHalfLife: 0.8, timeToPeak: 0.4, ratio: 0.80, unit: Unit.mg, colorValue: 0xFF10B981),
+  'Testosterone Enanthate': CompoundDefinition(id: 'temp', base: 'Testosterone', ester: 'Enanthate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 4.5, defaultHalfLife: 4.5, timeToPeak: 1.5, ratio: 0.70, unit: Unit.mg, colorValue: 0xFF10B981),
+  'Testosterone Cypionate': CompoundDefinition(id: 'temp', base: 'Testosterone', ester: 'Cypionate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 5.0, defaultHalfLife: 5.0, timeToPeak: 1.8, ratio: 0.69, unit: Unit.mg, colorValue: 0xFF10B981),
+  'Testosterone Undecanoate': CompoundDefinition(id: 'temp', base: 'Testosterone', ester: 'Undecanoate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 20.9, defaultHalfLife: 20.9, timeToPeak: 7.0, ratio: 0.63, unit: Unit.mg, colorValue: 0xFF10B981),
+  'Sustanon 250': CompoundDefinition(id: 'temp', base: 'Testosterone', ester: 'Sustanon (Mix)', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 15.0, defaultHalfLife: 15.0, timeToPeak: 1.5, ratio: 0.70, unit: Unit.mg, colorValue: 0xFF10B981),
+
+  // Nandrolone
+  'Nandrolone Phenylpropionate': CompoundDefinition(id: 'temp', base: 'Nandrolone', ester: 'Phenylpropionate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 2.5, defaultHalfLife: 2.5, timeToPeak: 1.0, ratio: 0.67, unit: Unit.mg, colorValue: 0xFF3B82F6),
+  'Nandrolone Decanoate': CompoundDefinition(id: 'temp', base: 'Nandrolone', ester: 'Decanoate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 7.5, defaultHalfLife: 7.5, timeToPeak: 2.5, ratio: 0.64, unit: Unit.mg, colorValue: 0xFF3B82F6),
+
+  // Trenbolone
+  'Trenbolone Acetate': CompoundDefinition(id: 'temp', base: 'Trenbolone', ester: 'Acetate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 1.0, defaultHalfLife: 1.0, timeToPeak: 0.5, ratio: 0.87, unit: Unit.mg, colorValue: 0xFFEF4444),
+  'Trenbolone Enanthate': CompoundDefinition(id: 'temp', base: 'Trenbolone', ester: 'Enanthate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 5.5, defaultHalfLife: 5.5, timeToPeak: 1.5, ratio: 0.70, unit: Unit.mg, colorValue: 0xFFEF4444),
+
+  // Boldenone
+  'Boldenone Undecylenate': CompoundDefinition(id: 'temp', base: 'Boldenone', ester: 'Undecylenate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 14.0, defaultHalfLife: 14.0, timeToPeak: 4.0, ratio: 0.61, unit: Unit.mg, colorValue: 0xFF6366F1),
+
+  // Masteron (Drostanolone)
+  'Drostanolone Propionate': CompoundDefinition(id: 'temp', base: 'Masteron', ester: 'Propionate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 1.5, defaultHalfLife: 1.5, timeToPeak: 0.5, ratio: 0.80, unit: Unit.mg, colorValue: 0xFFF59E0B),
+  'Drostanolone Enanthate': CompoundDefinition(id: 'temp', base: 'Masteron', ester: 'Enanthate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 5.0, defaultHalfLife: 5.0, timeToPeak: 1.5, ratio: 0.70, unit: Unit.mg, colorValue: 0xFFF59E0B),
+
+  // Primobolan (Methenolone)
+  'Methenolone Enanthate': CompoundDefinition(id: 'temp', base: 'Primobolan', ester: 'Enanthate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 10.5, defaultHalfLife: 10.5, timeToPeak: 3.0, ratio: 0.70, unit: Unit.mg, colorValue: 0xFF8B5CF6),
+
+  // DHB (Dihydroboldenone)
+  'Dihydroboldenone Cypionate': CompoundDefinition(id: 'temp', base: 'DHB', ester: 'Cypionate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 5.0, defaultHalfLife: 5.0, timeToPeak: 1.8, ratio: 0.69, unit: Unit.mg, colorValue: 0xFF6366F1),
 
   // Orals
   'Oxandrolone': CompoundDefinition(id: 'temp', base: 'Oxandrolone', ester: 'None', type: CompoundType.oral, graphType: GraphType.curve, halfLife: 0.4, defaultHalfLife: 0.4, timeToPeak: 0.1, ratio: 1, unit: Unit.mg, colorValue: 0xFFD946EF),
@@ -49,9 +70,16 @@ const Map<String, Ester> ESTER_LIBRARY = {
   'None': Ester(name: 'None', halfLife: 0.15, timeToPeak: 0.1, molecularWeightRatio: 1.0),
 };
 
+const List<Map<String, double>> SUSTANON_BLEND = [
+  {'fraction': 0.12, 'halfLife': 0.8, 'timeToPeak': 0.4, 'ratio': 0.80},   // Propionate 30mg
+  {'fraction': 0.24, 'halfLife': 2.5, 'timeToPeak': 1.0, 'ratio': 0.66},   // Phenylpropionate 60mg
+  {'fraction': 0.24, 'halfLife': 4.0, 'timeToPeak': 1.5, 'ratio': 0.72},   // Isocaproate 60mg
+  {'fraction': 0.40, 'halfLife': 7.0, 'timeToPeak': 2.5, 'ratio': 0.62},   // Decanoate 100mg
+];
+
 // Initial data for first time app load
 final List<CompoundDefinition> INITIAL_COMPOUNDS = [
-  BASE_LIBRARY['Testosterone']!.copyWith(id: 'test-c', ester: 'Cypionate', halfLife: 5.0, timeToPeak: 1.8, ratio: 0.69),
+  BASE_LIBRARY['Testosterone Cypionate']!.copyWith(id: 'test-c'),
   BASE_LIBRARY['Oxandrolone']!.copyWith(id: 'anavar'),
 ];
 

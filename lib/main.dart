@@ -68,12 +68,6 @@ String _capitalize(String s) {
   return s[0].toUpperCase() + s.substring(1).toLowerCase();
 }
 
-String _formatDuration(Duration d) {
-  if (d.inDays > 0) return "${d.inDays}d";
-  if (d.inHours > 0) return "${d.inHours}h";
-  return "${d.inMinutes}m";
-}
-
 // --- Math Engine (Top Level for Isolate) ---
 
 double _solveKa(double ke, double tmax) {
@@ -102,18 +96,25 @@ double _calculateBatemanValue(double dose, double t, double halfLife, double tma
 double _calculateActiveLevel(double dosage, double diffDays, double halfLife, double timeToPeak, double ratio, String esterName) {
   if (esterName.contains('Sustanon')) {
     double level = 0;
-    // Approximation of Sustanon 250 blend
-    // Propionate 12%
-    level += _calculateBatemanValue(dosage * 0.12, diffDays, 0.8, 0.4, 0.80);
-    // Phenylpropionate 24%
-    level += _calculateBatemanValue(dosage * 0.24, diffDays, 2.5, 1.0, 0.66);
-    // Isocaproate 24%
-    level += _calculateBatemanValue(dosage * 0.24, diffDays, 4.0, 1.5, 0.72);
-    // Decanoate 40%
-    level += _calculateBatemanValue(dosage * 0.40, diffDays, 7.0, 2.5, 0.62);
+    for (var comp in SUSTANON_BLEND) {
+      level += _calculateBatemanValue(
+        dosage * comp['fraction']!,
+        diffDays,
+        comp['halfLife']!,
+        comp['timeToPeak']!,
+        comp['ratio']!,
+      );
+    }
     return level;
   }
   return _calculateBatemanValue(dosage, diffDays, halfLife, timeToPeak, ratio);
+}
+
+CompoundDefinition? _lookupLibraryDef(String base, String ester) {
+  for (var entry in BASE_LIBRARY.values) {
+    if (entry.base == base && entry.ester == ester) return entry;
+  }
+  return BASE_LIBRARY[base]; // fallback for orals/peptides/ancillaries keyed by base name
 }
 
 // --- HEAVY COMPUTATION ---
@@ -148,7 +149,7 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
 
   for (var inj in peptideInjections) {
     // Check Library for latest settings override
-    final libraryDef = BASE_LIBRARY[inj.snapshot.base];
+    final libraryDef = _lookupLibraryDef(inj.snapshot.base, inj.snapshot.ester);
     final graphType = libraryDef?.graphType ?? inj.snapshot.graphType;
     final halfLife = libraryDef?.halfLife ?? inj.snapshot.halfLife;
 
@@ -174,7 +175,7 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
   double maxOralMg = 5.0;
   final List<CurveData> curves = [];
 
-  final stepsPerDay = settings.timeRange == 'zoom' ? 4 : 2;
+  final stepsPerDay = settings.timeRange == 'zoom' ? 12 : (settings.timeRange == 'standard' ? 4 : 2);
   final stepSizeMs = 86400000 ~/ stepsPerDay;
 
   final Map<String, List<Injection>> injectionsByBase = {};
@@ -345,24 +346,6 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  List<Ester> _getEstersForBase(String baseName) {
-    final defaults = ESTER_LIBRARY.entries.map((e) => e.value).toList();
-    // Fix: Merge custom esters into the list
-    final customEsters = userCompounds
-        .where((c) => c.base == baseName && c.isCustom && c.type == CompoundType.steroid)
-        .map((c) => Ester(name: c.ester, halfLife: c.halfLife, timeToPeak: c.timeToPeak, molecularWeightRatio: c.ratio));
-
-    final allEsters = [...defaults, ...customEsters];
-
-    final lastInjection = injections.where((i) => i.snapshot.base == baseName).fold<Injection?>(null, (prev, curr) => prev == null || curr.date.isAfter(prev.date) ? curr : prev);
-
-    if (lastInjection != null) {
-      final lastEsterName = lastInjection.snapshot.ester;
-      allEsters.sort((a, b) => (a.name == lastEsterName ? -1 : b.name == lastEsterName ? 1 : 0));
-    }
-    return allEsters;
-  }
-
   List<ActiveCompoundStat> _getActiveStats() {
     final now = DateTime.now();
     final Map<String, ActiveCompoundStat> stats = {};
@@ -383,7 +366,7 @@ class _MainScreenState extends State<MainScreen> {
       latestInjections[base] = inj; // Overwrite, so last loop item is latest by date
 
       // Force library settings lookup to get fresh graphType/halfLife
-      final libraryDef = BASE_LIBRARY[base];
+      final libraryDef = _lookupLibraryDef(base, inj.snapshot.ester);
       final graphType = libraryDef?.graphType ?? inj.snapshot.graphType;
 
       // Determine correct Half Life to use
@@ -414,9 +397,8 @@ class _MainScreenState extends State<MainScreen> {
       final base = entry.key;
       final inj = entry.value;
 
-      final libraryDef = BASE_LIBRARY[base];
+      final libraryDef = _lookupLibraryDef(base, inj.snapshot.ester);
       final graphType = libraryDef?.graphType ?? inj.snapshot.graphType;
-      final halfLife = libraryDef?.halfLife ?? inj.snapshot.halfLife;
 
       final diffMs = now.difference(inj.date).inMilliseconds;
       final ago = Duration(milliseconds: diffMs);
@@ -441,16 +423,7 @@ class _MainScreenState extends State<MainScreen> {
         mainValue = val.toStringAsFixed(1);
         subLabel = inj.snapshot.unit.toString().split('.').last;
 
-        // Status text logic - Combine Time Since Last + HL Status
-        final hlMs = halfLife * 86400000;
-        String hlStatus = "";
-        if (diffMs < hlMs) {
-          final remaining = Duration(milliseconds: (hlMs - diffMs).toInt());
-          hlStatus = "${_formatDuration(remaining)} left";
-        } else {
-          hlStatus = "Tail";
-        }
-        status = "$agoString • $hlStatus";
+        status = agoString;
       }
       // TYPE 2: Event Only
       else {
@@ -481,7 +454,6 @@ class _MainScreenState extends State<MainScreen> {
         onSuccess: () => _onTabTapped(0),
         userCompounds: userCompounds,
         addUserCompound: _addUserCompound,
-        getEsters: _getEstersForBase,
       ); break;
       case 3: content = CompoundManager(
         userCompounds: userCompounds,
@@ -648,7 +620,7 @@ class _MainScreenState extends State<MainScreen> {
                         showTimeOnly
                             ? stat.statusText
                             : stat.mainValue,
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
+                        style: TextStyle(fontSize: showTimeOnly ? 13 : 18, fontWeight: FontWeight.bold)
                     ),
                     if (!showTimeOnly) Text(stat.subLabel, style: const TextStyle(fontSize: 10, color: Colors.grey)),
                   ])
@@ -710,9 +682,8 @@ class AddInjectionWizard extends StatefulWidget {
   final VoidCallback onSuccess;
   final List<CompoundDefinition> userCompounds;
   final Function(CompoundDefinition) addUserCompound;
-  final Function(String) getEsters;
 
-  const AddInjectionWizard({super.key, required this.onAdd, required this.onCancel, required this.onSuccess, required this.userCompounds, required this.addUserCompound, required this.getEsters});
+  const AddInjectionWizard({super.key, required this.onAdd, required this.onCancel, required this.onSuccess, required this.userCompounds, required this.addUserCompound});
 
   @override
   State<AddInjectionWizard> createState() => _AddInjectionWizardState();
@@ -720,8 +691,7 @@ class AddInjectionWizard extends StatefulWidget {
 
 class _AddInjectionWizardState extends State<AddInjectionWizard> {
   int step = 1;
-  CompoundDefinition? selectedBase;
-  Ester? selectedEster;
+  CompoundDefinition? selectedCompound;
   String dose = '';
   Unit unit = Unit.mg;
   DateTime date = DateTime.now();
@@ -729,67 +699,107 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
   bool calcMode = false;
   String concentration = '';
   String volume = '';
+  String _typeFilter = 'steroid';
+  String? _selectedBase;
 
-  List<CompoundDefinition> get availableBases {
-    final Map<String, CompoundDefinition> bases = {};
-    BASE_LIBRARY.forEach((key, val) => bases[key] = val);
+  int _esterCountForBase(String base) {
+    final Set<String> esters = {};
     for (var comp in widget.userCompounds) {
-      if (!bases.containsKey(comp.base)) bases[comp.base] = comp;
+      if (comp.type == CompoundType.steroid && comp.base == base) esters.add(comp.ester);
     }
-    return bases.values.toList();
+    BASE_LIBRARY.forEach((key, val) {
+      if (val.type == CompoundType.steroid && val.base == base) esters.add(val.ester);
+    });
+    return esters.length;
   }
 
-  void _onBaseSelected(CompoundDefinition base) {
-    setState(() {
-      selectedBase = base;
-      unit = base.unit;
-      if (base.type != CompoundType.steroid) {
-        selectedEster = const Ester(name: 'None', halfLife: 0, timeToPeak: 0, molecularWeightRatio: 1);
-        step = 3;
-      } else {
-        step = 2;
+  List<CompoundDefinition> get availableCompounds {
+    final targetType = _typeFilter == 'steroid' ? CompoundType.steroid
+        : _typeFilter == 'oral' ? CompoundType.oral
+        : _typeFilter == 'peptide' ? CompoundType.peptide
+        : CompoundType.ancillary;
+
+    if (targetType == CompoundType.steroid) {
+      if (_selectedBase != null) {
+        // Show esters for selected base, recently used first
+        final Map<String, CompoundDefinition> esters = {};
+        for (var comp in widget.userCompounds) {
+          if (comp.type == CompoundType.steroid && comp.base == _selectedBase && !esters.containsKey(comp.ester)) {
+            esters[comp.ester] = comp;
+          }
+        }
+        BASE_LIBRARY.forEach((key, val) {
+          if (val.type == CompoundType.steroid && val.base == _selectedBase && !esters.containsKey(val.ester)) {
+            esters[val.ester] = val;
+          }
+        });
+        return esters.values.toList();
+      }
+      // Show unique base names, recently used first
+      final Map<String, CompoundDefinition> bases = {};
+      for (var comp in widget.userCompounds) {
+        if (comp.type == CompoundType.steroid && !bases.containsKey(comp.base)) {
+          bases[comp.base] = comp;
+        }
+      }
+      BASE_LIBRARY.forEach((key, val) {
+        if (val.type == CompoundType.steroid && !bases.containsKey(val.base)) {
+          bases[val.base] = val;
+        }
+      });
+      return bases.values.toList();
+    }
+
+    // Non-steroid: flat list, recently used first
+    final Map<String, CompoundDefinition> compounds = {};
+    for (var comp in widget.userCompounds) {
+      if (comp.type == targetType && !compounds.containsKey(comp.base)) {
+        compounds[comp.base] = comp;
+      }
+    }
+    BASE_LIBRARY.forEach((key, val) {
+      if (val.type == targetType && !compounds.containsKey(val.base)) {
+        compounds[val.base] = val;
       }
     });
+    return compounds.values.toList();
   }
 
-  void _onEsterSelected(Ester ester) {
+  void _onCompoundSelected(CompoundDefinition compound) {
     setState(() {
-      selectedEster = ester;
-      step = 3;
+      selectedCompound = compound;
+      unit = compound.unit;
+      step = 2;
     });
   }
 
   void _goBack() {
-    if (step == 3) {
-      if (selectedBase != null && selectedBase!.type != CompoundType.steroid) {
-        setState(() => step = 1);
-      } else {
-        setState(() => step = 2);
-      }
+    if (_selectedBase != null && step == 1) {
+      setState(() => _selectedBase = null);
     } else {
-      setState(() => step--);
+      setState(() { step = 1; _selectedBase = null; });
     }
   }
 
   void _submit() {
-    if (selectedBase == null) return;
+    if (selectedCompound == null) return;
     final DateTime fullDate = DateTime(date.year, date.month, date.day, time.hour, time.minute);
-    final esterName = selectedEster?.name ?? 'None';
 
     var compDef = widget.userCompounds.firstWhere(
-            (c) => c.base == selectedBase!.base && c.ester == esterName,
+            (c) => c.base == selectedCompound!.base && c.ester == selectedCompound!.ester,
         orElse: () {
           final newComp = CompoundDefinition(
             id: DateTime.now().millisecondsSinceEpoch.toString(),
-            base: selectedBase!.base,
-            ester: esterName,
-            type: selectedBase!.type,
-            graphType: selectedBase!.graphType,
-            halfLife: (esterName == 'None') ? (selectedBase!.defaultHalfLife ?? 1.0) : selectedEster!.halfLife,
-            timeToPeak: (esterName == 'None') ? selectedBase!.timeToPeak : selectedEster!.timeToPeak,
-            ratio: (esterName == 'None') ? 1.0 : selectedEster!.molecularWeightRatio,
+            base: selectedCompound!.base,
+            ester: selectedCompound!.ester,
+            type: selectedCompound!.type,
+            graphType: selectedCompound!.graphType,
+            halfLife: selectedCompound!.halfLife,
+            defaultHalfLife: selectedCompound!.defaultHalfLife,
+            timeToPeak: selectedCompound!.timeToPeak,
+            ratio: selectedCompound!.ratio,
             unit: unit,
-            colorValue: selectedBase!.colorValue,
+            colorValue: selectedCompound!.colorValue,
           );
           widget.addUserCompound(newComp);
           return newComp;
@@ -809,8 +819,8 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
         children: [
           Row(
             children: [
-              if (step > 1) IconButton(icon: const Icon(Icons.arrow_back), onPressed: _goBack),
-              Text(step == 1 ? "Select Compound" : step == 2 ? "Select Ester" : "Details", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              if (step > 1 || _selectedBase != null) IconButton(icon: const Icon(Icons.arrow_back), onPressed: _goBack),
+              Text(step == 1 ? (_selectedBase ?? "Select Compound") : "Details", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               const Spacer(),
               IconButton(icon: const Icon(Icons.close), onPressed: widget.onCancel)
             ],
@@ -818,15 +828,62 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
           const SizedBox(height: 16),
 
           if (step == 1) ...[
+            // Filter tabs
+            Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(color: const Color(0xFF0F172A), borderRadius: BorderRadius.circular(8)),
+              child: Row(
+                children: [
+                  {'key': 'steroid', 'label': 'Injectable'},
+                  {'key': 'oral', 'label': 'Oral'},
+                  {'key': 'peptide', 'label': 'Peptide'},
+                  {'key': 'ancillary', 'label': 'Ancillary'},
+                ].map((tab) {
+                  final isActive = _typeFilter == tab['key'];
+                  return Expanded(child: GestureDetector(
+                    onTap: () => setState(() { _typeFilter = tab['key']!; _selectedBase = null; }),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(color: isActive ? const Color(0xFF334155) : Colors.transparent, borderRadius: BorderRadius.circular(6)),
+                      child: Center(child: Text(tab['label']!, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: isActive ? Colors.white : Colors.grey))),
+                    ),
+                  ));
+                }).toList(),
+              ),
+            ),
+            const SizedBox(height: 16),
             GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, childAspectRatio: 2.5, crossAxisSpacing: 10, mainAxisSpacing: 10),
-              itemCount: availableBases.length,
+              itemCount: availableCompounds.length,
               itemBuilder: (c, i) {
-                final base = availableBases[i];
+                final compound = availableCompounds[i];
+                String displayName;
+                String subtitle;
+                if (_typeFilter == 'steroid' && _selectedBase == null) {
+                  displayName = compound.base;
+                  final count = _esterCountForBase(compound.base);
+                  subtitle = '$count ${count == 1 ? 'variant' : 'variants'}';
+                } else if (compound.type == CompoundType.steroid) {
+                  displayName = compound.ester;
+                  subtitle = 'HL: ${compound.halfLife}d';
+                } else {
+                  displayName = compound.base;
+                  subtitle = compound.type.name.toUpperCase();
+                }
                 return GestureDetector(
-                  onTap: () => _onBaseSelected(base),
+                  onTap: () {
+                    if (_typeFilter == 'steroid' && _selectedBase == null) {
+                      if (_esterCountForBase(compound.base) == 1) {
+                        _onCompoundSelected(compound);
+                      } else {
+                        setState(() => _selectedBase = compound.base);
+                      }
+                    } else {
+                      _onCompoundSelected(compound);
+                    }
+                  },
                   child: Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFF334155))),
@@ -834,36 +891,13 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Text(base.base, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(base.type.name.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                            if (base.type == CompoundType.oral) const Icon(Icons.medication, size: 12, color: Colors.grey)
-                          ],
-                        )
+                        Text(displayName, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 13), overflow: TextOverflow.ellipsis),
+                        Text(subtitle, style: const TextStyle(fontSize: 10, color: Colors.grey)),
                       ],
                     ),
                   ),
                 );
               },
-            )
-          ] else if (step == 2) ...[
-            ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: widget.getEsters(selectedBase!.base).length,
-                itemBuilder: (c, i) {
-                  final ester = widget.getEsters(selectedBase!.base)[i];
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      title: Text(ester.name, style: const TextStyle(color: Colors.white)),
-                      subtitle: Text("HL: ${ester.halfLife}d • Ratio: ${(ester.molecularWeightRatio * 100).toInt()}%"),
-                      onTap: () => setState(() { selectedEster = ester; step = 3; }),
-                    ),
-                  );
-                }
             )
           ] else ...[
             Container(
@@ -876,9 +910,14 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
                     decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFF334155))),
                     child: Column(
                       children: [
-                        Text("${selectedBase!.base} ${selectedEster?.name != 'None' ? selectedEster?.name : ''}", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(selectedBase!.colorValue))),
+                        Text(
+                          selectedCompound!.type == CompoundType.steroid
+                              ? '${selectedCompound!.base} ${selectedCompound!.ester}'.trim()
+                              : selectedCompound!.base,
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(selectedCompound!.colorValue)),
+                        ),
                         const SizedBox(height: 4),
-                        Text("${selectedBase!.type.name.toUpperCase()}", style: const TextStyle(fontSize: 10, color: Colors.grey, letterSpacing: 1.5)),
+                        Text(selectedCompound!.type.name.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, letterSpacing: 1.5)),
                       ],
                     ),
                   ),
@@ -904,7 +943,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
                           child: DropdownButton<Unit>(
                             value: unit,
                             dropdownColor: const Color(0xFF1E293B),
-                            items: Unit.values.map((u) => DropdownMenuItem(value: u, child: Text(u.name.toLowerCase()))).toList(), // Lowercase units
+                            items: Unit.values.map((u) => DropdownMenuItem(value: u, child: Text(u.name.toLowerCase()))).toList(),
                             onChanged: (u) => setState(() => unit = u!),
                           ),
                         ),
@@ -913,6 +952,34 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
                   ),
 
                   const SizedBox(height: 20),
+                  Row(children: [
+                    Expanded(child: GestureDetector(
+                      onTap: () => setState(() => time = const TimeOfDay(hour: 10, minute: 0)),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: time.hour == 10 && time.minute == 0 ? const Color(0xFF10B981) : const Color(0xFF0F172A),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF334155)),
+                        ),
+                        child: const Center(child: Text('AM', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white))),
+                      ),
+                    )),
+                    const SizedBox(width: 10),
+                    Expanded(child: GestureDetector(
+                      onTap: () => setState(() => time = const TimeOfDay(hour: 22, minute: 0)),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: time.hour == 22 && time.minute == 0 ? const Color(0xFF10B981) : const Color(0xFF0F172A),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF334155)),
+                        ),
+                        child: const Center(child: Text('PM', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white))),
+                      ),
+                    )),
+                  ]),
+                  const SizedBox(height: 10),
                   Row(children: [
                     Expanded(child: InkWell(onTap: () async { final d = await showDatePicker(context: context, firstDate: DateTime(2020), lastDate: DateTime(2030), initialDate: date); if (d != null) setState(() => date = d); }, child: _fakeInput(Icons.calendar_today, _formatDate(date, 'yyyy-MM-dd')))),
                     const SizedBox(width: 10),
