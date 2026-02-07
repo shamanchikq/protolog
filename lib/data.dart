@@ -48,7 +48,7 @@ const Map<String, CompoundDefinition> BASE_LIBRARY = {
   'BPC-157': CompoundDefinition(id: 'temp', base: 'BPC-157', ester: 'None', type: CompoundType.peptide, graphType: GraphType.event, halfLife: 0.25, defaultHalfLife: 0.25, timeToPeak: 0.1, ratio: 1, unit: Unit.mcg, colorValue: 0xFF14B8A6),
   'TB-500': CompoundDefinition(id: 'temp', base: 'TB-500', ester: 'None', type: CompoundType.peptide, graphType: GraphType.event, halfLife: 1.5, defaultHalfLife: 1.5, timeToPeak: 0.1, ratio: 1, unit: Unit.mcg, colorValue: 0xFF2DD4BF),
   'MT2': CompoundDefinition(id: 'temp', base: 'Melanotan II', ester: 'None', type: CompoundType.peptide, graphType: GraphType.event, halfLife: 0.1, defaultHalfLife: 0.1, timeToPeak: 0.1, ratio: 1, unit: Unit.mcg, colorValue: 0xFFA855F7),
-  'CJC-1295 no DAC': CompoundDefinition(id: 'temp', base: 'CJC-1295', ester: 'None', type: CompoundType.peptide, graphType: GraphType.event, halfLife: 0.1, defaultHalfLife: 0.1, timeToPeak: 0.1, ratio: 1, unit: Unit.mcg, colorValue: 0xFF34D399),
+  'CJC-1295 no DAC': CompoundDefinition(id: 'temp', base: 'CJC-1295 no DAC', ester: 'None', type: CompoundType.peptide, graphType: GraphType.event, halfLife: 0.1, defaultHalfLife: 0.1, timeToPeak: 0.1, ratio: 1, unit: Unit.mcg, colorValue: 0xFF34D399),
   'Ipamorelin': CompoundDefinition(id: 'temp', base: 'Ipamorelin', ester: 'None', type: CompoundType.peptide, graphType: GraphType.event, halfLife: 0.1, defaultHalfLife: 0.1, timeToPeak: 0.1, ratio: 1, unit: Unit.mcg, colorValue: 0xFF6EE7B7),
   'GHK-Cu': CompoundDefinition(id: 'temp', base: 'GHK-Cu', ester: 'None', type: CompoundType.peptide, graphType: GraphType.event, halfLife: 0.1, defaultHalfLife: 0.1, timeToPeak: 0.1, ratio: 1, unit: Unit.mg, colorValue: 0xFF3B82F6),
 
