@@ -231,3 +231,103 @@ class IsolateInput {
   final GraphSettings settings;
   IsolateInput(this.injections, this.settings);
 }
+
+class ReminderSlot {
+  final int weekday; // 1=Mon ... 7=Sun
+  final int hour;
+  final int minute;
+
+  const ReminderSlot({required this.weekday, required this.hour, required this.minute});
+
+  Map<String, dynamic> toJson() => {'weekday': weekday, 'hour': hour, 'minute': minute};
+
+  factory ReminderSlot.fromJson(Map<String, dynamic> json) {
+    return ReminderSlot(
+      weekday: (json['weekday'] as num).toInt(),
+      hour: (json['hour'] as num).toInt(),
+      minute: (json['minute'] as num).toInt(),
+    );
+  }
+}
+
+class Reminder {
+  final String id;
+  final String compoundBase;
+  final String compoundEster;
+  final String scheduleMode; // 'interval' or 'custom'
+  final int intervalDays;
+  final int hour;
+  final int minute;
+  final List<ReminderSlot> customSlots;
+  final bool enabled;
+  final DateTime? lastScheduledDate;
+
+  const Reminder({
+    required this.id,
+    required this.compoundBase,
+    required this.compoundEster,
+    this.scheduleMode = 'interval',
+    required this.intervalDays,
+    required this.hour,
+    required this.minute,
+    this.customSlots = const [],
+    required this.enabled,
+    this.lastScheduledDate,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'compoundBase': compoundBase,
+    'compoundEster': compoundEster,
+    'scheduleMode': scheduleMode,
+    'intervalDays': intervalDays,
+    'hour': hour,
+    'minute': minute,
+    'customSlots': customSlots.map((s) => s.toJson()).toList(),
+    'enabled': enabled,
+    'lastScheduledDate': lastScheduledDate?.toIso8601String(),
+  };
+
+  factory Reminder.fromJson(Map<String, dynamic> json) {
+    return Reminder(
+      id: json['id'],
+      compoundBase: json['compoundBase'],
+      compoundEster: json['compoundEster'],
+      scheduleMode: json['scheduleMode'] ?? 'interval',
+      intervalDays: (json['intervalDays'] as num).toInt(),
+      hour: (json['hour'] as num).toInt(),
+      minute: (json['minute'] as num).toInt(),
+      customSlots: json['customSlots'] != null
+          ? (json['customSlots'] as List).map((s) => ReminderSlot.fromJson(s)).toList()
+          : [],
+      enabled: json['enabled'] ?? true,
+      lastScheduledDate: json['lastScheduledDate'] != null ? DateTime.parse(json['lastScheduledDate']) : null,
+    );
+  }
+
+  Reminder copyWith({
+    String? id,
+    String? compoundBase,
+    String? compoundEster,
+    String? scheduleMode,
+    int? intervalDays,
+    int? hour,
+    int? minute,
+    List<ReminderSlot>? customSlots,
+    bool? enabled,
+    DateTime? lastScheduledDate,
+  }) {
+    return Reminder(
+      id: id ?? this.id,
+      compoundBase: compoundBase ?? this.compoundBase,
+      compoundEster: compoundEster ?? this.compoundEster,
+      scheduleMode: scheduleMode ?? this.scheduleMode,
+      intervalDays: intervalDays ?? this.intervalDays,
+      hour: hour ?? this.hour,
+      minute: minute ?? this.minute,
+      customSlots: customSlots ?? this.customSlots,
+      enabled: enabled ?? this.enabled,
+      lastScheduledDate: lastScheduledDate ?? this.lastScheduledDate,
+    );
+  }
+}
