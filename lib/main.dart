@@ -9,11 +9,18 @@ import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 import 'models.dart';
 import 'data.dart';
-import 'utils.dart';
 import 'engine/compute_engine.dart';
-import 'ui/widgets/pk_graph_painter.dart';
+import 'ui/widgets/protolog_shell.dart';
+import 'ui/widgets/load_hero.dart';
+import 'ui/widgets/pk_chart_card.dart';
+import 'ui/widgets/swimlane_card.dart';
+import 'ui/theme.dart';
+import 'engine/dashboard_stats.dart';
 import 'ui/views/add_injection_wizard.dart';
-import 'ui/views/compound_manager.dart';
+import 'ui/views/calendar_page.dart';
+import 'ui/views/library_page.dart';
+import 'ui/views/compound_detail_page.dart';
+import 'ui/views/compound_editor_page.dart';
 import 'ui/views/reminders_page.dart';
 
 // --- Entry Point ---
@@ -65,11 +72,6 @@ class _MainScreenState extends State<MainScreen> {
   Future<ComputedGraphData>? _graphDataFuture;
   bool _loading = true;
 
-  // Calendar state
-  late DateTime _calendarMonth;
-  DateTime? _selectedDay;
-  bool _showFullHistory = false;
-
   // Notifications
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
 
@@ -77,8 +79,6 @@ class _MainScreenState extends State<MainScreen> {
   void initState() {
     super.initState();
     settings = const GraphSettings(normalized: false, cumulative: false, showPeptides: true, timeRange: 'standard');
-    final now = DateTime.now();
-    _calendarMonth = DateTime(now.year, now.month);
     _initNotifications();
     _loadData();
   }
@@ -365,21 +365,6 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  void _openReminders() {
-    Navigator.push(context, MaterialPageRoute(
-      builder: (_) => RemindersPage(
-        reminders: reminders,
-        userCompounds: userCompounds,
-        onSave: (updated) {
-          setState(() => reminders = updated);
-          _saveReminders();
-        },
-        onSchedule: _scheduleReminder,
-        onCancel: _cancelReminder,
-      ),
-    ));
-  }
-
   Future<void> _addInjection(Injection inj) async {
     setState(() {
       injections.add(inj);
@@ -408,9 +393,32 @@ class _MainScreenState extends State<MainScreen> {
     _refreshGraph();
   }
 
+  void _updateInjectionNotes(String id, String? notes) {
+    setState(() {
+      final i = injections.indexWhere((inj) => inj.id == id);
+      if (i < 0) return;
+      final cur = injections[i];
+      injections[i] = Injection(
+        id: cur.id,
+        compoundId: cur.compoundId,
+        date: cur.date,
+        dosage: cur.dosage,
+        snapshot: cur.snapshot,
+        site: cur.site,
+        notes: notes,
+      );
+    });
+    _saveData();
+  }
+
   void _addUserCompound(CompoundDefinition comp) {
     setState(() {
-      userCompounds.add(comp);
+      final i = userCompounds.indexWhere((c) => c.id == comp.id);
+      if (i >= 0) {
+        userCompounds[i] = comp;
+      } else {
+        userCompounds.add(comp);
+      }
     });
     _saveData();
   }
@@ -422,10 +430,14 @@ class _MainScreenState extends State<MainScreen> {
     _saveData();
   }
 
-  void _onTabTapped(int index) {
+  void _updateUserCompound(CompoundDefinition updated) {
+    final idx = userCompounds.indexWhere((c) => c.id == updated.id);
+    if (idx == -1) return;
     setState(() {
-      _currentIndex = index;
+      userCompounds[idx] = updated;
     });
+    _saveData();
+    _refreshGraph();
   }
 
   List<ActiveCompoundStat> _getActiveStats() {
@@ -529,454 +541,176 @@ class _MainScreenState extends State<MainScreen> {
   Widget build(BuildContext context) {
     if (_loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
 
+    final tab = ShellTab.values[_currentIndex.clamp(0, ShellTab.values.length - 1)];
+
     Widget content;
-    switch (_currentIndex) {
-      case 0: content = _buildDashboard(); break;
-      case 1: content = _buildCalendar(); break;
-      case 2: content = AddInjectionWizard(
-        onAdd: _addInjection,
-        onCancel: () => _onTabTapped(0),
-        onSuccess: () => _onTabTapped(0),
-        userCompounds: userCompounds,
-        addUserCompound: _addUserCompound,
-        injections: injections,
-      ); break;
-      case 3: content = CompoundManager(
-        userCompounds: userCompounds,
-        onAdd: _addUserCompound,
-        onDelete: _deleteUserCompound,
-        onExport: _exportToMarkdown,
-        onImport: _importFromMarkdown,
-      ); break;
-      default: content = _buildDashboard();
+    switch (tab) {
+      case ShellTab.today:
+        content = _buildDashboard();
+        break;
+      case ShellTab.calendar:
+        content = CalendarPage(
+          injections: injections,
+          onDeleteInjection: _deleteInjection,
+          onUpdateNotes: _updateInjectionNotes,
+        );
+        break;
+      case ShellTab.library:
+        content = LibraryPage(
+          userCompounds: userCompounds,
+          injections: injections,
+          onAdd: _addUserCompound,
+          onDelete: _deleteUserCompound,
+          onUpdate: _updateUserCompound,
+          onExport: _exportToMarkdown,
+          onImport: _importFromMarkdown,
+          onOpenDetail: _openCompoundDetail,
+          onOpenCreate: () => _openCompoundEditor(),
+        );
+        break;
+      case ShellTab.reminders:
+        content = RemindersPage(
+          reminders: reminders,
+          userCompounds: userCompounds,
+          onSave: (updated) {
+            setState(() => reminders = updated);
+            _saveReminders();
+          },
+          onSchedule: _scheduleReminder,
+          onCancel: _cancelReminder,
+        );
+        break;
     }
 
-    return Scaffold(
-      body: SafeArea(child: content),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: _onTabTapped,
-        backgroundColor: const Color(0xFF0F172A),
-        selectedItemColor: const Color(0xFF10B981),
-        unselectedItemColor: Colors.grey,
-        type: BottomNavigationBarType.fixed,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'Dash'),
-          BottomNavigationBarItem(icon: Icon(Icons.calendar_month), label: 'Calendar'),
-          BottomNavigationBarItem(icon: Icon(Icons.add_circle, size: 40), label: 'Add'),
-          BottomNavigationBarItem(icon: Icon(Icons.science), label: 'Libs'),
-        ],
-      ),
+    return ProtoLogShell(
+      activeTab: tab,
+      onTabChanged: (t) => setState(() => _currentIndex = ShellTab.values.indexOf(t)),
+      onFabPressed: () => _openAddInjectionWizard(),
+      body: content,
     );
+  }
+
+  void _openAddInjectionWizard({CompoundDefinition? prefill}) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => Scaffold(
+        backgroundColor: AppTheme.bg,
+        body: SafeArea(
+          child: AddInjectionWizard(
+            onAdd: _addInjection,
+            onCancel: () => Navigator.of(context).pop(),
+            onSuccess: () => Navigator.of(context).pop(),
+            userCompounds: userCompounds,
+            addUserCompound: _addUserCompound,
+            injections: injections,
+            prefillCompound: prefill,
+          ),
+        ),
+      ),
+    ));
+  }
+
+  void _openCompoundDetail(CompoundDefinition compound) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => CompoundDetailPage(
+        compound: compound,
+        injections: injections,
+        onTabChanged: (t) =>
+            setState(() => _currentIndex = ShellTab.values.indexOf(t)),
+        openEditor: (comp) =>
+            _openCompoundEditor(editing: comp, fromDetail: true),
+        onDelete: () {
+          _deleteUserCompound(compound.id);
+          Navigator.of(context).pop(); // pops the detail
+        },
+        onLogInjection: (c) {
+          Navigator.of(context).pop(); // close detail before pushing wizard
+          _openAddInjectionWizard(prefill: c);
+        },
+      ),
+    ));
+  }
+
+  /// Pushes the editor route. Returns the updated/created compound on save,
+  /// or null on cancel/delete. When `fromDetail` is true, a delete also pops
+  /// the detail route that sits underneath the editor.
+  Future<CompoundDefinition?> _openCompoundEditor({
+    CompoundDefinition? editing,
+    bool fromDetail = false,
+  }) {
+    return Navigator.of(context).push<CompoundDefinition>(MaterialPageRoute(
+      builder: (_) => CompoundEditorPage(
+        editing: editing,
+        onTabChanged: (t) =>
+            setState(() => _currentIndex = ShellTab.values.indexOf(t)),
+        onCreate: _addUserCompound,
+        onUpdate: _updateUserCompound,
+        onDelete: editing == null ? null : () {
+          _deleteUserCompound(editing.id);
+          // The editor's delete handler is responsible for popping the editor
+          // route (and the detail underneath it if we came from there).
+          Navigator.of(context).pop(); // pops the editor
+          if (fromDetail) Navigator.of(context).pop(); // pops the detail
+        },
+      ),
+    ));
   }
 
   Widget _buildDashboard() {
     final activeStats = _getActiveStats();
-    double totalLoad = activeStats.where((s) => s.type == CompoundType.steroid).fold(0, (sum, item) => sum + item.activeAmount);
+    final injectableStats = activeStats
+        .where((s) => s.type == CompoundType.steroid || s.type == CompoundType.oral)
+        .toList();
+    final totalActive = injectableStats.fold<double>(0.0, (s, x) => s + x.activeAmount);
+    final breakdown = (injectableStats.toList()
+          ..sort((a, b) => b.activeAmount.compareTo(a.activeAmount)))
+        .map((s) => LoadHeroRow(
+              label: s.name,
+              valueMg: s.activeAmount,
+              shareOfTotal: totalActive > 0 ? s.activeAmount / totalActive : 0,
+              color: AppTheme.compoundColor(s.name) ?? Color(s.colorValue),
+            ))
+        .toList();
+    final delta = deltaSteroidNowVsPrior7(injections: injections, now: DateTime.now());
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(14, 18, 14, 90),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.monitor_heart_outlined, color: Color(0xFF10B981)),
-              const SizedBox(width: 8),
-              const Text('ProtoLog', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
-              const Spacer(),
-              IconButton(
-                icon: const Icon(Icons.notifications_outlined, color: Colors.grey),
-                onPressed: _openReminders,
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [Color(0xFF312E81), Color(0xFF0F172A)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFF4F46E5).withValues(alpha: 0.3)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('TOTAL INJECTABLE LOAD', style: TextStyle(color: Colors.indigo[200], fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1)),
-                const SizedBox(height: 4),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                  textBaseline: TextBaseline.alphabetic,
-                  children: [
-                    Text(totalLoad.toStringAsFixed(1), style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: Colors.white)),
-                    const SizedBox(width: 8),
-                    const Text('mg active', style: TextStyle(fontSize: 14, color: Color(0xFF818CF8))),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                const Text('Combined saturation of Injectable Steroids.', style: TextStyle(fontSize: 12, color: Colors.grey)),
-              ],
+          LoadHero(
+            data: LoadHeroData(
+              totalActiveMg: totalActive,
+              delta: delta,
+              breakdown: breakdown,
             ),
           ),
-          const SizedBox(height: 24),
-
-          Container(
-            decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFF334155))),
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('PK Plotter', style: TextStyle(fontWeight: FontWeight.bold)),
-                      Row(
-                        children: [
-                          _settingBtn(Icons.percent, settings.normalized, () { setState(() { settings = GraphSettings(normalized: !settings.normalized, cumulative: settings.cumulative, showPeptides: settings.showPeptides, timeRange: settings.timeRange); }); _refreshGraph(); }),
-                          const SizedBox(width: 8),
-                          _settingBtn(Icons.layers, settings.cumulative, () { setState(() { settings = GraphSettings(normalized: settings.normalized, cumulative: !settings.cumulative, showPeptides: settings.showPeptides, timeRange: settings.timeRange); }); _refreshGraph(); }),
-                        ],
-                      )
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(color: const Color(0xFF0F172A), borderRadius: BorderRadius.circular(8)),
-                    child: Row(
-                      children: ['zoom', 'standard', 'cycle', 'year'].map((range) {
-                        final isActive = settings.timeRange == range;
-                        return Expanded(child: GestureDetector(
-                          onTap: () { setState(() { settings = GraphSettings(normalized: settings.normalized, cumulative: settings.cumulative, showPeptides: settings.showPeptides, timeRange: range); }); _refreshGraph(); },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 6),
-                            decoration: BoxDecoration(color: isActive ? const Color(0xFF334155) : Colors.transparent, borderRadius: BorderRadius.circular(6)),
-                            child: Center(child: Text(range.toUpperCase(), style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: isActive ? Colors.white : Colors.grey))),
-                          ),
-                        ));
-                      }).toList(),
-                    ),
-                  ),
-                ),
-                FutureBuilder<ComputedGraphData>(
-                  future: _graphDataFuture,
-                  builder: (context, snapshot) {
-                    if (!snapshot.hasData) return const SizedBox(height: 300, child: Center(child: CircularProgressIndicator(strokeWidth: 2)));
-                    final swimlaneH = math.max(40.0, (snapshot.data!.laneCount * 24.0) + 20.0);
-                    return Column(
-                      children: [
-                        SizedBox(
-                            height: 300.0 + swimlaneH,
-                            width: double.infinity,
-                            child: Padding(
-                                padding: const EdgeInsets.fromLTRB(0, 0, 16, 16),
-                                child: RepaintBoundary(child: CustomPaint(painter: PKGraphPainter(graphData: snapshot.data!, settings: settings)))
-                            )
-                        ),
-                        if (snapshot.data!.curves.where((c) => c.baseName != 'Total Androgens').isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                            child: Wrap(
-                              spacing: 12, runSpacing: 4,
-                              children: snapshot.data!.curves
-                                .where((c) => c.baseName != 'Total Androgens')
-                                .map((c) => Row(mainAxisSize: MainAxisSize.min, children: [
-                                  Container(width: 8, height: 8, decoration: BoxDecoration(color: c.color, shape: BoxShape.circle)),
-                                  const SizedBox(width: 4),
-                                  Text(c.baseName, style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                                ])).toList(),
-                            ),
-                          ),
-                      ],
+          const SizedBox(height: 18),
+          FutureBuilder<ComputedGraphData>(
+            future: _graphDataFuture,
+            builder: (context, snapshot) {
+              return PKChartCard(
+                graphData: snapshot.data,
+                settings: settings,
+                onRangeChanged: (range) {
+                  setState(() {
+                    settings = GraphSettings(
+                      normalized: settings.normalized,
+                      cumulative: settings.cumulative,
+                      showPeptides: settings.showPeptides,
+                      timeRange: range,
                     );
-                  },
-                ),
-              ],
-            ),
+                  });
+                  _refreshGraph();
+                },
+              );
+            },
           ),
-
-          const SizedBox(height: 24),
-          const Text("ACTIVE SERUM LEVELS", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 1)),
-          const SizedBox(height: 12),
-          ...activeStats.map((stat) {
-            IconData icon = Icons.water_drop;
-            if (stat.type == CompoundType.oral) icon = Icons.medication;
-            if (stat.type == CompoundType.peptide) icon = Icons.science;
-            if (stat.type == CompoundType.ancillary) icon = Icons.medical_services;
-
-            bool showTimeOnly = (stat.graphType == GraphType.event);
-
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(12), border: Border(left: BorderSide(color: Color(stat.colorValue), width: 4))),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Color(stat.colorValue).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)), child: Icon(icon, size: 16, color: Color(stat.colorValue))),
-                      const SizedBox(width: 12),
-                      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text(stat.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                        Text(showTimeOnly ? capitalize(stat.type.name) : stat.statusText, style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                      ]),
-                    ],
-                  ),
-                  Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                    Text(
-                        showTimeOnly
-                            ? stat.statusText
-                            : stat.mainValue,
-                        style: TextStyle(fontSize: showTimeOnly ? 13 : 18, fontWeight: FontWeight.bold)
-                    ),
-                    if (!showTimeOnly) Text(stat.subLabel, style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                  ])
-                ],
-              ),
-            );
-          }),
-          if (activeStats.isEmpty) const Center(child: Padding(padding: EdgeInsets.all(32), child: Text("No active compounds", style: TextStyle(color: Colors.grey)))),
-          const SizedBox(height: 32),
+          const SizedBox(height: 18),
+          SwimlaneCard(injections: injections, now: DateTime.now()),
         ],
       ),
     );
   }
 
-  Widget _buildHistory() {
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: injections.length,
-      itemBuilder: (context, index) {
-        final sorted = List<Injection>.from(injections)..sort((a, b) => b.date.compareTo(a.date));
-        final inj = sorted[index];
-        return Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          child: ListTile(
-            leading: CircleAvatar(backgroundColor: Color(inj.snapshot.colorValue).withValues(alpha: 0.2), child: Icon(Icons.circle, color: Color(inj.snapshot.colorValue), size: 14)),
-            title: Text(inj.snapshot.base, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-            subtitle: Text("${inj.snapshot.ester.isNotEmpty && inj.snapshot.ester != 'None' ? inj.snapshot.ester : ''} • ${formatDate(inj.date, 'MM/dd HH:mm')}"),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text("${inj.dosage} ${inj.snapshot.unit.toString().split('.').last}", style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold)),
-                IconButton(icon: const Icon(Icons.delete, size: 20, color: Colors.grey), onPressed: () => showDialog(
-                  context: context,
-                  builder: (ctx) => AlertDialog(
-                    backgroundColor: const Color(0xFF1E293B),
-                    title: const Text('Delete Entry?'),
-                    content: Text('${inj.snapshot.base} ${inj.snapshot.ester != 'None' ? inj.snapshot.ester : ''} — ${inj.dosage} ${inj.snapshot.unit.toString().split('.').last}'),
-                    actions: [
-                      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-                      TextButton(onPressed: () { Navigator.pop(ctx); _deleteInjection(inj.id); }, child: const Text('Delete', style: TextStyle(color: Colors.red))),
-                    ],
-                  ),
-                ))
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
 
-  Widget _buildCalendar() {
-    if (_showFullHistory) {
-      return Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-            child: Row(
-              children: [
-                IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => setState(() => _showFullHistory = false)),
-                const Text('Full History', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              ],
-            ),
-          ),
-          Expanded(child: _buildHistory()),
-        ],
-      );
-    }
-
-    final year = _calendarMonth.year;
-    final month = _calendarMonth.month;
-    final daysInMonth = DateTime(year, month + 1, 0).day;
-    final firstWeekday = DateTime(year, month, 1).weekday; // 1=Mon
-    final months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    final today = DateTime.now();
-
-    // Build map of day -> list of color values for that day
-    final Map<int, List<int>> dayColors = {};
-    for (var inj in injections) {
-      if (inj.date.year == year && inj.date.month == month) {
-        dayColors.putIfAbsent(inj.date.day, () => []);
-        if (!dayColors[inj.date.day]!.contains(inj.snapshot.colorValue)) {
-          dayColors[inj.date.day]!.add(inj.snapshot.colorValue);
-        }
-      }
-    }
-
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              IconButton(icon: const Icon(Icons.chevron_left), onPressed: () {
-                setState(() {
-                  _calendarMonth = DateTime(year, month - 1);
-                  _selectedDay = null;
-                });
-              }),
-              Text('${months[month - 1]} $year', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              Row(
-                children: [
-                  IconButton(icon: const Icon(Icons.chevron_right), onPressed: () {
-                    setState(() {
-                      _calendarMonth = DateTime(year, month + 1);
-                      _selectedDay = null;
-                    });
-                  }),
-                  IconButton(icon: const Icon(Icons.list, color: Colors.grey), onPressed: () => setState(() => _showFullHistory = true)),
-                ],
-              ),
-            ],
-          ),
-        ),
-        // Day-of-week headers
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-                .map((d) => Expanded(child: Center(child: Text(d, style: const TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.bold)))))
-                .toList(),
-          ),
-        ),
-        const SizedBox(height: 4),
-        // Calendar grid
-        GestureDetector(
-          onHorizontalDragEnd: (details) {
-            if (details.primaryVelocity != null) {
-              setState(() {
-                if (details.primaryVelocity! > 0) {
-                  _calendarMonth = DateTime(year, month - 1);
-                } else {
-                  _calendarMonth = DateTime(year, month + 1);
-                }
-                _selectedDay = null;
-              });
-            }
-          },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 7, childAspectRatio: 1),
-              itemCount: (firstWeekday - 1) + daysInMonth,
-              itemBuilder: (context, index) {
-                if (index < firstWeekday - 1) return const SizedBox();
-                final day = index - (firstWeekday - 1) + 1;
-                final isToday = today.year == year && today.month == month && today.day == day;
-                final isSelected = _selectedDay != null && _selectedDay!.year == year && _selectedDay!.month == month && _selectedDay!.day == day;
-                final colors = dayColors[day] ?? [];
-
-                return GestureDetector(
-                  onTap: () => setState(() => _selectedDay = DateTime(year, month, day)),
-                  child: Container(
-                    margin: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                      color: isSelected ? const Color(0xFF10B981).withValues(alpha: 0.2) : Colors.transparent,
-                      borderRadius: BorderRadius.circular(8),
-                      border: isToday ? Border.all(color: const Color(0xFF10B981), width: 1.5) : null,
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text('$day', style: TextStyle(fontSize: 13, color: isSelected ? const Color(0xFF10B981) : Colors.white)),
-                        if (colors.isNotEmpty)
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: colors.take(3).map((c) => Container(
-                              width: 5, height: 5,
-                              margin: const EdgeInsets.only(top: 2, left: 1, right: 1),
-                              decoration: BoxDecoration(color: Color(c), shape: BoxShape.circle),
-                            )).toList(),
-                          ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        // Selected day injections
-        if (_selectedDay != null)
-          Expanded(child: _buildDayInjections(_selectedDay!))
-        else
-          const Expanded(child: Center(child: Text('Tap a day to view entries', style: TextStyle(color: Colors.grey)))),
-      ],
-    );
-  }
-
-  Widget _buildDayInjections(DateTime day) {
-    final dayInjs = injections.where((i) =>
-      i.date.year == day.year && i.date.month == day.month && i.date.day == day.day
-    ).toList()..sort((a, b) => a.date.compareTo(b.date));
-
-    if (dayInjs.isEmpty) {
-      return const Center(child: Text('No entries for this day', style: TextStyle(color: Colors.grey)));
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: dayInjs.length,
-      itemBuilder: (context, index) {
-        final inj = dayInjs[index];
-        return Card(
-          margin: const EdgeInsets.only(bottom: 8),
-          child: ListTile(
-            leading: CircleAvatar(backgroundColor: Color(inj.snapshot.colorValue).withValues(alpha: 0.2), child: Icon(Icons.circle, color: Color(inj.snapshot.colorValue), size: 14)),
-            title: Text(inj.snapshot.base, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-            subtitle: Text("${inj.snapshot.ester.isNotEmpty && inj.snapshot.ester != 'None' ? inj.snapshot.ester : ''} • ${formatDate(inj.date, 'MM/dd HH:mm')}"),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text("${inj.dosage} ${inj.snapshot.unit.toString().split('.').last}", style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold)),
-                IconButton(icon: const Icon(Icons.delete, size: 20, color: Colors.grey), onPressed: () => showDialog(
-                  context: context,
-                  builder: (ctx) => AlertDialog(
-                    backgroundColor: const Color(0xFF1E293B),
-                    title: const Text('Delete Entry?'),
-                    content: Text('${inj.snapshot.base} ${inj.snapshot.ester != 'None' ? inj.snapshot.ester : ''} — ${inj.dosage} ${inj.snapshot.unit.toString().split('.').last}'),
-                    actions: [
-                      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-                      TextButton(onPressed: () { Navigator.pop(ctx); _deleteInjection(inj.id); }, child: const Text('Delete', style: TextStyle(color: Colors.red))),
-                    ],
-                  ),
-                ))
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _settingBtn(IconData icon, bool isActive, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(6),
-        decoration: BoxDecoration(color: isActive ? const Color(0xFF10B981) : const Color(0xFF334155), borderRadius: BorderRadius.circular(6)),
-        child: Icon(icon, size: 16, color: Colors.white),
-      ),
-    );
-  }
 }
