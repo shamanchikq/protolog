@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:protolog_tracker/models.dart';
 import 'package:protolog_tracker/engine/library_stats.dart';
+import 'package:protolog_tracker/data.dart';
 
 CompoundDefinition _testCyp() => const CompoundDefinition(
   id: 'test_cyp',
@@ -247,6 +248,130 @@ void main() {
         expect(idx, greaterThanOrEqualTo(lastTypeIndex));
         lastTypeIndex = idx;
       }
+    });
+  });
+
+  group('recentInjectionsFor', () {
+    test('returns empty when no matches', () {
+      final result = recentInjectionsFor(
+        base: 'Testosterone',
+        ester: 'Cypionate',
+        injections: const [],
+      );
+      expect(result, isEmpty);
+    });
+
+    test('returns most recent first, honors limit', () {
+      final cyp = _testCyp();
+      final injections = [
+        _inj(cyp, DateTime(2026, 5, 10), 125),
+        _inj(cyp, DateTime(2026, 5, 20), 125),
+        _inj(cyp, DateTime(2026, 5, 15), 125),
+        _inj(cyp, DateTime(2026, 5, 5), 125),
+      ];
+      final result = recentInjectionsFor(
+        base: 'Testosterone',
+        ester: 'Cypionate',
+        injections: injections,
+        limit: 2,
+      );
+      expect(result.length, 2);
+      expect(result[0].date, DateTime(2026, 5, 20));
+      expect(result[1].date, DateTime(2026, 5, 15));
+    });
+
+    test('excludes other (base, ester) injections', () {
+      final cyp = _testCyp();
+      final mast = _mastE();
+      final injections = [
+        _inj(cyp, DateTime(2026, 5, 10), 125),
+        _inj(mast, DateTime(2026, 5, 20), 100),
+      ];
+      final result = recentInjectionsFor(
+        base: 'Testosterone',
+        ester: 'Cypionate',
+        injections: injections,
+      );
+      expect(result.length, 1);
+      expect(result.first.snapshot.base, 'Testosterone');
+    });
+  });
+
+  group('injectionCountFor', () {
+    test('returns 0 when no matches', () {
+      expect(
+        injectionCountFor(base: 'X', ester: 'Y', injections: const []),
+        0,
+      );
+    });
+
+    test('counts only matching (base, ester)', () {
+      final cyp = _testCyp();
+      final mast = _mastE();
+      final injections = [
+        _inj(cyp, DateTime(2026, 5, 10), 125),
+        _inj(cyp, DateTime(2026, 5, 15), 125),
+        _inj(mast, DateTime(2026, 5, 20), 100),
+      ];
+      expect(
+        injectionCountFor(
+            base: 'Testosterone', ester: 'Cypionate', injections: injections),
+        2,
+      );
+    });
+  });
+
+  group('displayName', () {
+    test('returns BASE_LIBRARY map key when id matches', () {
+      final sust = BASE_LIBRARY['Sustanon 250']!.copyWith(id: 'Sustanon 250');
+      expect(displayName(sust), 'Sustanon 250');
+    });
+
+    test('returns base alone when ester is None', () {
+      const c = CompoundDefinition(
+        id: 'x', base: 'BPC-157', ester: 'None',
+        type: CompoundType.peptide, graphType: GraphType.event,
+        halfLife: 0, timeToPeak: 0, ratio: 1.0, unit: Unit.mcg,
+        colorValue: 0xFF000000,
+      );
+      expect(displayName(c), 'BPC-157');
+    });
+
+    test('joins base + ester otherwise', () {
+      expect(displayName(_testCyp()), 'Testosterone Cypionate');
+    });
+  });
+
+  group('metaLineFor', () {
+    test('steroid curve compound uses t½', () {
+      expect(metaLineFor(_testCyp()), 'Steroid · t½ 5.0d');
+    });
+
+    test('blend compound shows ester count', () {
+      final sust = BASE_LIBRARY['Sustanon 250']!.copyWith(id: 'Sustanon 250');
+      expect(metaLineFor(sust), 'Steroid · 4-ester');
+      final tri = BASE_LIBRARY['Tri-Tren']!.copyWith(id: 'Tri-Tren');
+      expect(metaLineFor(tri), 'Steroid · 3-ester');
+    });
+
+    test('peptide event compound shows "event"', () {
+      const c = CompoundDefinition(
+        id: 'x', base: 'BPC-157', ester: 'None',
+        type: CompoundType.peptide, graphType: GraphType.event,
+        halfLife: 0, timeToPeak: 0, ratio: 1.0, unit: Unit.mcg,
+        colorValue: 0xFF000000,
+      );
+      expect(metaLineFor(c), 'Peptide · event');
+    });
+
+    test('peptide window compound shows "window"', () {
+      const c = CompoundDefinition(
+        id: 'x', base: 'Semaglutide', ester: 'None',
+        type: CompoundType.peptide, graphType: GraphType.activeWindow,
+        halfLife: 7, timeToPeak: 2, ratio: 1.0, unit: Unit.mg,
+        colorValue: 0xFF000000,
+      );
+      expect(metaLineFor(c), 'Peptide · window');
     });
   });
 }

@@ -121,3 +121,67 @@ List<CompoundDefinition> cataloguedCompounds({
   });
   return list;
 }
+
+/// Last `limit` injections of (base, ester), most recent first.
+List<Injection> recentInjectionsFor({
+  required String base,
+  required String ester,
+  required List<Injection> injections,
+  int limit = 5,
+}) {
+  final matching = injections
+      .where((i) => i.snapshot.base == base && i.snapshot.ester == ester)
+      .toList();
+  matching.sort((a, b) => b.date.compareTo(a.date));
+  if (matching.length <= limit) return matching;
+  return matching.sublist(0, limit);
+}
+
+/// Total injection count for (base, ester).
+int injectionCountFor({
+  required String base,
+  required String ester,
+  required List<Injection> injections,
+}) {
+  var n = 0;
+  for (final inj in injections) {
+    if (inj.snapshot.base == base && inj.snapshot.ester == ester) n++;
+  }
+  return n;
+}
+
+/// Display label for a compound row / hero. Uses the BASE_LIBRARY map key
+/// when the compound's id matches; otherwise joins base + ester.
+String displayName(CompoundDefinition c) {
+  if (BASE_LIBRARY.containsKey(c.id)) return c.id;
+  final ester = c.ester.trim();
+  if (ester.isEmpty || ester.toLowerCase() == 'none') return c.base;
+  return '${c.base} $ester';
+}
+
+/// Meta line shown under the display name on Library rows.
+/// Examples: "Steroid · t½ 5.0d", "Steroid · 4-ester", "Peptide · window",
+/// "Peptide · event".
+String metaLineFor(CompoundDefinition c) {
+  final typeLabel = _typeLabel(c.type);
+  // blends: ester field contains "(Mix)" — count via known blend ids.
+  if (c.id == 'Sustanon 250') return '$typeLabel · 4-ester';
+  if (c.id == 'Tri-Tren') return '$typeLabel · 3-ester';
+  if (c.graphType == GraphType.event) return '$typeLabel · event';
+  if (c.graphType == GraphType.activeWindow) return '$typeLabel · window';
+  // default: half-life
+  return '$typeLabel · t½ ${c.halfLife.toStringAsFixed(1)}d';
+}
+
+String _typeLabel(CompoundType t) {
+  switch (t) {
+    case CompoundType.steroid:
+      return 'Steroid';
+    case CompoundType.oral:
+      return 'Oral';
+    case CompoundType.peptide:
+      return 'Peptide';
+    case CompoundType.ancillary:
+      return 'Ancillary';
+  }
+}
