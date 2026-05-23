@@ -256,7 +256,7 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
             _label('Visual mode'),
             const SizedBox(height: 6),
             LabSegmented<GraphType>(
-              value: _visMode == GraphType.curve ? GraphType.curve : _visMode,
+              value: _visMode,
               options: const [GraphType.curve, GraphType.activeWindow, GraphType.event],
               labelFor: (g) {
                 switch (g) {

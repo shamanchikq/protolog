@@ -11,9 +11,6 @@ enum _LibFilter { all, steroid, oral, peptide, ancillary }
 class LibraryPage extends StatefulWidget {
   final List<CompoundDefinition> userCompounds;
   final List<Injection> injections;
-  final void Function(CompoundDefinition) onAdd;
-  final void Function(String id) onDelete;
-  final void Function(CompoundDefinition) onUpdate;
   final VoidCallback onExport;
   final VoidCallback onImport;
   final void Function(CompoundDefinition compound) onOpenDetail;
@@ -23,9 +20,6 @@ class LibraryPage extends StatefulWidget {
     super.key,
     required this.userCompounds,
     required this.injections,
-    required this.onAdd,
-    required this.onDelete,
-    required this.onUpdate,
     required this.onExport,
     required this.onImport,
     required this.onOpenDetail,

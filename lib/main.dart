@@ -559,9 +559,6 @@ class _MainScreenState extends State<MainScreen> {
         content = LibraryPage(
           userCompounds: userCompounds,
           injections: injections,
-          onAdd: _addUserCompound,
-          onDelete: _deleteUserCompound,
-          onUpdate: _updateUserCompound,
           onExport: _exportToMarkdown,
           onImport: _importFromMarkdown,
           onOpenDetail: _openCompoundDetail,
