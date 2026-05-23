@@ -98,4 +98,48 @@ void main() {
       expect(formatUsedAgo(now.subtract(const Duration(days: 2, hours: 5)), now: now), '2d ago');
     });
   });
+
+  group('isInProtocol', () {
+    test('false when no injection ever', () {
+      final cyp = _testCyp();
+      expect(
+        isInProtocol(compound: cyp, injections: const [], now: DateTime(2026, 5, 23)),
+        isFalse,
+      );
+    });
+
+    test('true when last injection within halfLife * 8 days', () {
+      final cyp = _testCyp(); // halfLife 5d → window 40d
+      final now = DateTime(2026, 5, 23);
+      final injections = [_inj(cyp, now.subtract(const Duration(days: 20)), 125)];
+      expect(isInProtocol(compound: cyp, injections: injections, now: now), isTrue);
+    });
+
+    test('false when last injection outside halfLife * 8 days', () {
+      final cyp = _testCyp(); // halfLife 5d → window 40d
+      final now = DateTime(2026, 5, 23);
+      final injections = [_inj(cyp, now.subtract(const Duration(days: 50)), 125)];
+      expect(isInProtocol(compound: cyp, injections: injections, now: now), isFalse);
+    });
+
+    test('falls back to 7-day window when halfLife is 0', () {
+      final event = const CompoundDefinition(
+        id: 'bpc',
+        base: 'BPC-157',
+        ester: 'None',
+        type: CompoundType.peptide,
+        graphType: GraphType.event,
+        halfLife: 0,
+        timeToPeak: 0,
+        ratio: 1.0,
+        unit: Unit.mcg,
+        colorValue: 0xFF8FC5A8,
+      );
+      final now = DateTime(2026, 5, 23);
+      final within = [_inj(event, now.subtract(const Duration(days: 3)), 250)];
+      final outside = [_inj(event, now.subtract(const Duration(days: 10)), 250)];
+      expect(isInProtocol(compound: event, injections: within, now: now), isTrue);
+      expect(isInProtocol(compound: event, injections: outside, now: now), isFalse);
+    });
+  });
 }
