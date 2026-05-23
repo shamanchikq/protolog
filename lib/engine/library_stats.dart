@@ -16,3 +16,16 @@ DateTime? lastInjectionFor({
   }
   return best;
 }
+
+/// "4h ago" when <24h, "Nd ago" otherwise, "—" for null. Always integer.
+String formatUsedAgo(DateTime? when, {DateTime? now}) {
+  if (when == null) return '—';
+  final n = now ?? DateTime.now();
+  final diff = n.difference(when);
+  if (diff.inHours < 24) {
+    final h = diff.inHours;
+    return '${h}h ago';
+  }
+  final d = diff.inDays;
+  return '${d}d ago';
+}

@@ -73,4 +73,29 @@ void main() {
       expect(result, DateTime(2026, 5, 10));
     });
   });
+
+  group('formatUsedAgo', () {
+    final now = DateTime(2026, 5, 23, 12, 0);
+
+    test('returns em-dash for null', () {
+      expect(formatUsedAgo(null, now: now), '—');
+    });
+
+    test('returns hours when less than 24h ago', () {
+      expect(formatUsedAgo(now.subtract(const Duration(hours: 4)), now: now), '4h ago');
+    });
+
+    test('returns "1d ago" at exactly 24h', () {
+      expect(formatUsedAgo(now.subtract(const Duration(hours: 24)), now: now), '1d ago');
+    });
+
+    test('returns days for older timestamps', () {
+      expect(formatUsedAgo(now.subtract(const Duration(days: 12)), now: now), '12d ago');
+    });
+
+    test('floors partial hours and partial days', () {
+      expect(formatUsedAgo(now.subtract(const Duration(hours: 3, minutes: 45)), now: now), '3h ago');
+      expect(formatUsedAgo(now.subtract(const Duration(days: 2, hours: 5)), now: now), '2d ago');
+    });
+  });
 }
