@@ -88,3 +88,36 @@ List<CompoundDefinition> protocolCompounds({
 
   return inProtocol;
 }
+
+/// Full catalogue: BASE_LIBRARY entries (id set to the map key for display)
+/// merged with user customs. A custom with the same (base, ester) as a
+/// built-in supersedes the built-in. Sorted by type (steroid, oral, peptide,
+/// ancillary) then base name ascending.
+List<CompoundDefinition> cataloguedCompounds({
+  required List<CompoundDefinition> userCompounds,
+}) {
+  const typeOrder = {
+    CompoundType.steroid: 0,
+    CompoundType.oral: 1,
+    CompoundType.peptide: 2,
+    CompoundType.ancillary: 3,
+  };
+
+  final merged = <String, CompoundDefinition>{};
+  for (final entry in BASE_LIBRARY.entries) {
+    final c = entry.value.copyWith(id: entry.key);
+    merged['${c.base}|${c.ester}'] = c;
+  }
+  for (final c in userCompounds) {
+    merged['${c.base}|${c.ester}'] = c;
+  }
+
+  final list = merged.values.toList();
+  list.sort((a, b) {
+    final ta = typeOrder[a.type] ?? 99;
+    final tb = typeOrder[b.type] ?? 99;
+    if (ta != tb) return ta.compareTo(tb);
+    return a.base.toLowerCase().compareTo(b.base.toLowerCase());
+  });
+  return list;
+}

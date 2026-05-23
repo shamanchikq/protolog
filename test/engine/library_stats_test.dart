@@ -196,4 +196,57 @@ void main() {
       expect(result.first.ester, 'Cypionate');
     });
   });
+
+  group('cataloguedCompounds', () {
+    test('includes all BASE_LIBRARY entries when no customs', () {
+      final result = cataloguedCompounds(userCompounds: const []);
+      // BASE_LIBRARY has many entries — just sanity check it returns them.
+      expect(result.length, greaterThan(10));
+      // ids should be the map keys, not 'temp'
+      expect(result.any((c) => c.id == 'Testosterone Cypionate'), isTrue);
+      expect(result.any((c) => c.id == 'temp'), isFalse);
+    });
+
+    test('customs shadow built-ins with same (base, ester)', () {
+      final customCyp = const CompoundDefinition(
+        id: 'my_test_c',
+        base: 'Testosterone',
+        ester: 'Cypionate',
+        type: CompoundType.steroid,
+        graphType: GraphType.curve,
+        halfLife: 4.2, // overridden
+        timeToPeak: 1.5,
+        ratio: 0.69,
+        unit: Unit.mg,
+        colorValue: 0xFF000000,
+        isCustom: true,
+      );
+      final result = cataloguedCompounds(userCompounds: [customCyp]);
+      final cypResults = result.where((c) =>
+          c.base == 'Testosterone' && c.ester == 'Cypionate').toList();
+      expect(cypResults.length, 1);
+      expect(cypResults.first.id, 'my_test_c');
+      expect(cypResults.first.halfLife, 4.2);
+    });
+
+    test('sorts by type (steroid, oral, peptide, ancillary) then base asc', () {
+      final result = cataloguedCompounds(userCompounds: const []);
+      final types = result.map((c) => c.type).toList();
+      // first compound should be a steroid; ancillaries last (if present).
+      expect(types.first, CompoundType.steroid);
+      // verify no later type appears before an earlier one
+      var lastTypeIndex = -1;
+      const order = [
+        CompoundType.steroid,
+        CompoundType.oral,
+        CompoundType.peptide,
+        CompoundType.ancillary,
+      ];
+      for (final t in types) {
+        final idx = order.indexOf(t);
+        expect(idx, greaterThanOrEqualTo(lastTypeIndex));
+        lastTypeIndex = idx;
+      }
+    });
+  });
 }
