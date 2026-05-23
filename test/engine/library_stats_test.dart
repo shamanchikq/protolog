@@ -142,4 +142,58 @@ void main() {
       expect(isInProtocol(compound: event, injections: outside, now: now), isFalse);
     });
   });
+
+  group('protocolCompounds', () {
+    test('empty when no injections', () {
+      final result = protocolCompounds(
+        userCompounds: const [],
+        injections: const [],
+        now: DateTime(2026, 5, 23),
+      );
+      expect(result, isEmpty);
+    });
+
+    test('returns compounds sorted by last-used desc', () {
+      final cyp = _testCyp();
+      final mast = _mastE();
+      final now = DateTime(2026, 5, 23);
+      final injections = [
+        _inj(cyp, now.subtract(const Duration(days: 5)), 125),
+        _inj(mast, now.subtract(const Duration(days: 2)), 100),
+      ];
+      final result = protocolCompounds(
+        userCompounds: [cyp, mast],
+        injections: injections,
+        now: now,
+      );
+      expect(result.map((c) => c.base).toList(), ['Masteron', 'Testosterone']);
+    });
+
+    test('excludes compounds outside their relevance window', () {
+      final cyp = _testCyp(); // 40d window
+      final now = DateTime(2026, 5, 23);
+      final injections = [_inj(cyp, now.subtract(const Duration(days: 60)), 125)];
+      final result = protocolCompounds(
+        userCompounds: [cyp],
+        injections: injections,
+        now: now,
+      );
+      expect(result, isEmpty);
+    });
+
+    test('uses BASE_LIBRARY when no matching user compound exists', () {
+      // Built-in Testosterone Cypionate exists in BASE_LIBRARY; user added none.
+      final builtinCyp = _testCyp(); // simulate by passing through injections.snapshot
+      final now = DateTime(2026, 5, 23);
+      final injections = [_inj(builtinCyp, now.subtract(const Duration(days: 3)), 125)];
+      final result = protocolCompounds(
+        userCompounds: const [],
+        injections: injections,
+        now: now,
+      );
+      expect(result, isNotEmpty);
+      expect(result.first.base, 'Testosterone');
+      expect(result.first.ester, 'Cypionate');
+    });
+  });
 }

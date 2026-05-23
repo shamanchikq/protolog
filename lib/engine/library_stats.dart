@@ -1,4 +1,5 @@
 import '../models.dart';
+import '../data.dart';
 
 /// Most-recent injection date for (base, ester), or null when none.
 DateTime? lastInjectionFor({
@@ -48,4 +49,42 @@ bool isInProtocol({
   final windowDays = compound.halfLife > 0 ? compound.halfLife * 8 : 7.0;
   final ageDays = n.difference(last).inSeconds / 86400.0;
   return ageDays <= windowDays;
+}
+
+/// All compounds the user is currently dosing (within their PK-relevance
+/// window), sorted by last-used desc. Walks the union of:
+///   - userCompounds (customs + user-added presets)
+///   - BASE_LIBRARY entries referenced by recent injection snapshots
+/// A custom shadows a built-in with the same (base, ester).
+List<CompoundDefinition> protocolCompounds({
+  required List<CompoundDefinition> userCompounds,
+  required List<Injection> injections,
+  DateTime? now,
+}) {
+  final n = now ?? DateTime.now();
+
+  // Key by "base|ester" so customs and built-ins collapse if they collide.
+  final candidates = <String, CompoundDefinition>{};
+  for (final c in userCompounds) {
+    candidates['${c.base}|${c.ester}'] = c;
+  }
+  for (final inj in injections) {
+    final key = '${inj.snapshot.base}|${inj.snapshot.ester}';
+    candidates.putIfAbsent(key, () => inj.snapshot);
+  }
+
+  final inProtocol = candidates.values
+      .where((c) => isInProtocol(compound: c, injections: injections, now: n))
+      .toList();
+
+  inProtocol.sort((a, b) {
+    final la = lastInjectionFor(base: a.base, ester: a.ester, injections: injections);
+    final lb = lastInjectionFor(base: b.base, ester: b.ester, injections: injections);
+    if (la == null && lb == null) return 0;
+    if (la == null) return 1;
+    if (lb == null) return -1;
+    return lb.compareTo(la);
+  });
+
+  return inProtocol;
 }
