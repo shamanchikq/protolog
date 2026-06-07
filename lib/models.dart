@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 enum CompoundType { steroid, oral, peptide, ancillary }
 enum GraphType { curve, activeWindow, event }
 enum Unit { mg, mcg, iu }
+enum ReminderState { overdue, due, on, paused }
 
 // --- Helpers ---
 T _enumFromString<T>(List<T> values, String str) {
@@ -42,6 +43,7 @@ class CompoundDefinition {
   final Unit unit;
   final int colorValue;
   final bool isCustom;
+  final double? concentration; // NEW — mg/mL (or mcg/mL for mcg compounds). Null = unknown.
 
   const CompoundDefinition({
     required this.id,
@@ -56,6 +58,7 @@ class CompoundDefinition {
     required this.unit,
     required this.colorValue,
     this.isCustom = false,
+    this.concentration, // NEW
   });
 
   Color get color => Color(colorValue);
@@ -74,6 +77,7 @@ class CompoundDefinition {
     'unit': unit.toString().split('.').last,
     'colorValue': colorValue,
     'isCustom': isCustom,
+    'concentration': concentration, // NEW
   };
 
   factory CompoundDefinition.fromJson(Map<String, dynamic> json) {
@@ -90,6 +94,39 @@ class CompoundDefinition {
       unit: _enumFromString(Unit.values, json['unit']),
       colorValue: json['colorValue'],
       isCustom: json['isCustom'] ?? false,
+      concentration: json['concentration'] != null ? (json['concentration'] as num).toDouble() : null, // NEW
+    );
+  }
+
+  CompoundDefinition copyWith({
+    String? id,
+    String? base,
+    String? ester,
+    CompoundType? type,
+    GraphType? graphType,
+    double? halfLife,
+    double? defaultHalfLife,
+    double? timeToPeak,
+    double? ratio,
+    Unit? unit,
+    int? colorValue,
+    bool? isCustom,
+    double? concentration,
+  }) {
+    return CompoundDefinition(
+      id: id ?? this.id,
+      base: base ?? this.base,
+      ester: ester ?? this.ester,
+      type: type ?? this.type,
+      graphType: graphType ?? this.graphType,
+      halfLife: halfLife ?? this.halfLife,
+      defaultHalfLife: defaultHalfLife ?? this.defaultHalfLife,
+      timeToPeak: timeToPeak ?? this.timeToPeak,
+      ratio: ratio ?? this.ratio,
+      unit: unit ?? this.unit,
+      colorValue: colorValue ?? this.colorValue,
+      isCustom: isCustom ?? this.isCustom,
+      concentration: concentration ?? this.concentration,
     );
   }
 }
@@ -100,6 +137,8 @@ class Injection {
   final DateTime date;
   final double dosage;
   final CompoundDefinition snapshot;
+  final String? site;   // NEW — e.g. "Vent. glute R"; null for orals/legacy
+  final String? notes;  // NEW — optional free text
 
   const Injection({
     required this.id,
@@ -107,6 +146,8 @@ class Injection {
     required this.date,
     required this.dosage,
     required this.snapshot,
+    this.site,   // NEW
+    this.notes,  // NEW
   });
 
   Map<String, dynamic> toJson() => {
@@ -115,6 +156,8 @@ class Injection {
     'date': date.toIso8601String(),
     'dosage': dosage,
     'snapshot': snapshot.toJson(),
+    'site': site,     // NEW
+    'notes': notes,   // NEW
   };
 
   factory Injection.fromJson(Map<String, dynamic> json) {
@@ -124,6 +167,8 @@ class Injection {
       date: DateTime.parse(json['date']),
       dosage: (json['dosage'] as num).toDouble(),
       snapshot: CompoundDefinition.fromJson(json['snapshot']),
+      site: json['site'] as String?,    // NEW
+      notes: json['notes'] as String?,  // NEW
     );
   }
 }
@@ -223,7 +268,8 @@ class InjectionMarkerData {
   final double yLevel;
   final bool isOral;
   final int colorValue;
-  InjectionMarkerData(this.xPct, this.yLevel, this.isOral, this.colorValue);
+  final String baseName;
+  InjectionMarkerData(this.xPct, this.yLevel, this.isOral, this.colorValue, this.baseName);
 }
 
 class IsolateInput {
@@ -255,12 +301,14 @@ class Reminder {
   final String compoundBase;
   final String compoundEster;
   final String scheduleMode; // 'interval' or 'custom'
-  final int intervalDays;
+  final double intervalDays;
   final int hour;
   final int minute;
   final List<ReminderSlot> customSlots;
   final bool enabled;
-  final DateTime? lastScheduledDate;
+  final DateTime? lastScheduledDate; // legacy; superseded by anchorDate
+  final DateTime? anchorDate;        // interval: next expected dose (rhythm origin)
+  final DateTime? acknowledgedUntil; // custom: suppress occurrences at/before this
 
   const Reminder({
     required this.id,
@@ -273,6 +321,8 @@ class Reminder {
     this.customSlots = const [],
     required this.enabled,
     this.lastScheduledDate,
+    this.anchorDate,
+    this.acknowledgedUntil,
   });
 
   Map<String, dynamic> toJson() => {
@@ -286,22 +336,29 @@ class Reminder {
     'customSlots': customSlots.map((s) => s.toJson()).toList(),
     'enabled': enabled,
     'lastScheduledDate': lastScheduledDate?.toIso8601String(),
+    'anchorDate': anchorDate?.toIso8601String(),
+    'acknowledgedUntil': acknowledgedUntil?.toIso8601String(),
   };
 
   factory Reminder.fromJson(Map<String, dynamic> json) {
+    DateTime? parse(String key) =>
+        json[key] != null ? DateTime.parse(json[key] as String) : null;
+    final legacyLast = parse('lastScheduledDate');
     return Reminder(
       id: json['id'],
       compoundBase: json['compoundBase'],
       compoundEster: json['compoundEster'],
       scheduleMode: json['scheduleMode'] ?? 'interval',
-      intervalDays: (json['intervalDays'] as num).toInt(),
+      intervalDays: (json['intervalDays'] as num).toDouble(),
       hour: (json['hour'] as num).toInt(),
       minute: (json['minute'] as num).toInt(),
       customSlots: json['customSlots'] != null
           ? (json['customSlots'] as List).map((s) => ReminderSlot.fromJson(s)).toList()
           : [],
       enabled: json['enabled'] ?? true,
-      lastScheduledDate: json['lastScheduledDate'] != null ? DateTime.parse(json['lastScheduledDate']) : null,
+      lastScheduledDate: legacyLast,
+      anchorDate: parse('anchorDate') ?? legacyLast,
+      acknowledgedUntil: parse('acknowledgedUntil'),
     );
   }
 
@@ -310,12 +367,14 @@ class Reminder {
     String? compoundBase,
     String? compoundEster,
     String? scheduleMode,
-    int? intervalDays,
+    double? intervalDays,
     int? hour,
     int? minute,
     List<ReminderSlot>? customSlots,
     bool? enabled,
     DateTime? lastScheduledDate,
+    DateTime? anchorDate,
+    DateTime? acknowledgedUntil,
   }) {
     return Reminder(
       id: id ?? this.id,
@@ -328,6 +387,8 @@ class Reminder {
       customSlots: customSlots ?? this.customSlots,
       enabled: enabled ?? this.enabled,
       lastScheduledDate: lastScheduledDate ?? this.lastScheduledDate,
+      anchorDate: anchorDate ?? this.anchorDate,
+      acknowledgedUntil: acknowledgedUntil ?? this.acknowledgedUntil,
     );
   }
 }
