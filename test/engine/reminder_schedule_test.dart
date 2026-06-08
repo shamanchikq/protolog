@@ -91,4 +91,32 @@ void main() {
       expect(reminderState(r, now), ReminderState.on);
     });
   });
+
+  group('advance', () {
+    test('skip interval moves anchor forward one interval', () {
+      final r = interval(days: 3.5, anchor: DateTime(2026, 5, 18, 6, 0));
+      final r2 = advanceAfterSkip(r, now: now);
+      expect(r2.anchorDate, DateTime(2026, 5, 21, 18, 0));
+    });
+    test('dose interval re-bases anchor to takenAt + interval', () {
+      final r = interval(days: 3.5, anchor: DateTime(2026, 5, 18, 6, 0));
+      final taken = DateTime(2026, 5, 18, 7, 40);
+      final r2 = advanceAfterDose(r, taken);
+      expect(r2.anchorDate, taken.add(const Duration(days: 3, hours: 12)));
+    });
+    test('skip custom sets acknowledgedUntil to the current slot', () {
+      // weekday 1 = Monday = today (May 18); the Mon 20:30 slot is acknowledged,
+      // so the next occurrence rolls to the following Monday (May 25).
+      final r = custom([ReminderSlot(weekday: 1, hour: 20, minute: 30)]);
+      final r2 = advanceAfterSkip(r, now: now);
+      expect(r2.acknowledgedUntil, DateTime(2026, 5, 18, 20, 30));
+      expect(nextOccurrence(r2, now), DateTime(2026, 5, 25, 20, 30));
+    });
+    test('dose custom sets acknowledgedUntil to takenAt', () {
+      final r = custom([ReminderSlot(weekday: 3, hour: 20, minute: 30)]);
+      final taken = DateTime(2026, 5, 18, 19, 0);
+      final r2 = advanceAfterDose(r, taken);
+      expect(r2.acknowledgedUntil, taken);
+    });
+  });
 }

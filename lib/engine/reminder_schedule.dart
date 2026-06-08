@@ -59,3 +59,19 @@ ReminderState reminderState(
   if (dose.isBefore(now)) return ReminderState.overdue;
   return dose.isAfter(dueEdge) ? ReminderState.on : ReminderState.due;
 }
+
+Reminder advanceAfterSkip(Reminder r, {DateTime? now}) {
+  final n = now ?? DateTime.now();
+  if (r.scheduleMode == 'custom') {
+    return r.copyWith(acknowledgedUntil: _nextCustomSlot(r, n));
+  }
+  final next = expectedDose(r, n).add(_intervalDuration(r.intervalDays));
+  return r.copyWith(anchorDate: next);
+}
+
+Reminder advanceAfterDose(Reminder r, DateTime takenAt) {
+  if (r.scheduleMode == 'custom') {
+    return r.copyWith(acknowledgedUntil: takenAt);
+  }
+  return r.copyWith(anchorDate: takenAt.add(_intervalDuration(r.intervalDays)));
+}
