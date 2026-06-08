@@ -97,10 +97,11 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
   final List<PeptideLaneData> lanes = [];
 
   for (var inj in peptideInjections) {
-    // Check Library for latest settings override
-    final libraryDef = lookupLibraryDef(inj.snapshot.base, inj.snapshot.ester);
-    final graphType = libraryDef?.graphType ?? inj.snapshot.graphType;
-    final halfLife = libraryDef?.halfLife ?? inj.snapshot.halfLife;
+    // Read PK from the injection's frozen snapshot — same as steroid/oral
+    // curves. This keeps past lanes stable when a compound's library entry is
+    // edited; retroactive changes are applied explicitly via rewriteSnapshots.
+    final graphType = inj.snapshot.graphType;
+    final halfLife = inj.snapshot.halfLife;
 
     final msSinceStart = inj.date.millisecondsSinceEpoch - startMs;
     final startPct = msSinceStart / totalDurationMs;
@@ -175,7 +176,7 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
               other.snapshot.halfLife, other.snapshot.timeToPeak, other.snapshot.ratio, other.snapshot.ester);
         }
       }
-      injectionMarkers.add(InjectionMarkerData(pct, level, inj.snapshot.type == CompoundType.oral, inj.snapshot.colorValue));
+      injectionMarkers.add(InjectionMarkerData(pct, level, inj.snapshot.type == CompoundType.oral, inj.snapshot.colorValue, inj.snapshot.base));
     }
   }
 

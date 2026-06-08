@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models.dart';
+import '../../engine/library_stats.dart';
 import '../theme.dart';
 import '../widgets/lab_primitives.dart';
 import '../widgets/library_section.dart';
@@ -68,6 +69,12 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
     _yld = TextEditingController(text: e == null ? '100' : (e.ratio * 100).round().toString());
     _type = e?.type ?? CompoundType.steroid;
     _visMode = e?.graphType ?? GraphType.curve;
+    // The visual-mode control omits Curve for peptides/ancillaries; coerce so
+    // its `value` is always one of the offered options.
+    if ((_type == CompoundType.peptide || _type == CompoundType.ancillary) &&
+        _visMode == GraphType.curve) {
+      _visMode = GraphType.activeWindow;
+    }
     _unit = e?.unit ?? Unit.mg;
     _colorValue = e?.colorValue ?? _swatches.first;
     for (final ctrl in [_name, _ester, _hl, _tp, _yld]) {
@@ -86,6 +93,8 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
   }
 
   bool get _canSave {
+    // Built-in identity is locked, so name/ester are always valid.
+    if (_isBuiltInEdit) return true;
     if (_name.text.trim().isEmpty) return false;
     if (_type == CompoundType.steroid && _ester.text.trim().isEmpty) return false;
     return true;
@@ -94,6 +103,9 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
   bool get _editing => widget.editing != null;
   bool get _showsVisMode =>
       _type == CompoundType.peptide || _type == CompoundType.ancillary;
+  // Editing a built-in (library) compound: identity is locked, a warning banner
+  // shows, and the footer offers Reset to default instead of Delete.
+  bool get _isBuiltInEdit => _editing && !widget.editing!.isCustom;
 
   @override
   Widget build(BuildContext context) {
@@ -113,6 +125,10 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
               children: [
                 _header(),
                 const SizedBox(height: 18),
+                if (_isBuiltInEdit) ...[
+                  _warningBanner(),
+                  const SizedBox(height: 18),
+                ],
                 _identitySection(),
                 const SizedBox(height: 18),
                 _pkSection(),
@@ -138,7 +154,10 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Library · ${_editing ? "edit" : "new"}',
+              Text(
+                  _isBuiltInEdit
+                      ? 'Library · built-in'
+                      : 'Library · ${_editing ? "edit" : "new"}',
                   style: AppTheme.sans(size: 11, color: AppTheme.fgDim)),
               const SizedBox(height: 4),
               Text(
@@ -194,6 +213,7 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
   }
 
   Widget _identitySection() {
+    if (_isBuiltInEdit) return _lockedIdentitySection();
     final needsEster = _type == CompoundType.steroid;
     return LibrarySection(
       title: 'Identity',
@@ -235,39 +255,119 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
           LabSegmented<CompoundType>(
             value: _type,
             options: CompoundType.values,
-            labelFor: (t) {
-              switch (t) {
-                case CompoundType.steroid: return 'Steroid';
-                case CompoundType.oral: return 'Oral';
-                case CompoundType.peptide: return 'Peptide';
-                case CompoundType.ancillary: return 'Ancillary';
-              }
-            },
+            labelFor: _typeLabel,
             onChange: (t) => setState(() {
               _type = t;
               _dirty = true;
               if (t == CompoundType.steroid || t == CompoundType.oral) {
                 _visMode = GraphType.curve;
+              } else if (_visMode == GraphType.curve) {
+                // Curve isn't offered for peptides/ancillaries — default to window.
+                _visMode = GraphType.activeWindow;
               }
             }),
           ),
-          if (_showsVisMode) ...[
-            const SizedBox(height: 8),
-            _label('Visual mode'),
-            const SizedBox(height: 6),
-            LabSegmented<GraphType>(
-              value: _visMode,
-              options: const [GraphType.curve, GraphType.activeWindow, GraphType.event],
-              labelFor: (g) {
-                switch (g) {
-                  case GraphType.curve: return 'Curve';
-                  case GraphType.activeWindow: return 'Window';
-                  case GraphType.event: return 'Event';
-                }
-              },
-              onChange: (g) => setState(() { _visMode = g; _dirty = true; }),
+          ..._visModeBlock(),
+        ],
+      ),
+    );
+  }
+
+  /// Read-only identity for built-ins: name, ester, and type are fixed; only
+  /// the visual-mode toggle (for peptides/ancillaries) stays editable.
+  Widget _lockedIdentitySection() {
+    final e = widget.editing!;
+    final hasEster =
+        e.ester.trim().isNotEmpty && e.ester.toLowerCase() != 'none';
+    return LibrarySection(
+      title: 'Identity',
+      meta: 'locked',
+      child: Column(
+        children: [
+          LabField(
+            label: 'Base name',
+            hint: 'built-in',
+            child: Text(e.base,
+                style: AppTheme.serif(
+                    size: 22, weight: FontWeight.w500,
+                    color: AppTheme.fgMute, letterSpacing: -0.4)),
+          ),
+          const SizedBox(height: 8),
+          LabField(
+            label: 'Ester',
+            hint: 'built-in',
+            child: Text(hasEster ? e.ester : '—',
+                style: AppTheme.serif(
+                    size: 18, weight: FontWeight.w500, color: AppTheme.fgMute)),
+          ),
+          const SizedBox(height: 8),
+          _label('Type'),
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(border: Border.all(color: AppTheme.border, width: 1)),
+            child: Text(_typeLabel(e.type),
+                style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
+          ),
+          ..._visModeBlock(),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _visModeBlock() {
+    if (!_showsVisMode) return const [];
+    return [
+      const SizedBox(height: 8),
+      _label('Visual mode'),
+      const SizedBox(height: 6),
+      LabSegmented<GraphType>(
+        value: _visMode,
+        // Peptides/ancillaries are never modeled as release curves — only
+        // window (Bateman gradient) or event (dose markers).
+        options: const [GraphType.activeWindow, GraphType.event],
+        labelFor: (g) {
+          switch (g) {
+            case GraphType.curve: return 'Curve';
+            case GraphType.activeWindow: return 'Window';
+            case GraphType.event: return 'Event';
+          }
+        },
+        onChange: (g) => setState(() { _visMode = g; _dirty = true; }),
+      ),
+    ];
+  }
+
+  String _typeLabel(CompoundType t) {
+    switch (t) {
+      case CompoundType.steroid: return 'Steroid';
+      case CompoundType.oral: return 'Oral';
+      case CompoundType.peptide: return 'Peptide';
+      case CompoundType.ancillary: return 'Ancillary';
+    }
+  }
+
+  Widget _warningBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppTheme.warn.withValues(alpha: 0.08),
+        border: Border.all(color: AppTheme.warn.withValues(alpha: 0.55), width: 1),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.warning_amber_rounded, size: 16, color: AppTheme.warn),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Editing a built-in’s pharmacokinetics isn’t recommended unless '
+              'you’re certain of the values. You can reset to default anytime.',
+              style: AppTheme.sans(size: 11.5, color: AppTheme.warn, height: 1.45),
             ),
-          ],
+          ),
         ],
       ),
     );
@@ -390,7 +490,23 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
       ),
       child: Row(
         children: [
-          if (_editing) ...[
+          if (_isBuiltInEdit) ...[
+            GestureDetector(
+              onTap: _resetToDefault,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(border: Border.all(color: AppTheme.border, width: 1)),
+                child: Text(
+                  'Reset to default',
+                  style: AppTheme.sans(
+                    size: 13, weight: FontWeight.w600,
+                    color: AppTheme.fgMute, letterSpacing: 0.2,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ] else if (_editing) ...[
             GestureDetector(
               onTap: widget.onDelete,
               child: Container(
@@ -437,6 +553,23 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
         ],
       ),
     );
+  }
+
+  /// Repopulate the PK fields + color (+ visual mode) from the BASE_LIBRARY
+  /// default. The user reviews and Saves to persist; if the saved values equal
+  /// the default, the compound reads as un-edited again.
+  void _resetToDefault() {
+    final def = defaultDefFor(widget.editing!);
+    if (def == null) return;
+    setState(() {
+      _hl.text = def.halfLife.toString();
+      _tp.text = def.timeToPeak.toString();
+      _yld.text = (def.ratio * 100).round().toString();
+      _unit = def.unit;
+      _colorValue = def.colorValue;
+      if (_showsVisMode) _visMode = def.graphType;
+      _dirty = true;
+    });
   }
 
   void _save() {

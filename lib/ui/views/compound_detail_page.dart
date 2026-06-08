@@ -75,6 +75,7 @@ class _CompoundDetailPageState extends State<CompoundDetailPage> {
               children: [
                 _ActionBar(
                   isCustom: c.isCustom,
+                  isEdited: isEditedFromDefault(c),
                   onBack: () => Navigator.of(context).pop(),
                   onEdit: _handleEdit,
                   onDelete: () => _confirmDelete(context),
@@ -99,7 +100,7 @@ class _CompoundDetailPageState extends State<CompoundDetailPage> {
               right: 0,
               bottom: 0,
               child: _StickyFooter(
-                label: 'Log ${displayName(c)} injection',
+                label: 'Log ${displayName(c)} ${doseActionNoun(c.type)}',
                 onTap: () => widget.onLogInjection(c),
               ),
             ),
@@ -148,11 +149,13 @@ class _CompoundDetailPageState extends State<CompoundDetailPage> {
 
 class _ActionBar extends StatelessWidget {
   final bool isCustom;
+  final bool isEdited;
   final VoidCallback onBack;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   const _ActionBar({
     required this.isCustom,
+    required this.isEdited,
     required this.onBack,
     required this.onEdit,
     required this.onDelete,
@@ -179,10 +182,19 @@ class _ActionBar extends StatelessWidget {
             LabPill(label: 'Delete', danger: true, onTap: onDelete),
           ])
         else
-          Text(
-            'BUILT-IN · READ-ONLY',
-            style: AppTheme.sans(size: 10, color: AppTheme.fgDim, letterSpacing: 0.8),
-          ),
+          // Built-ins are editable too (behind a warning), but can't be deleted.
+          Row(children: [
+            Text(
+              isEdited ? 'BUILT-IN · EDITED' : 'BUILT-IN',
+              style: AppTheme.sans(
+                size: 10,
+                color: isEdited ? AppTheme.warm : AppTheme.fgDim,
+                letterSpacing: 0.8,
+              ),
+            ),
+            const SizedBox(width: 10),
+            LabPill(label: 'Edit', onTap: onEdit),
+          ]),
       ],
     );
   }
@@ -296,7 +308,7 @@ class _HistorySection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return LibrarySection(
-      title: 'Recent injections',
+      title: 'Recent ${doseActionNoun(compound.type)}s',
       meta: total > 5 ? 'last 5 of $total' : null,
       child: recent.isEmpty ? _emptyHistory(context) : _recentList(),
     );
@@ -358,7 +370,7 @@ class _HistorySection extends StatelessWidget {
         children: [
           Icon(Icons.add_circle_outline, size: 36, color: AppTheme.fgMute.withValues(alpha: 0.45)),
           const SizedBox(height: 14),
-          Text('No injections logged',
+          Text('No ${doseActionNoun(compound.type)}s logged',
               style: AppTheme.serif(size: 17, weight: FontWeight.w500, color: AppTheme.fg)),
           const SizedBox(height: 6),
           SizedBox(

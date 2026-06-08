@@ -374,4 +374,62 @@ void main() {
       expect(metaLineFor(c), 'Peptide · window');
     });
   });
+
+  group('isBuiltIn', () {
+    test('true for a non-custom compound', () {
+      expect(isBuiltIn(_testCyp()), isTrue); // isCustom defaults to false
+    });
+
+    test('false for a custom compound', () {
+      final custom = _testCyp().copyWith(isCustom: true);
+      expect(isBuiltIn(custom), isFalse);
+    });
+  });
+
+  group('defaultDefFor', () {
+    test('returns the BASE_LIBRARY default matched by base+ester', () {
+      final c = _testCyp(); // Testosterone Cypionate
+      final def = defaultDefFor(c);
+      expect(def, isNotNull);
+      expect(def!.halfLife, 5.0); // BASE_LIBRARY Testosterone Cypionate
+      expect(def.timeToPeak, 1.8);
+      expect(def.id, 'Testosterone Cypionate'); // id resolved to the map key
+    });
+
+    test('returns null when no library counterpart exists', () {
+      const c = CompoundDefinition(
+        id: 'x', base: 'MyOwnPeptide', ester: 'None',
+        type: CompoundType.peptide, graphType: GraphType.event,
+        halfLife: 1, timeToPeak: 0.1, ratio: 1.0, unit: Unit.mcg,
+        colorValue: 0xFF000000, isCustom: true,
+      );
+      expect(defaultDefFor(c), isNull);
+    });
+  });
+
+  group('isEditedFromDefault', () {
+    test('false when values equal the BASE_LIBRARY default', () {
+      // A seed-style row that matches the default exactly.
+      final def = defaultDefFor(_testCyp())!;
+      final seed = def.copyWith(id: 'test-c');
+      expect(isEditedFromDefault(seed), isFalse);
+    });
+
+    test('true when a PK param differs from default', () {
+      final def = defaultDefFor(_testCyp())!;
+      final edited = def.copyWith(id: 'test-c', halfLife: 9.9);
+      expect(isEditedFromDefault(edited), isTrue);
+    });
+
+    test('true when lane color differs from default', () {
+      final def = defaultDefFor(_testCyp())!;
+      final recolored = def.copyWith(id: 'test-c', colorValue: 0xFF123456);
+      expect(isEditedFromDefault(recolored), isTrue);
+    });
+
+    test('false for custom compounds (no default to compare)', () {
+      final custom = _testCyp().copyWith(isCustom: true, halfLife: 99);
+      expect(isEditedFromDefault(custom), isFalse);
+    });
+  });
 }

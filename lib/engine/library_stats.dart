@@ -185,3 +185,47 @@ String _typeLabel(CompoundType t) {
       return 'Ancillary';
   }
 }
+
+/// True when `c` is a built-in (library) compound rather than a user-created
+/// custom. Built-ins keep `isCustom == false` even after the user edits their
+/// PK params (the edit is stored as a shadowing override in userCompounds).
+bool isBuiltIn(CompoundDefinition c) => !c.isCustom;
+
+/// The BASE_LIBRARY default for `c`, matched by base+ester, with its `id`
+/// resolved to the library map key. Null when `c` has no library counterpart
+/// (a true custom compound).
+CompoundDefinition? defaultDefFor(CompoundDefinition c) {
+  for (final entry in BASE_LIBRARY.entries) {
+    final v = entry.value;
+    if (v.base == c.base && v.ester == c.ester) {
+      return v.copyWith(id: entry.key);
+    }
+  }
+  return null;
+}
+
+/// True when `c` is a built-in whose editable params (half-life, time-to-peak,
+/// yield, unit, lane color, graph type) differ from its BASE_LIBRARY default.
+/// Seeds that still equal the default — and true customs — return false.
+bool isEditedFromDefault(CompoundDefinition c) {
+  if (c.isCustom) return false;
+  final def = defaultDefFor(c);
+  if (def == null) return false;
+  return c.halfLife != def.halfLife ||
+      c.timeToPeak != def.timeToPeak ||
+      c.ratio != def.ratio ||
+      c.unit != def.unit ||
+      c.colorValue != def.colorValue ||
+      c.graphType != def.graphType;
+}
+
+/// True for compound types that are injected (steroids, peptides). Orals and
+/// ancillaries are taken by mouth, so they're "administered" rather than
+/// "injected" in UI copy.
+bool isInjectableType(CompoundType t) =>
+    t == CompoundType.steroid || t == CompoundType.peptide;
+
+/// Noun for the act of taking a dose: "injection" for injectables (steroids,
+/// peptides), "administration" for orals/ancillaries.
+String doseActionNoun(CompoundType t) =>
+    isInjectableType(t) ? 'injection' : 'administration';
