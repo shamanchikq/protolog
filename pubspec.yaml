@@ -57,10 +57,12 @@ dev_dependencies:
 flutter_icons:
   android: "ic_launcher"
   ios: true
-  # Create a folder called 'assets' in your project root and put an 'icon.png' there
+  # ProtoLog "Meniscus" mark (Lab Sheet palette). assets/icon.png is the full
+  # tile; assets/icon_foreground.png is the transparent, safe-zone-inset mark.
   image_path: "assets/icon.png"
-  adaptive_icon_background: "#020617" # Matches your app background
-  adaptive_icon_foreground: "assets/icon.png"
+  adaptive_icon_background: "#13151A" # Lab Sheet surface
+  adaptive_icon_foreground: "assets/icon_foreground.png"
+  remove_alpha_ios: true # App Store disallows alpha in iOS icons
 # The following section is specific to Flutter packages.
 flutter:
 
