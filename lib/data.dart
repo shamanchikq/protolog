@@ -7,7 +7,7 @@ const Map<String, CompoundDefinition> BASE_LIBRARY = {
   'Testosterone Enanthate': CompoundDefinition(id: 'temp', base: 'Testosterone', ester: 'Enanthate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 4.5, defaultHalfLife: 4.5, timeToPeak: 1.5, ratio: 0.72, unit: Unit.mg, colorValue: 0xFF10B981),
   'Testosterone Cypionate': CompoundDefinition(id: 'temp', base: 'Testosterone', ester: 'Cypionate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 5.0, defaultHalfLife: 5.0, timeToPeak: 1.8, ratio: 0.69, unit: Unit.mg, colorValue: 0xFF10B981),
   'Testosterone Undecanoate': CompoundDefinition(id: 'temp', base: 'Testosterone', ester: 'Undecanoate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 21.0, defaultHalfLife: 21.0, timeToPeak: 7.0, ratio: 0.63, unit: Unit.mg, colorValue: 0xFF10B981),
-  'Sustanon 250': CompoundDefinition(id: 'temp', base: 'Testosterone', ester: 'Sustanon (Mix)', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 15.0, defaultHalfLife: 15.0, timeToPeak: 1.5, ratio: 0.70, unit: Unit.mg, colorValue: 0xFF10B981),
+  'Sustanon 250': CompoundDefinition(id: 'temp', base: 'Testosterone', ester: 'Sustanon (Mix)', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 15.0, defaultHalfLife: 15.0, timeToPeak: 1.5, ratio: 0.70, unit: Unit.mg, concentration: 250, colorValue: 0xFF10B981),
 
   // Nandrolone
   'Nandrolone Phenylpropionate': CompoundDefinition(id: 'temp', base: 'Nandrolone', ester: 'Phenylpropionate', type: CompoundType.steroid, graphType: GraphType.curve, halfLife: 2.5, defaultHalfLife: 2.5, timeToPeak: 1.0, ratio: 0.67, unit: Unit.mg, colorValue: 0xFF3B82F6),
@@ -53,7 +53,7 @@ const Map<String, CompoundDefinition> BASE_LIBRARY = {
   'GHK-Cu': CompoundDefinition(id: 'temp', base: 'GHK-Cu', ester: 'None', type: CompoundType.peptide, graphType: GraphType.event, halfLife: 0.1, defaultHalfLife: 0.1, timeToPeak: 0.1, ratio: 1, unit: Unit.mg, colorValue: 0xFF3B82F6),
 
   // Ancillaries
-  'HCG': CompoundDefinition(id: 'temp', base: 'HCG', ester: 'None', type: CompoundType.ancillary, graphType: GraphType.activeWindow, halfLife: 1.2, defaultHalfLife: 1.2, timeToPeak: 0.25, ratio: 1, unit: Unit.iu, colorValue: 0xFFEC4899),
+  'HCG': CompoundDefinition(id: 'temp', base: 'HCG', ester: 'None', type: CompoundType.peptide, graphType: GraphType.activeWindow, halfLife: 1.2, defaultHalfLife: 1.2, timeToPeak: 0.25, ratio: 1, unit: Unit.iu, colorValue: 0xFFEC4899),
   'Anastrazole': CompoundDefinition(id: 'temp', base: 'Anastrazole', ester: 'None', type: CompoundType.ancillary, graphType: GraphType.activeWindow, halfLife: 2.1, defaultHalfLife: 2.1, timeToPeak: 0.5, ratio: 1, unit: Unit.mg, colorValue: 0xFF94A3B8),
   'Tamoxifen': CompoundDefinition(id: 'temp', base: 'Tamoxifen', ester: 'None', type: CompoundType.ancillary, graphType: GraphType.activeWindow, halfLife: 6.0, defaultHalfLife: 6.0, timeToPeak: 0.5, ratio: 1, unit: Unit.mg, colorValue: 0xFF94A3B8),
   'Finasteride': CompoundDefinition(id: 'temp', base: 'Finasteride', ester: 'None', type: CompoundType.ancillary, graphType: GraphType.event, halfLife: 0.25, defaultHalfLife: 0.25, timeToPeak: 0.1, ratio: 1, unit: Unit.mg, colorValue: 0xFF94A3B8),
