@@ -119,3 +119,34 @@ String relativeDayLabel(DateTime d, DateTime now) {
   if (diff == -1) return 'Yesterday';
   return '${_wdShort[d.weekday - 1]} ${_monShort[d.month - 1]} ${d.day}';
 }
+
+/// For each of the next [days] days starting today, the distinct compound
+/// colors that have at least one occurrence that day. Disabled reminders are
+/// skipped. Colors are de-duplicated per day.
+List<List<Color>> weekAgenda(
+  List<Reminder> reminders,
+  DateTime now,
+  int days,
+  Color Function(Reminder) colorOf,
+) {
+  final result = List.generate(days, (_) => <Color>[]);
+  final startDay = DateTime(now.year, now.month, now.day);
+  final windowEnd = startDay.add(Duration(days: days));
+  for (final r in reminders) {
+    if (!r.enabled) continue;
+    final col = colorOf(r);
+    var occ = nextOccurrence(r, startDay);
+    var guard = 0;
+    while (occ.isBefore(windowEnd) && guard < 400) {
+      final idx = DateTime(occ.year, occ.month, occ.day).difference(startDay).inDays;
+      if (idx >= 0 && idx < days && !result[idx].contains(col)) {
+        result[idx].add(col);
+      }
+      final next = nextOccurrence(r, occ.add(const Duration(seconds: 1)));
+      if (!next.isAfter(occ)) break;
+      occ = next;
+      guard++;
+    }
+  }
+  return result;
+}

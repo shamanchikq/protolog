@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:protolog_tracker/models.dart';
 import 'package:protolog_tracker/engine/reminder_schedule.dart';
@@ -164,6 +165,28 @@ void main() {
     });
     test('further out shows weekday + month + day', () {
       expect(relativeDayLabel(DateTime(2026, 5, 21, 8), now), 'Thu May 21');
+    });
+  });
+
+  group('weekAgenda', () {
+    test('places compound colors on the correct days', () {
+      const red = Color(0xFFFF0000);
+      const blue = Color(0xFF0000FF);
+      // interval every 7d anchored today (Mon May 18) 08:00 -> hits day 0 only in the window
+      final a = interval(days: 7, anchor: DateTime(2026, 5, 18, 8, 0));
+      // custom Friday 09:00 -> May 22 = day index 4 (Mon May 18 is index 0)
+      final b = custom([ReminderSlot(weekday: 5, hour: 9, minute: 0)]);
+      final agenda = weekAgenda([a, b], now, 7, (r) => r.id == 'i' ? red : blue);
+      expect(agenda.length, 7);
+      expect(agenda[0], contains(red));   // today (Mon)
+      expect(agenda[4], contains(blue));  // Friday
+      expect(agenda[1], isEmpty);         // Tuesday: nothing
+    });
+    test('skips disabled reminders', () {
+      const red = Color(0xFFFF0000);
+      final a = interval(days: 7, anchor: DateTime(2026, 5, 18, 8, 0), enabled: false);
+      final agenda = weekAgenda([a], now, 7, (_) => red);
+      expect(agenda.every((d) => d.isEmpty), isTrue);
     });
   });
 }
