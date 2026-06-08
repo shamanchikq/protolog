@@ -47,3 +47,6 @@ app.*.map.json
 # Claude Code
 .claude/
 CLAUDE.md
+
+# Design canvas reference assets (HTML/JSX) - not part of the build
+ProtoLog_redesign/
