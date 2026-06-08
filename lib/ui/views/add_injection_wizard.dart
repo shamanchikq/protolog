@@ -16,6 +16,7 @@ class AddInjectionWizard extends StatefulWidget {
   final Function(CompoundDefinition) addUserCompound;
   final List<Injection> injections;
   final CompoundDefinition? prefillCompound;
+  final DateTime? prefillDate;
 
   const AddInjectionWizard({
     super.key,
@@ -27,6 +28,7 @@ class AddInjectionWizard extends StatefulWidget {
     required this.addUserCompound,
     required this.injections,
     this.prefillCompound,
+    this.prefillDate,
   });
 
   @override
@@ -530,7 +532,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
       final isSubQ = effective.type == CompoundType.peptide;
       final defaultSite = isSubQ ? 'Abdominal R' : 'Vent. glute R';
       _site = (priorSiteList.isNotEmpty ? priorSiteList.first.site! : null) ?? defaultSite;
-      _date = DateTime.now();
+      _date = widget.prefillDate ?? DateTime.now();
       _time = _roundedNow();
       _step = 2;
     });

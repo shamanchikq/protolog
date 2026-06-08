@@ -7,6 +7,7 @@ class ProtoLogShell extends StatelessWidget {
   final ShellTab activeTab;
   final ValueChanged<ShellTab> onTabChanged;
   final VoidCallback? onFabPressed;
+  final String? fabLabel;
   final Widget body;
 
   const ProtoLogShell({
@@ -14,6 +15,7 @@ class ProtoLogShell extends StatelessWidget {
     required this.activeTab,
     required this.onTabChanged,
     this.onFabPressed,
+    this.fabLabel,
     required this.body,
   });
 
@@ -34,7 +36,7 @@ class ProtoLogShell extends StatelessWidget {
               Positioned(
                 right: 18,
                 bottom: 18,
-                child: _Fab(onPressed: onFabPressed!),
+                child: _Fab(onPressed: onFabPressed!, label: fabLabel),
               ),
           ],
         ),
@@ -138,25 +140,34 @@ class _Tab extends StatelessWidget {
 
 class _Fab extends StatelessWidget {
   final VoidCallback onPressed;
-  const _Fab({required this.onPressed});
+  final String? label;
+  const _Fab({required this.onPressed, this.label});
 
   @override
   Widget build(BuildContext context) {
+    final hasLabel = label != null && label!.isNotEmpty;
     return GestureDetector(
       onTap: onPressed,
+      behavior: HitTestBehavior.opaque,
       child: Container(
-        width: 56,
-        height: 56,
+        height: hasLabel ? 52 : 56,
+        width: hasLabel ? null : 56,
+        padding: hasLabel ? const EdgeInsets.symmetric(horizontal: 18) : null,
+        alignment: Alignment.center,
         decoration: const BoxDecoration(
           color: AppTheme.accent,
           boxShadow: [BoxShadow(color: Color(0x66000000), blurRadius: 20, offset: Offset(0, 6))],
         ),
-        child: Center(
-          child: Text(
-            '+',
-            style: AppTheme.sans(size: 26, weight: FontWeight.w300, color: AppTheme.bg, height: 1),
-          ),
-        ),
+        child: hasLabel
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('+', style: AppTheme.sans(size: 22, weight: FontWeight.w300, color: AppTheme.bg, height: 1)),
+                  const SizedBox(width: 8),
+                  Text(label!, style: AppTheme.sans(size: 13, weight: FontWeight.w600, color: AppTheme.bg, letterSpacing: 0.2)),
+                ],
+              )
+            : Text('+', style: AppTheme.sans(size: 26, weight: FontWeight.w300, color: AppTheme.bg, height: 1)),
       ),
     );
   }

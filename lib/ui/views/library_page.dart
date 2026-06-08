@@ -220,6 +220,12 @@ class _ImportExportPill extends StatelessWidget {
   Widget build(BuildContext context) {
     return PopupMenuButton<String>(
       color: AppTheme.surface2,
+      surfaceTintColor: Colors.transparent,
+      elevation: 2,
+      position: PopupMenuPosition.under,
+      shape: const RoundedRectangleBorder(
+        side: BorderSide(color: AppTheme.border, width: 1),
+      ),
       onSelected: (v) {
         if (v == 'export') onExport();
         if (v == 'import') onImport();

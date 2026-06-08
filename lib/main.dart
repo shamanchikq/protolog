@@ -568,6 +568,7 @@ class _MainScreenState extends State<MainScreen> {
           injections: injections,
           onDeleteInjection: _deleteInjection,
           onUpdateNotes: _updateInjectionNotes,
+          onDaySelected: (d) => _calendarSelectedDay = d,
         );
         break;
       case ShellTab.library:
@@ -596,16 +597,23 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     VoidCallback? onFab;
-    if (tab == ShellTab.today || tab == ShellTab.calendar) {
+    String? fabLabel;
+    if (tab == ShellTab.today) {
       onFab = () => _openAddInjectionWizard();
+      fabLabel = 'Log dose';
+    } else if (tab == ShellTab.calendar) {
+      onFab = () => _openAddInjectionWizard(prefillDate: _calendarSelectedDay);
+      fabLabel = 'Log dose';
     } else if (tab == ShellTab.reminders) {
       onFab = () => _openReminderEditor();
+      fabLabel = 'New reminder';
     }
 
     return ProtoLogShell(
       activeTab: tab,
       onTabChanged: (t) => setState(() => _currentIndex = ShellTab.values.indexOf(t)),
       onFabPressed: onFab,
+      fabLabel: fabLabel,
       body: content,
     );
   }
@@ -674,7 +682,9 @@ class _MainScreenState extends State<MainScreen> {
     if (updated.enabled) _scheduleReminder(updated);
   }
 
-  void _openAddInjectionWizard({CompoundDefinition? prefill}) {
+  DateTime _calendarSelectedDay = DateTime.now();
+
+  void _openAddInjectionWizard({CompoundDefinition? prefill, DateTime? prefillDate}) {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => Scaffold(
         backgroundColor: AppTheme.bg,
@@ -688,6 +698,7 @@ class _MainScreenState extends State<MainScreen> {
             injections: injections,
             reminders: reminders,
             prefillCompound: prefill,
+            prefillDate: prefillDate,
           ),
         ),
       ),
