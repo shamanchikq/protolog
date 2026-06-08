@@ -4,10 +4,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../models.dart';
 import '../../data.dart';
 import '../../utils.dart';
+import '../../engine/reminder_schedule.dart';
 import '../theme.dart';
 
 class AddInjectionWizard extends StatefulWidget {
-  final Function(Injection) onAdd;
+  final void Function(Injection injection, bool advanceReminder) onAdd;
+  final List<Reminder> reminders;
   final VoidCallback onCancel;
   final VoidCallback onSuccess;
   final List<CompoundDefinition> userCompounds;
@@ -18,6 +20,7 @@ class AddInjectionWizard extends StatefulWidget {
   const AddInjectionWizard({
     super.key,
     required this.onAdd,
+    required this.reminders,
     required this.onCancel,
     required this.onSuccess,
     required this.userCompounds,
@@ -51,6 +54,19 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
   String _site = 'Vent. glute R';
   String _notes = '';
   Injection? _lastForCompound;
+
+  bool _advanceReminder = true;
+
+  Reminder? get _matchingReminder {
+    final c = _selectedCompound;
+    if (c == null) return null;
+    for (final r in widget.reminders) {
+      if (r.enabled && r.compoundBase == c.base && r.compoundEster == c.ester) {
+        return r;
+      }
+    }
+    return null;
+  }
 
   // Text controllers for fields whose initial value comes from state.
   late final TextEditingController _doseController = TextEditingController(text: _doseText);
@@ -644,7 +660,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
             child: _Seg<Unit>(
               value: _unit,
               options: _isIuNative
-                  ? const [Unit.mcg, Unit.iu]
+                  ? const [Unit.iu]
                   : const [Unit.mg, Unit.mcg],
               labelOf: (u) => u.name,
               onChange: (u) => setState(() => _unit = u),
@@ -1103,6 +1119,55 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
     );
   }
 
+  Widget _reminderBanner(Reminder r) {
+    final next = nextOccurrence(r, DateTime.now());
+    final label = '${relativeDayLabel(next, DateTime.now())} '
+        '${next.hour.toString().padLeft(2, '0')}:${next.minute.toString().padLeft(2, '0')}';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        border: Border.all(color: AppTheme.border, width: 1),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Linked to your ${r.compoundBase} reminder',
+                    style: AppTheme.sans(size: 12, weight: FontWeight.w500)),
+                const SizedBox(height: 2),
+                Text('Next due $label', style: AppTheme.sans(size: 11, color: AppTheme.fgMute)),
+              ],
+            ),
+          ),
+          GestureDetector(
+            onTap: () => setState(() => _advanceReminder = !_advanceReminder),
+            behavior: HitTestBehavior.opaque,
+            child: Row(
+              children: [
+                Container(
+                  width: 18, height: 18,
+                  decoration: BoxDecoration(
+                    color: _advanceReminder ? AppTheme.accent : Colors.transparent,
+                    border: Border.all(color: _advanceReminder ? AppTheme.accent : AppTheme.border, width: 1),
+                  ),
+                  child: _advanceReminder
+                      ? const Icon(Icons.check, size: 13, color: AppTheme.bg)
+                      : null,
+                ),
+                const SizedBox(width: 6),
+                Text('Advance', style: AppTheme.sans(size: 11, color: AppTheme.fgMute)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── End Step 2 helpers ─────────────────────────────────────────────────────
 
   @override
@@ -1416,7 +1481,13 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
     final siteShort = (showSite && _site.isNotEmpty)
         ? ' · ${_site.replaceFirst('Vent. ', '')}'
         : '';
-    return Container(
+    final matched = _matchingReminder;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (matched != null) _reminderBanner(matched),
+        Container(
       decoration: BoxDecoration(
         color: AppTheme.surface,
         border: Border(top: BorderSide(color: AppTheme.border, width: 1)),
@@ -1449,7 +1520,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
                 alignment: Alignment.center,
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 color: hasDose ? AppTheme.accent : AppTheme.surface2,
-                child: Text('Log injection',
+                child: Text(_isPillForm ? 'Log administration' : 'Log injection',
                     style: AppTheme.sans(
                         size: 13,
                         weight: FontWeight.w600,
@@ -1460,6 +1531,8 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
           ),
         ],
       ),
+        ),
+      ],
     );
   }
 
@@ -1517,7 +1590,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
       snapshot: compDef,
       site: (showSite && _site.isNotEmpty) ? _site : null,
       notes: _notes.trim().isEmpty ? null : _notes.trim(),
-    ));
+    ), _matchingReminder != null && _advanceReminder);
     widget.onSuccess();
   }
 }

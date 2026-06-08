@@ -10,6 +10,8 @@ import 'package:timezone/timezone.dart' as tz;
 import 'models.dart';
 import 'data.dart';
 import 'engine/compute_engine.dart';
+import 'engine/library_stats.dart';
+import 'engine/compound_edits.dart';
 import 'ui/widgets/protolog_shell.dart';
 import 'ui/widgets/load_hero.dart';
 import 'ui/widgets/pk_chart_card.dart';
@@ -22,6 +24,8 @@ import 'ui/views/library_page.dart';
 import 'ui/views/compound_detail_page.dart';
 import 'ui/views/compound_editor_page.dart';
 import 'ui/views/reminders_page.dart';
+import 'ui/views/reminder_editor_page.dart';
+import 'engine/reminder_schedule.dart';
 
 // --- Entry Point ---
 void main() {
@@ -136,6 +140,7 @@ class _MainScreenState extends State<MainScreen> {
       final List<dynamic> jsonList = jsonDecode(remString);
       reminders = jsonList.map((j) => Reminder.fromJson(j)).toList();
     }
+    _rescheduleAllReminders(); // fire-and-forget
 
     setState(() => _loading = false);
     _refreshGraph();
@@ -151,6 +156,15 @@ class _MainScreenState extends State<MainScreen> {
     setState(() {
       _graphDataFuture = compute(calculateGraphData, IsolateInput(injections, settings));
     });
+  }
+
+  Future<void> _rescheduleAllReminders() async {
+    for (final r in reminders) {
+      if (r.enabled) {
+        await _cancelReminder(r);
+        await _scheduleReminder(r);
+      }
+    }
   }
 
   Future<void> _saveReminders() async {
@@ -195,24 +209,23 @@ class _MainScreenState extends State<MainScreen> {
           );
         }
       } else {
-        // Interval mode
-        final baseDate = reminder.lastScheduledDate ?? now;
-        var nextDate = DateTime(baseDate.year, baseDate.month, baseDate.day, reminder.hour, reminder.minute);
-        nextDate = nextDate.add(Duration(days: reminder.intervalDays));
-        while (nextDate.isBefore(now)) {
-          nextDate = nextDate.add(Duration(days: reminder.intervalDays));
+        // Interval mode: schedule the next few one-shots (fractional spacing
+        // drifts the time-of-day, so no repeating matchDateTimeComponents).
+        var cursor = nextOccurrence(reminder, now);
+        for (int i = 0; i < 3; i++) {
+          final scheduledTz = tz.TZDateTime.from(cursor, tz.local);
+          await _notificationsPlugin.zonedSchedule(
+            reminder.id.hashCode + i,
+            'ProtoLog Reminder',
+            'Time to administer $compoundLabel',
+            scheduledTz,
+            details,
+            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+            uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+            matchDateTimeComponents: null,
+          );
+          cursor = cursor.add(Duration(milliseconds: (reminder.intervalDays * 86400000).round()));
         }
-        final scheduledTz = tz.TZDateTime.from(nextDate, tz.local);
-        await _notificationsPlugin.zonedSchedule(
-          reminder.id.hashCode,
-          'ProtoLog Reminder',
-          'Time to administer $compoundLabel',
-          scheduledTz,
-          details,
-          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-          matchDateTimeComponents: null,
-        );
       }
     } catch (e) {
       if (mounted) {
@@ -224,8 +237,9 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> _cancelReminder(Reminder reminder) async {
-    await _notificationsPlugin.cancel(reminder.id.hashCode);
-    // Cancel all custom slot notifications too
+    for (int i = 0; i < 3; i++) {
+      await _notificationsPlugin.cancel(reminder.id.hashCode + i);
+    }
     for (int i = 0; i < reminder.customSlots.length; i++) {
       await _notificationsPlugin.cancel(reminder.id.hashCode + i + 1);
     }
@@ -365,24 +379,25 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  Future<void> _addInjection(Injection inj) async {
+  Future<void> _addInjection(Injection inj, {bool advanceReminder = false}) async {
     setState(() {
       injections.add(inj);
     });
     _saveData();
     _refreshGraph();
 
-    // Auto-reschedule matching reminders
-    for (int i = 0; i < reminders.length; i++) {
-      final r = reminders[i];
-      if (r.compoundBase == inj.snapshot.base && r.compoundEster == inj.snapshot.ester && r.enabled) {
-        await _cancelReminder(r);
-        final updated = r.copyWith(lastScheduledDate: inj.date);
-        reminders[i] = updated;
-        await _scheduleReminder(updated);
+    if (advanceReminder) {
+      for (int i = 0; i < reminders.length; i++) {
+        final r = reminders[i];
+        if (r.enabled && r.compoundBase == inj.snapshot.base && r.compoundEster == inj.snapshot.ester) {
+          await _cancelReminder(r);
+          final updated = advanceAfterDose(r, inj.date);
+          reminders[i] = updated;
+          await _scheduleReminder(updated);
+        }
       }
+      _saveReminders();
     }
-    _saveReminders();
   }
 
   void _deleteInjection(String id) {
@@ -431,10 +446,14 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _updateUserCompound(CompoundDefinition updated) {
-    final idx = userCompounds.indexWhere((c) => c.id == updated.id);
-    if (idx == -1) return;
     setState(() {
-      userCompounds[idx] = updated;
+      final idx = userCompounds.indexWhere((c) => c.id == updated.id);
+      if (idx == -1) {
+        // First-time override of a built-in: shadow it in userCompounds.
+        userCompounds.add(updated);
+      } else {
+        userCompounds[idx] = updated;
+      }
     });
     _saveData();
     _refreshGraph();
@@ -459,15 +478,12 @@ class _MainScreenState extends State<MainScreen> {
       final base = inj.snapshot.base;
       latestInjections[base] = inj; // Overwrite, so last loop item is latest by date
 
-      // Force library settings lookup to get fresh graphType/halfLife
-      final libraryDef = lookupLibraryDef(base, inj.snapshot.ester);
-      final graphType = libraryDef?.graphType ?? inj.snapshot.graphType;
-
-      // Determine correct Half Life to use
-      final double libHl = libraryDef?.halfLife ?? 0;
+      // Read graphType/halfLife from the frozen snapshot so library edits never
+      // silently rewrite history. Retroactive changes go through the explicit
+      // "apply to past logs" flow (rewriteSnapshots).
+      final graphType = inj.snapshot.graphType;
       final double snapHl = inj.snapshot.halfLife;
-      // If library has a valid non-zero HL, use it. Otherwise use snapshot. Fallback to 1.0.
-      final double halfLife = (libHl > 0.05) ? libHl : (snapHl > 0.05 ? snapHl : 1.0);
+      final double halfLife = snapHl > 0.05 ? snapHl : 1.0;
 
       // Calculate Active Amount to Sum
       double active = 0;
@@ -491,8 +507,7 @@ class _MainScreenState extends State<MainScreen> {
       final base = entry.key;
       final inj = entry.value;
 
-      final libraryDef = lookupLibraryDef(base, inj.snapshot.ester);
-      final graphType = libraryDef?.graphType ?? inj.snapshot.graphType;
+      final graphType = inj.snapshot.graphType;
 
       final diffMs = now.difference(inj.date).inMilliseconds;
       final ago = Duration(milliseconds: diffMs);
@@ -569,22 +584,94 @@ class _MainScreenState extends State<MainScreen> {
         content = RemindersPage(
           reminders: reminders,
           userCompounds: userCompounds,
-          onSave: (updated) {
-            setState(() => reminders = updated);
-            _saveReminders();
+          onEditReminder: (editing) => _openReminderEditor(editing: editing),
+          onToggleEnabled: _toggleReminderEnabled,
+          onLogNow: (r) {
+            final def = _compoundForReminder(r);
+            if (def != null) _openAddInjectionWizard(prefill: def);
           },
-          onSchedule: _scheduleReminder,
-          onCancel: _cancelReminder,
+          onSkip: _skipReminder,
         );
         break;
+    }
+
+    VoidCallback? onFab;
+    if (tab == ShellTab.today || tab == ShellTab.calendar) {
+      onFab = () => _openAddInjectionWizard();
+    } else if (tab == ShellTab.reminders) {
+      onFab = () => _openReminderEditor();
     }
 
     return ProtoLogShell(
       activeTab: tab,
       onTabChanged: (t) => setState(() => _currentIndex = ShellTab.values.indexOf(t)),
-      onFabPressed: () => _openAddInjectionWizard(),
+      onFabPressed: onFab,
       body: content,
     );
+  }
+
+  CompoundDefinition? _compoundForReminder(Reminder r) {
+    for (final c in cataloguedCompounds(userCompounds: userCompounds)) {
+      if (c.base == r.compoundBase && c.ester == r.compoundEster) return c;
+    }
+    return null;
+  }
+
+  void _openReminderEditor({Reminder? editing}) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => ReminderEditorPage(
+        editing: editing,
+        userCompounds: userCompounds,
+        now: DateTime.now(),
+        onSave: _upsertReminder,
+        onDelete: editing != null
+            ? () {
+                _cancelReminder(editing);
+                setState(() => reminders.removeWhere((x) => x.id == editing.id));
+                _saveReminders();
+              }
+            : null,
+      ),
+    ));
+  }
+
+  void _upsertReminder(Reminder r) {
+    setState(() {
+      final i = reminders.indexWhere((x) => x.id == r.id);
+      if (i >= 0) {
+        reminders[i] = r;
+      } else {
+        reminders.add(r);
+      }
+    });
+    _saveReminders();
+    _cancelReminder(r);
+    if (r.enabled) _scheduleReminder(r);
+  }
+
+  void _toggleReminderEnabled(Reminder r) {
+    final updated = r.copyWith(enabled: !r.enabled);
+    setState(() {
+      final i = reminders.indexWhere((x) => x.id == r.id);
+      if (i >= 0) reminders[i] = updated;
+    });
+    _saveReminders();
+    if (updated.enabled) {
+      _scheduleReminder(updated);
+    } else {
+      _cancelReminder(updated);
+    }
+  }
+
+  void _skipReminder(Reminder r) {
+    final updated = advanceAfterSkip(r, now: DateTime.now());
+    setState(() {
+      final i = reminders.indexWhere((x) => x.id == r.id);
+      if (i >= 0) reminders[i] = updated;
+    });
+    _saveReminders();
+    _cancelReminder(updated);
+    if (updated.enabled) _scheduleReminder(updated);
   }
 
   void _openAddInjectionWizard({CompoundDefinition? prefill}) {
@@ -593,12 +680,13 @@ class _MainScreenState extends State<MainScreen> {
         backgroundColor: AppTheme.bg,
         body: SafeArea(
           child: AddInjectionWizard(
-            onAdd: _addInjection,
+            onAdd: (injection, advance) => _addInjection(injection, advanceReminder: advance),
             onCancel: () => Navigator.of(context).pop(),
             onSuccess: () => Navigator.of(context).pop(),
             userCompounds: userCompounds,
             addUserCompound: _addUserCompound,
             injections: injections,
+            reminders: reminders,
             prefillCompound: prefill,
           ),
         ),
@@ -629,27 +717,97 @@ class _MainScreenState extends State<MainScreen> {
 
   /// Pushes the editor route. Returns the updated/created compound on save,
   /// or null on cancel/delete. When `fromDetail` is true, a delete also pops
-  /// the detail route that sits underneath the editor.
+  /// the detail route that sits underneath the editor. Delete is offered only
+  /// for custom compounds — built-ins can be reset to default but not removed.
   Future<CompoundDefinition?> _openCompoundEditor({
     CompoundDefinition? editing,
     bool fromDetail = false,
-  }) {
-    return Navigator.of(context).push<CompoundDefinition>(MaterialPageRoute(
+  }) async {
+    final result =
+        await Navigator.of(context).push<CompoundDefinition>(MaterialPageRoute(
       builder: (_) => CompoundEditorPage(
         editing: editing,
         onTabChanged: (t) =>
             setState(() => _currentIndex = ShellTab.values.indexOf(t)),
         onCreate: _addUserCompound,
         onUpdate: _updateUserCompound,
-        onDelete: editing == null ? null : () {
-          _deleteUserCompound(editing.id);
-          // The editor's delete handler is responsible for popping the editor
-          // route (and the detail underneath it if we came from there).
-          Navigator.of(context).pop(); // pops the editor
-          if (fromDetail) Navigator.of(context).pop(); // pops the detail
-        },
+        onDelete: (editing != null && editing.isCustom)
+            ? () {
+                _deleteUserCompound(editing.id);
+                // The editor's delete handler pops the editor route (and the
+                // detail underneath it if we came from there).
+                Navigator.of(context).pop(); // pops the editor
+                if (fromDetail) Navigator.of(context).pop(); // pops the detail
+              }
+            : null,
       ),
     ));
+
+    // After an edit that changed curve-affecting params, offer to apply the new
+    // pharmacokinetics to past logs of this compound.
+    if (result != null &&
+        editing != null &&
+        mounted &&
+        _curveParamsChanged(editing, result)) {
+      final n = injectionCountFor(
+        base: result.base, ester: result.ester, injections: injections,
+      );
+      if (n > 0) await _offerRetroactiveRewrite(result, n);
+    }
+    return result;
+  }
+
+  bool _curveParamsChanged(CompoundDefinition a, CompoundDefinition b) =>
+      a.halfLife != b.halfLife ||
+      a.timeToPeak != b.timeToPeak ||
+      a.ratio != b.ratio ||
+      a.graphType != b.graphType;
+
+  /// Confirm dialog offering to rewrite past logs' snapshots to the new PK.
+  Future<void> _offerRetroactiveRewrite(CompoundDefinition c, int n) async {
+    final logWord = n == 1 ? 'log' : 'logs';
+    final apply = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface2,
+        title: Text('Apply to past logs?',
+            style: AppTheme.sans(size: 14, weight: FontWeight.w600, color: AppTheme.fg)),
+        content: Text(
+          'Update $n past $logWord of ${displayName(c)} to the new '
+          'pharmacokinetics? Historical curves and stats will recompute. '
+          'This rewrites logged history.',
+          style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Keep history as-is',
+                style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Update $n $logWord',
+                style: AppTheme.sans(
+                    size: 12, weight: FontWeight.w600, color: AppTheme.accent)),
+          ),
+        ],
+      ),
+    );
+    if (apply == true) {
+      setState(() {
+        injections = rewriteSnapshots(
+          injections: injections,
+          base: c.base,
+          ester: c.ester,
+          halfLife: c.halfLife,
+          timeToPeak: c.timeToPeak,
+          ratio: c.ratio,
+          graphType: c.graphType,
+        );
+      });
+      _saveData();
+      _refreshGraph();
+    }
   }
 
   Widget _buildDashboard() {
