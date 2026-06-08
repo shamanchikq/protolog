@@ -68,4 +68,27 @@ void main() {
       expect(nextOccurrence(r, now), DateTime(2026, 5, 25, 20, 30));
     });
   });
+
+  group('reminderState', () {
+    test('paused when disabled', () {
+      final r = interval(days: 3.5, anchor: DateTime(2026, 5, 18, 8, 0), enabled: false);
+      expect(reminderState(r, now), ReminderState.paused);
+    });
+    test('interval overdue when anchor is before now', () {
+      final r = interval(days: 3.5, anchor: DateTime(2026, 5, 18, 6, 0));
+      expect(reminderState(r, now), ReminderState.overdue);
+    });
+    test('interval due when anchor within 12h ahead', () {
+      final r = interval(days: 3.5, anchor: DateTime(2026, 5, 18, 8, 0));
+      expect(reminderState(r, now), ReminderState.due);
+    });
+    test('interval on when anchor far in the future', () {
+      final r = interval(days: 7, anchor: DateTime(2026, 5, 22, 8, 0));
+      expect(reminderState(r, now), ReminderState.on);
+    });
+    test('custom is never overdue (on when > 12h away)', () {
+      final r = custom([ReminderSlot(weekday: 3, hour: 20, minute: 30)]);
+      expect(reminderState(r, now), ReminderState.on);
+    });
+  });
 }

@@ -43,3 +43,19 @@ DateTime nextOccurrence(Reminder r, DateTime now) {
   final k = (diffMs / stepMs).ceil();
   return anchor.add(Duration(milliseconds: (k * stepMs).round()));
 }
+
+/// Current UI state of a reminder row.
+ReminderState reminderState(
+  Reminder r,
+  DateTime now, {
+  Duration dueWindow = const Duration(hours: 12),
+}) {
+  if (!r.enabled) return ReminderState.paused;
+  final dose = expectedDose(r, now);
+  final dueEdge = now.add(dueWindow);
+  if (r.scheduleMode == 'custom') {
+    return dose.isAfter(dueEdge) ? ReminderState.on : ReminderState.due;
+  }
+  if (dose.isBefore(now)) return ReminderState.overdue;
+  return dose.isAfter(dueEdge) ? ReminderState.on : ReminderState.due;
+}
