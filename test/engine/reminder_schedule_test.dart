@@ -119,4 +119,51 @@ void main() {
       expect(r2.acknowledgedUntil, taken);
     });
   });
+
+  group('formatSchedule', () {
+    test('interval fractional', () {
+      final r = interval(days: 3.5, anchor: DateTime(2026, 5, 18, 8, 0));
+      expect(formatSchedule(r), 'Every 3.5 days · 08:00');
+    });
+    test('interval whole number', () {
+      final r = interval(days: 7, anchor: DateTime(2026, 5, 18, 8, 0));
+      expect(formatSchedule(r), 'Every 7 days · 08:00');
+    });
+    test('custom weekdays', () {
+      final r = custom([
+        for (var w = 1; w <= 5; w++) ReminderSlot(weekday: w, hour: 8, minute: 0),
+      ]);
+      expect(formatSchedule(r), 'Weekdays · 08:00');
+    });
+    test('custom MWF uses letters', () {
+      final r = custom([
+        ReminderSlot(weekday: 1, hour: 20, minute: 30),
+        ReminderSlot(weekday: 3, hour: 20, minute: 30),
+        ReminderSlot(weekday: 5, hour: 20, minute: 30),
+      ]);
+      expect(formatSchedule(r), 'M / W / F · 20:30');
+    });
+    test('custom two days uses short names', () {
+      final r = custom([
+        ReminderSlot(weekday: 2, hour: 9, minute: 0),
+        ReminderSlot(weekday: 6, hour: 9, minute: 0),
+      ]);
+      expect(formatSchedule(r), 'Tue / Sat · 09:00');
+    });
+    test('custom single day pluralizes', () {
+      final r = custom([ReminderSlot(weekday: 7, hour: 9, minute: 0)]);
+      expect(formatSchedule(r), 'Sundays · 09:00');
+    });
+  });
+
+  group('relativeDayLabel', () {
+    test('today/tomorrow/yesterday', () {
+      expect(relativeDayLabel(DateTime(2026, 5, 18, 8), now), 'Today');
+      expect(relativeDayLabel(DateTime(2026, 5, 19, 8), now), 'Tomorrow');
+      expect(relativeDayLabel(DateTime(2026, 5, 17, 8), now), 'Yesterday');
+    });
+    test('further out shows weekday + month + day', () {
+      expect(relativeDayLabel(DateTime(2026, 5, 21, 8), now), 'Thu May 21');
+    });
+  });
 }
