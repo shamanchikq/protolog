@@ -20,9 +20,17 @@ ProtoLog is a tracking application built with **Flutter** designed for managing 
 
 ## 🛠️ Project Structure
 
-- `lib/main.dart`: Core UI logic, navigation, graph painting, and state management.
-- `lib/data.dart`: Static database of compounds, esters, and default values.
-- `lib/models.dart`: Data models (JSON serialization) and type definitions.
+- `lib/main.dart` — Entry point, `MainScreen` shell, dashboard composition, calendar/history.
+- `lib/models.dart` — Data models and enums with JSON serialization.
+- `lib/data.dart` — Static compound library, ester definitions, blend constants.
+- `lib/utils.dart` — Small shared helpers (date formatting, etc.).
+- `lib/engine/compute_engine.dart` — Bateman PK math (Isolate-safe).
+- `lib/engine/dashboard_stats.dart` — Dashboard-specific stats (active sum, trend, lane sampler).
+- `lib/ui/theme.dart` — "Lab Sheet" design tokens (palette, fonts, compound color overrides).
+- `lib/ui/widgets/` — Reusable redesigned UI components (`ProtoLogShell`, `LoadHero`, `PKChartCard`, `SwimlaneCard`, `PKGraphPainter`).
+- `lib/ui/views/` — Full-screen views (`AddInjectionWizard`, `CompoundManager`, `RemindersPage`).
+
+For implementation guidance and the current redesign status, see [`CLAUDE.md`](CLAUDE.md).
 
 ## 📦 Getting Started
 
@@ -53,6 +61,8 @@ ProtoLog is a tracking application built with **Flutter** designed for managing 
 
 - `flutter`: SDK
 - `shared_preferences`: Local storage for persistence.
+- `flutter_local_notifications` + `timezone`: Scheduled dose reminders.
+- `google_fonts`: Inter / Fraunces / JetBrains Mono for the redesigned dashboard.
 - `flutter_launcher_icons`: (Dev) For generating app icons.
 
 ## 🎨 Customization
