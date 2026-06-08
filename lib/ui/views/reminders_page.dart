@@ -1,550 +1,348 @@
 import 'package:flutter/material.dart';
 import '../../models.dart';
-import '../../data.dart';
+import '../theme.dart';
+import '../../engine/reminder_schedule.dart';
+import '../../engine/library_stats.dart';
 
-const _dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-class RemindersPage extends StatefulWidget {
+class RemindersPage extends StatelessWidget {
   final List<Reminder> reminders;
   final List<CompoundDefinition> userCompounds;
-  final Function(List<Reminder>) onSave;
-  final Function(Reminder) onSchedule;
-  final Function(Reminder) onCancel;
+  final DateTime now;
+  final void Function(Reminder? editing) onEditReminder;
+  final void Function(Reminder) onToggleEnabled;
+  final void Function(Reminder) onLogNow;
+  final void Function(Reminder) onSkip;
 
-  const RemindersPage({super.key, required this.reminders, required this.userCompounds, required this.onSave, required this.onSchedule, required this.onCancel});
+  RemindersPage({
+    super.key,
+    required this.reminders,
+    required this.userCompounds,
+    required this.onEditReminder,
+    required this.onToggleEnabled,
+    required this.onLogNow,
+    required this.onSkip,
+    DateTime? now,
+  }) : now = now ?? DateTime.now();
 
-  @override
-  State<RemindersPage> createState() => _RemindersPageState();
-}
-
-class _RemindersPageState extends State<RemindersPage> {
-  late List<Reminder> _reminders;
-  bool _isAdding = false;
-  String? _selectedBase;
-  String? _selectedEster;
-  String _scheduleMode = 'interval';
-  String _intervalDays = '3';
-  TimeOfDay _time = const TimeOfDay(hour: 10, minute: 0);
-  // Custom mode state: which days are selected, and per-day time (AM/PM or custom)
-  final Map<int, TimeOfDay> _customDayTimes = {}; // weekday (1-7) -> time
-  // Compound selector state (category tabs + steroid drill-down)
-  String _typeFilter = 'steroid';
-  String? _selectedBaseForSteroid;
-
-  @override
-  void initState() {
-    super.initState();
-    _reminders = List.from(widget.reminders);
-  }
-
-  void _resetForm() {
-    _selectedBase = null;
-    _selectedEster = null;
-    _scheduleMode = 'interval';
-    _intervalDays = '3';
-    _time = const TimeOfDay(hour: 10, minute: 0);
-    _customDayTimes.clear();
-    _typeFilter = 'steroid';
-    _selectedBaseForSteroid = null;
-  }
-
-  int _esterCountForBase(String base) {
-    final Set<String> esters = {};
-    for (var comp in widget.userCompounds) {
-      if (comp.type == CompoundType.steroid && comp.base == base) esters.add(comp.ester);
-    }
-    BASE_LIBRARY.forEach((key, val) {
-      if (val.type == CompoundType.steroid && val.base == base) esters.add(val.ester);
-    });
-    return esters.length;
-  }
-
-  List<CompoundDefinition> get _availableCompounds {
-    final targetType = _typeFilter == 'steroid' ? CompoundType.steroid
-        : _typeFilter == 'oral' ? CompoundType.oral
-        : _typeFilter == 'peptide' ? CompoundType.peptide
-        : CompoundType.ancillary;
-
-    if (targetType == CompoundType.steroid) {
-      if (_selectedBaseForSteroid != null) {
-        final Map<String, CompoundDefinition> esters = {};
-        for (var comp in widget.userCompounds) {
-          if (comp.type == CompoundType.steroid && comp.base == _selectedBaseForSteroid && !esters.containsKey(comp.ester)) {
-            esters[comp.ester] = comp;
-          }
-        }
-        BASE_LIBRARY.forEach((key, val) {
-          if (val.type == CompoundType.steroid && val.base == _selectedBaseForSteroid && !esters.containsKey(val.ester)) {
-            esters[val.ester] = val;
-          }
-        });
-        return esters.values.toList();
-      }
-      final Map<String, CompoundDefinition> bases = {};
-      for (var comp in widget.userCompounds) {
-        if (comp.type == CompoundType.steroid && !bases.containsKey(comp.base)) {
-          bases[comp.base] = comp;
-        }
-      }
-      BASE_LIBRARY.forEach((key, val) {
-        if (val.type == CompoundType.steroid && !bases.containsKey(val.base)) {
-          bases[val.base] = val;
-        }
-      });
-      return bases.values.toList();
-    }
-
-    final Map<String, CompoundDefinition> compounds = {};
-    for (var comp in widget.userCompounds) {
-      if (comp.type == targetType && !compounds.containsKey(comp.base)) {
-        compounds[comp.base] = comp;
+  Color _colorFor(Reminder r) {
+    final override = AppTheme.compoundColor(r.compoundBase);
+    if (override != null) return override;
+    for (final c in cataloguedCompounds(userCompounds: userCompounds)) {
+      if (c.base == r.compoundBase && c.ester == r.compoundEster) {
+        return Color(c.colorValue);
       }
     }
-    BASE_LIBRARY.forEach((key, val) {
-      if (val.type == targetType && !compounds.containsKey(val.base)) {
-        compounds[val.base] = val;
-      }
-    });
-    return compounds.values.toList();
-  }
-
-  String _formatSchedule(Reminder r) {
-    if (r.scheduleMode == 'custom' && r.customSlots.isNotEmpty) {
-      // Check if all slots are weekdays at the same time
-      final weekdaySlots = r.customSlots.where((s) => s.weekday >= 1 && s.weekday <= 5).toList();
-      final allSameTime = r.customSlots.every((s) => s.hour == r.customSlots.first.hour && s.minute == r.customSlots.first.minute);
-      if (weekdaySlots.length == 5 && r.customSlots.length == 5 && allSameTime) {
-        return 'Weekdays at ${r.customSlots.first.hour.toString().padLeft(2, '0')}:${r.customSlots.first.minute.toString().padLeft(2, '0')}';
-      }
-      return r.customSlots.map((s) {
-        final dayName = _dayNames[s.weekday - 1];
-        final h = s.hour;
-        return '$dayName ${h < 12 ? 'AM' : 'PM'}';
-      }).join(', ');
-    }
-    final timeStr = '${r.hour.toString().padLeft(2, '0')}:${r.minute.toString().padLeft(2, '0')}';
-    return 'Every ${r.intervalDays} days at $timeStr';
-  }
-
-  void _saveReminder() {
-    if (_selectedBase == null) return;
-
-    List<ReminderSlot> slots = [];
-    if (_scheduleMode == 'custom') {
-      if (_customDayTimes.isEmpty) return;
-      final sortedDays = _customDayTimes.keys.toList()..sort();
-      for (var day in sortedDays) {
-        final t = _customDayTimes[day]!;
-        slots.add(ReminderSlot(weekday: day, hour: t.hour, minute: t.minute));
-      }
-    }
-
-    final reminder = Reminder(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      compoundBase: _selectedBase!,
-      compoundEster: _selectedEster ?? 'None',
-      scheduleMode: _scheduleMode,
-      intervalDays: int.tryParse(_intervalDays) ?? 3,
-      hour: _time.hour,
-      minute: _time.minute,
-      customSlots: slots,
-      enabled: true,
-    );
-    setState(() {
-      _reminders.add(reminder);
-      _isAdding = false;
-    });
-    _resetForm();
-    widget.onSave(_reminders);
-    widget.onSchedule(reminder);
-  }
-
-  void _toggleReminder(int index) {
-    final r = _reminders[index];
-    final updated = r.copyWith(enabled: !r.enabled);
-    setState(() => _reminders[index] = updated);
-    widget.onSave(_reminders);
-    if (updated.enabled) {
-      widget.onSchedule(updated);
-    } else {
-      widget.onCancel(updated);
-    }
-  }
-
-  void _deleteReminder(int index) {
-    final r = _reminders[index];
-    widget.onCancel(r);
-    setState(() => _reminders.removeAt(index));
-    widget.onSave(_reminders);
+    return AppTheme.fgMute;
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF020617),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF0F172A),
-        title: const Text('Reminders'),
-      ),
-      floatingActionButton: _isAdding ? null : FloatingActionButton(
-        backgroundColor: const Color(0xFF10B981),
-        child: const Icon(Icons.add, color: Colors.white),
-        onPressed: () => setState(() {
-          _resetForm();
-          _isAdding = true;
-        }),
-      ),
-      body: _isAdding ? _buildAddForm() : _buildList(),
-    );
-  }
+    final dueCount = reminders
+        .where((r) {
+          final s = reminderState(r, now);
+          return s == ReminderState.overdue || s == ReminderState.due;
+        })
+        .length;
 
-  Widget _buildList() {
-    if (_reminders.isEmpty) {
-      return const Center(child: Text('No reminders yet', style: TextStyle(color: Colors.grey)));
-    }
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _reminders.length,
-      itemBuilder: (context, index) {
-        final r = _reminders[index];
-        return Card(
-          color: const Color(0xFF1E293B),
-          margin: const EdgeInsets.only(bottom: 8),
-          child: ListTile(
-            title: Text(
-              '${r.compoundBase}${r.compoundEster != 'None' ? ' ${r.compoundEster}' : ''}',
-              style: TextStyle(fontWeight: FontWeight.bold, color: r.enabled ? Colors.white : Colors.grey),
-            ),
-            subtitle: Text(_formatSchedule(r), style: const TextStyle(color: Colors.grey, fontSize: 12)),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Switch(
-                  value: r.enabled,
-                  activeTrackColor: const Color(0xFF10B981),
-                  onChanged: (_) => _toggleReminder(index),
-                ),
-                IconButton(icon: const Icon(Icons.delete, size: 20, color: Colors.grey), onPressed: () => _deleteReminder(index)),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildAddForm() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              IconButton(icon: const Icon(Icons.arrow_back), onPressed: () {
-                if (_selectedBaseForSteroid != null) {
-                  setState(() => _selectedBaseForSteroid = null);
-                } else {
-                  setState(() { _isAdding = false; _resetForm(); });
-                }
-              }),
-              Text(_selectedBaseForSteroid ?? 'New Reminder', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          const SizedBox(height: 16),
-          // Compound selector - category tabs
-          if (_selectedBase == null) ...[
-            Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(color: const Color(0xFF0F172A), borderRadius: BorderRadius.circular(8)),
-              child: Row(
-                children: [
-                  {'key': 'steroid', 'label': 'Injectable'},
-                  {'key': 'oral', 'label': 'Oral'},
-                  {'key': 'peptide', 'label': 'Peptide'},
-                  {'key': 'ancillary', 'label': 'Ancillary'},
-                ].map((tab) {
-                  final isActive = _typeFilter == tab['key'];
-                  return Expanded(child: GestureDetector(
-                    onTap: () => setState(() { _typeFilter = tab['key']!; _selectedBaseForSteroid = null; }),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      decoration: BoxDecoration(color: isActive ? const Color(0xFF334155) : Colors.transparent, borderRadius: BorderRadius.circular(6)),
-                      child: Center(child: Text(tab['label']!, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: isActive ? Colors.white : Colors.grey))),
-                    ),
-                  ));
-                }).toList(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, childAspectRatio: 2.5, crossAxisSpacing: 10, mainAxisSpacing: 10),
-              itemCount: _availableCompounds.length,
-              itemBuilder: (c, i) {
-                final compound = _availableCompounds[i];
-                String displayName;
-                String subtitle;
-                if (_typeFilter == 'steroid' && _selectedBaseForSteroid == null) {
-                  displayName = compound.base;
-                  final count = _esterCountForBase(compound.base);
-                  subtitle = '$count ${count == 1 ? 'variant' : 'variants'}';
-                } else if (compound.type == CompoundType.steroid) {
-                  displayName = compound.ester;
-                  subtitle = 'HL: ${compound.halfLife}d';
-                } else {
-                  displayName = compound.base;
-                  subtitle = compound.type.name.toUpperCase();
-                }
-                return GestureDetector(
-                  onTap: () {
-                    if (_typeFilter == 'steroid' && _selectedBaseForSteroid == null) {
-                      if (_esterCountForBase(compound.base) == 1) {
-                        setState(() {
-                          _selectedBase = compound.base;
-                          _selectedEster = compound.ester;
-                        });
-                      } else {
-                        setState(() => _selectedBaseForSteroid = compound.base);
-                      }
-                    } else {
-                      setState(() {
-                        _selectedBase = compound.base;
-                        _selectedEster = compound.ester;
-                      });
-                    }
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFF334155))),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(displayName, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 13), overflow: TextOverflow.ellipsis),
-                        Text(subtitle, style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ],
-          if (_selectedBase != null) ...[
-            // Show selected compound chip with clear button
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFF334155))),
-              child: Row(
-                children: [
-                  Expanded(child: Text(
-                    '$_selectedBase${_selectedEster != null && _selectedEster != 'None' ? ' $_selectedEster' : ''}',
-                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
-                  )),
-                  GestureDetector(
-                    onTap: () => setState(() { _selectedBase = null; _selectedEster = null; _selectedBaseForSteroid = null; }),
-                    child: const Icon(Icons.close, size: 18, color: Colors.grey),
-                  ),
-                ],
-              ),
-            ),
-          ],
-          if (_selectedBase != null) ...[
-          const SizedBox(height: 20),
-          // Schedule mode toggle
-          const Text('Schedule Type', style: TextStyle(fontSize: 12, color: Colors.grey)),
-          const SizedBox(height: 4),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 18, 14, 90),
+      children: [
+        Text('Reminders', style: AppTheme.serif(size: 22, weight: FontWeight.w500, letterSpacing: -0.4)),
+        const SizedBox(height: 4),
+        Text(
+          reminders.isEmpty ? 'Nothing scheduled yet' : '$dueCount due today · ${reminders.length} scheduled',
+          style: AppTheme.sans(size: 12, color: AppTheme.fgMute),
+        ),
+        const SizedBox(height: 22),
+        if (reminders.isEmpty)
+          _EmptyState(onCreate: () => onEditReminder(null))
+        else ...[
+          _SectionHeader(title: 'Next 7 days'),
+          const SizedBox(height: 10),
+          _WeekStrip(reminders: reminders, now: now, colorOf: _colorFor),
+          const SizedBox(height: 22),
+          _SectionHeader(title: 'Schedules', meta: 'tap to edit'),
+          const SizedBox(height: 10),
           Container(
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(color: const Color(0xFF0F172A), borderRadius: BorderRadius.circular(8)),
-            child: Row(
+            decoration: BoxDecoration(color: AppTheme.surface, border: Border.all(color: AppTheme.border, width: 1)),
+            child: Column(
               children: [
-                _modeTab('Interval', 'interval'),
-                _modeTab('Custom Days', 'custom'),
+                for (var i = 0; i < reminders.length; i++)
+                  _ReminderRow(
+                    reminder: reminders[i],
+                    now: now,
+                    color: _colorFor(reminders[i]),
+                    topBorder: i > 0,
+                    onTap: () => onEditReminder(reminders[i]),
+                    onToggle: () => onToggleEnabled(reminders[i]),
+                    onLogNow: () => onLogNow(reminders[i]),
+                    onSkip: () => onSkip(reminders[i]),
+                  ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
+        ],
+      ],
+    );
+  }
+}
 
-          if (_scheduleMode == 'interval') ...[
-            const Text('Interval (days)', style: TextStyle(fontSize: 12, color: Colors.grey)),
-            const SizedBox(height: 4),
-            TextField(
-              controller: TextEditingController(text: _intervalDays),
-              keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white),
-              onChanged: (v) => _intervalDays = v,
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: const Color(0xFF0F172A),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF334155))),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF10B981))),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text('Time', style: TextStyle(fontSize: 12, color: Colors.grey)),
-            const SizedBox(height: 4),
-            InkWell(
-              onTap: () async {
-                final t = await showTimePicker(context: context, initialTime: _time);
-                if (t != null) setState(() => _time = t);
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                decoration: BoxDecoration(color: const Color(0xFF0F172A), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFF334155))),
-                child: Row(children: [
-                  const Icon(Icons.access_time, size: 16, color: Colors.grey),
-                  const SizedBox(width: 8),
-                  Text(_time.format(context), style: const TextStyle(color: Colors.white)),
-                ]),
-              ),
-            ),
-          ],
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  final String? meta;
+  const _SectionHeader({required this.title, this.meta});
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(title.toUpperCase(), style: AppTheme.sans(size: 10, color: AppTheme.fgDim, letterSpacing: 1.1)),
+        if (meta != null) Text(meta!, style: AppTheme.sans(size: 10, color: AppTheme.fgDim, letterSpacing: 0.4)),
+      ],
+    );
+  }
+}
 
-          if (_scheduleMode == 'custom') ...[
-            const Text('Select days and times', style: TextStyle(fontSize: 12, color: Colors.grey)),
-            const SizedBox(height: 8),
-            // Quick-select row
-            Row(
-              children: [
-                _quickSelectBtn('Weekdays', () {
-                  setState(() {
-                    _customDayTimes.clear();
-                    for (int d = 1; d <= 5; d++) {
-                      _customDayTimes[d] = const TimeOfDay(hour: 10, minute: 0);
-                    }
-                  });
-                }),
-                const SizedBox(width: 8),
-                _quickSelectBtn('MWF', () {
-                  setState(() {
-                    _customDayTimes.clear();
-                    for (var d in [1, 3, 5]) {
-                      _customDayTimes[d] = const TimeOfDay(hour: 10, minute: 0);
-                    }
-                  });
-                }),
-                const SizedBox(width: 8),
-                _quickSelectBtn('TTS', () {
-                  setState(() {
-                    _customDayTimes.clear();
-                    for (var d in [2, 4, 6]) {
-                      _customDayTimes[d] = const TimeOfDay(hour: 10, minute: 0);
-                    }
-                  });
-                }),
-              ],
-            ),
-            const SizedBox(height: 12),
-            // Day grid with toggles
-            ...List.generate(7, (i) {
-              final weekday = i + 1; // 1=Mon
-              final isSelected = _customDayTimes.containsKey(weekday);
-              final dayTime = _customDayTimes[weekday] ?? const TimeOfDay(hour: 10, minute: 0);
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  children: [
-                    GestureDetector(
-                      onTap: () => setState(() {
-                        if (isSelected) {
-                          _customDayTimes.remove(weekday);
-                        } else {
-                          _customDayTimes[weekday] = const TimeOfDay(hour: 10, minute: 0);
-                        }
-                      }),
-                      child: Container(
-                        width: 56,
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        decoration: BoxDecoration(
-                          color: isSelected ? const Color(0xFF10B981) : const Color(0xFF0F172A),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: isSelected ? const Color(0xFF10B981) : const Color(0xFF334155)),
-                        ),
-                        child: Center(child: Text(_dayNames[i], style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: isSelected ? Colors.white : Colors.grey))),
-                      ),
-                    ),
-                    if (isSelected) ...[
-                      const SizedBox(width: 10),
-                      _amPmBtn('AM', weekday, dayTime, const TimeOfDay(hour: 10, minute: 0)),
-                      const SizedBox(width: 6),
-                      _amPmBtn('PM', weekday, dayTime, const TimeOfDay(hour: 22, minute: 0)),
-                      const SizedBox(width: 6),
-                      InkWell(
-                        onTap: () async {
-                          final t = await showTimePicker(context: context, initialTime: dayTime);
-                          if (t != null) setState(() => _customDayTimes[weekday] = t);
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: (dayTime.hour != 10 || dayTime.minute != 0) && (dayTime.hour != 22 || dayTime.minute != 0)
-                                ? const Color(0xFF10B981) : const Color(0xFF0F172A),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: const Color(0xFF334155)),
-                          ),
-                          child: Text(dayTime.format(context), style: const TextStyle(fontSize: 12, color: Colors.white)),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              );
-            }),
-          ],
+class _WeekStrip extends StatelessWidget {
+  final List<Reminder> reminders;
+  final DateTime now;
+  final Color Function(Reminder) colorOf;
+  const _WeekStrip({required this.reminders, required this.now, required this.colorOf});
 
-          const SizedBox(height: 24),
+  static const _wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  @override
+  Widget build(BuildContext context) {
+    final agenda = weekAgenda(reminders, now, 7, colorOf);
+    final startDay = DateTime(now.year, now.month, now.day);
+    return Row(
+      children: [
+        for (var i = 0; i < 7; i++) ...[
+          if (i > 0) const SizedBox(width: 4),
+          Expanded(child: _dayCell(startDay.add(Duration(days: i)), i == 0, agenda[i])),
+        ],
+      ],
+    );
+  }
+
+  Widget _dayCell(DateTime d, bool today, List<Color> colors) {
+    final fg = today ? AppTheme.paperInk : AppTheme.fg;
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+      decoration: BoxDecoration(
+        color: today ? AppTheme.paper : Colors.transparent,
+        border: Border.all(color: today ? AppTheme.paperInk : AppTheme.borderSoft, width: 1),
+      ),
+      child: Column(
+        children: [
+          Text(_wd[d.weekday - 1], style: AppTheme.sans(size: 10, color: today ? AppTheme.paperInk : AppTheme.fgDim)),
+          const SizedBox(height: 2),
+          Text('${d.day}', style: AppTheme.sans(size: 17, weight: today ? FontWeight.w700 : FontWeight.w500, color: fg, height: 1.2)),
+          const SizedBox(height: 8),
           SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), padding: const EdgeInsets.symmetric(vertical: 16)),
-              onPressed: (_scheduleMode == 'interval' || _customDayTimes.isNotEmpty) ? _saveReminder : null,
-              child: const Text('SAVE REMINDER', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            height: 3,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (var j = 0; j < colors.length; j++) ...[
+                  if (j > 0) const SizedBox(width: 2),
+                  Container(width: 4, height: 3, color: colors[j]),
+                ],
+              ],
             ),
           ),
-          ],
         ],
       ),
     );
   }
+}
 
-  Widget _modeTab(String label, String mode) {
-    final isActive = _scheduleMode == mode;
-    return Expanded(child: GestureDetector(
-      onTap: () => setState(() => _scheduleMode = mode),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        decoration: BoxDecoration(color: isActive ? const Color(0xFF334155) : Colors.transparent, borderRadius: BorderRadius.circular(6)),
-        child: Center(child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isActive ? Colors.white : Colors.grey))),
-      ),
-    ));
-  }
+class _ReminderRow extends StatelessWidget {
+  final Reminder reminder;
+  final DateTime now;
+  final Color color;
+  final bool topBorder;
+  final VoidCallback onTap;
+  final VoidCallback onToggle;
+  final VoidCallback onLogNow;
+  final VoidCallback onSkip;
+  const _ReminderRow({
+    required this.reminder,
+    required this.now,
+    required this.color,
+    required this.topBorder,
+    required this.onTap,
+    required this.onToggle,
+    required this.onLogNow,
+    required this.onSkip,
+  });
 
-  Widget _quickSelectBtn(String label, VoidCallback onTap) {
+  (Color, String) _stateMeta(ReminderState s) => switch (s) {
+        ReminderState.overdue => (AppTheme.warn, 'Overdue'),
+        ReminderState.due => (AppTheme.warm, 'Due'),
+        ReminderState.on => (AppTheme.accent, 'On'),
+        ReminderState.paused => (AppTheme.fgDim, 'Paused'),
+      };
+
+  String get _name => reminder.compoundEster.isEmpty || reminder.compoundEster.toLowerCase() == 'none'
+      ? reminder.compoundBase
+      : '${reminder.compoundBase} ${reminder.compoundEster}';
+
+  @override
+  Widget build(BuildContext context) {
+    final state = reminderState(reminder, now);
+    final (stateColor, stateLabel) = _stateMeta(state);
+    final paused = state == ReminderState.paused;
+    final actionable = state == ReminderState.overdue || state == ReminderState.due;
+    final dose = expectedDose(reminder, now);
+    final nextLabel = '${relativeDayLabel(dose, now)} ${dose.hour.toString().padLeft(2, '0')}:${dose.minute.toString().padLeft(2, '0')}';
+
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFF334155))),
-        child: Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF10B981), fontWeight: FontWeight.bold)),
+      behavior: HitTestBehavior.opaque,
+      child: Opacity(
+        opacity: paused ? 0.55 : 1,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          decoration: BoxDecoration(
+            border: topBorder ? const Border(top: BorderSide(color: AppTheme.borderSoft, width: 1)) : null,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Container(width: 3, height: 32, color: color),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(_name, style: AppTheme.sans(size: 13, weight: FontWeight.w500)),
+                        const SizedBox(height: 2),
+                        Text(formatSchedule(reminder), style: AppTheme.sans(size: 11, color: AppTheme.fgMute)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(stateLabel, style: AppTheme.sans(size: 11, weight: FontWeight.w600, color: stateColor)),
+                      const SizedBox(height: 2),
+                      Text(nextLabel, style: AppTheme.sans(size: 11, color: AppTheme.fgMute)),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 11),
+              Padding(
+                padding: const EdgeInsets.only(left: 17),
+                child: Row(
+                  children: [
+                    if (actionable) ...[
+                      _ActionButton(label: 'Log now', filled: true, onTap: onLogNow),
+                      const SizedBox(width: 8),
+                      _ActionButton(label: 'Skip', filled: false, onTap: onSkip),
+                    ],
+                    const Spacer(),
+                    _PauseToggle(paused: paused, onTap: onToggle),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
+}
 
-  Widget _amPmBtn(String label, int weekday, TimeOfDay current, TimeOfDay target) {
-    final isActive = current.hour == target.hour && current.minute == target.minute;
+class _ActionButton extends StatelessWidget {
+  final String label;
+  final bool filled;
+  final VoidCallback onTap;
+  const _ActionButton({required this.label, required this.filled, required this.onTap});
+  @override
+  Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => setState(() => _customDayTimes[weekday] = target),
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
         decoration: BoxDecoration(
-          color: isActive ? const Color(0xFF10B981) : const Color(0xFF0F172A),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: isActive ? const Color(0xFF10B981) : const Color(0xFF334155)),
+          color: filled ? AppTheme.accent : Colors.transparent,
+          border: filled ? null : Border.all(color: AppTheme.border, width: 1),
         ),
-        child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isActive ? Colors.white : Colors.grey)),
+        child: Text(label, style: AppTheme.sans(size: 11.5, weight: filled ? FontWeight.w600 : FontWeight.w500, color: filled ? AppTheme.bg : AppTheme.fgMute, letterSpacing: 0.2)),
+      ),
+    );
+  }
+}
+
+class _PauseToggle extends StatelessWidget {
+  final bool paused;
+  final VoidCallback onTap;
+  const _PauseToggle({required this.paused, required this.onTap});
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        width: 34,
+        height: 19,
+        decoration: BoxDecoration(
+          color: paused ? AppTheme.surface2 : AppTheme.accentDeep,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: AppTheme.border, width: 1),
+        ),
+        child: Align(
+          alignment: paused ? Alignment.centerLeft : Alignment.centerRight,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 1),
+            child: Container(width: 15, height: 15, decoration: BoxDecoration(shape: BoxShape.circle, color: paused ? AppTheme.fgDim : AppTheme.accent)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  final VoidCallback onCreate;
+  const _EmptyState({required this.onCreate});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(22, 40, 22, 34),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        border: Border.all(color: AppTheme.border, width: 1, style: BorderStyle.solid),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.water_drop_outlined, size: 40, color: AppTheme.fgMute.withValues(alpha: 0.5)),
+          const SizedBox(height: 16),
+          Text('No reminders yet', style: AppTheme.serif(size: 18, weight: FontWeight.w500)),
+          const SizedBox(height: 6),
+          Text(
+            'Set a schedule and ProtoLog will tell you when each compound is due — so nothing slips.',
+            textAlign: TextAlign.center,
+            style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5),
+          ),
+          const SizedBox(height: 18),
+          GestureDetector(
+            onTap: onCreate,
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+              color: AppTheme.accent,
+              child: Text('+ New reminder', style: AppTheme.sans(size: 12.5, weight: FontWeight.w600, color: AppTheme.bg, letterSpacing: 0.3)),
+            ),
+          ),
+        ],
       ),
     );
   }
