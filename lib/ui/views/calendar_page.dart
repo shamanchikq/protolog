@@ -9,12 +9,17 @@ class CalendarPage extends StatefulWidget {
   final void Function(String injectionId, String? notes) onUpdateNotes;
   final ValueChanged<DateTime>? onDaySelected;
 
+  /// Live base→color resolver. Falls back to the static palette + snapshot
+  /// color when not supplied (e.g. in widget tests).
+  final Color Function(String baseName)? colorResolver;
+
   const CalendarPage({
     super.key,
     required this.injections,
     required this.onDeleteInjection,
     required this.onUpdateNotes,
     this.onDaySelected,
+    this.colorResolver,
   });
 
   @override
@@ -60,7 +65,8 @@ class _CalendarPageState extends State<CalendarPage> {
       ..sort((a, b) => a.date.compareTo(b.date));
     for (final inj in sorted) {
       if (inj.date.year == year && inj.date.month == month) {
-        final color = AppTheme.compoundColor(inj.snapshot.base) ??
+        final color = widget.colorResolver?.call(inj.snapshot.base) ??
+            AppTheme.compoundColor(inj.snapshot.base) ??
             Color(inj.snapshot.colorValue);
         final list = out.putIfAbsent(inj.date.day, () => []);
         if (!list.contains(color)) list.add(color);
@@ -177,6 +183,7 @@ class _CalendarPageState extends State<CalendarPage> {
             onDeleteConfirm: _confirmDelete,
             onDelete: widget.onDeleteInjection,
             onEditNotes: widget.onUpdateNotes,
+            colorResolver: widget.colorResolver,
           ),
         ),
       ],
@@ -425,6 +432,7 @@ class _SelectedDaySection extends StatelessWidget {
   final Future<bool> Function(Injection inj) onDeleteConfirm;
   final void Function(String injectionId) onDelete;
   final void Function(String injectionId, String? notes) onEditNotes;
+  final Color Function(String baseName)? colorResolver;
 
   const _SelectedDaySection({
     required this.selectedDay,
@@ -434,6 +442,7 @@ class _SelectedDaySection extends StatelessWidget {
     required this.onDeleteConfirm,
     required this.onDelete,
     required this.onEditNotes,
+    this.colorResolver,
   });
 
   String _twoDigits(int n) => n.toString().padLeft(2, '0');
@@ -511,6 +520,7 @@ class _SelectedDaySection extends StatelessWidget {
                         showTopBorder: i > 0,
                         twoDigits: _twoDigits,
                         onEditNotes: onEditNotes,
+                        colorResolver: colorResolver,
                       ),
                     ),
                 ],
@@ -527,12 +537,14 @@ class _EntryRow extends StatelessWidget {
   final bool showTopBorder;
   final String Function(int) twoDigits;
   final void Function(String injectionId, String? notes) onEditNotes;
+  final Color Function(String baseName)? colorResolver;
 
   const _EntryRow({
     required this.injection,
     required this.showTopBorder,
     required this.twoDigits,
     required this.onEditNotes,
+    this.colorResolver,
   });
 
   Future<void> _editNotes(BuildContext context) async {
@@ -556,7 +568,8 @@ class _EntryRow extends StatelessWidget {
     final dosageStr = injection.dosage == injection.dosage.truncateToDouble()
         ? injection.dosage.toStringAsFixed(0)
         : injection.dosage.toString();
-    final color = AppTheme.compoundColor(injection.snapshot.base) ??
+    final color = colorResolver?.call(injection.snapshot.base) ??
+        AppTheme.compoundColor(injection.snapshot.base) ??
         Color(injection.snapshot.colorValue);
     final hasNotes = injection.notes != null && injection.notes!.trim().isNotEmpty;
 

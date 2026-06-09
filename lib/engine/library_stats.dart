@@ -219,6 +219,36 @@ bool isEditedFromDefault(CompoundDefinition c) {
       c.graphType != def.graphType;
 }
 
+/// Live display-color candidates for compounds whose base is [base], read from
+/// the current catalogue — never from injection snapshots. This is what lets a
+/// library color edit recolor *all* logs (past and future) immediately.
+///
+/// - `userSet`: the colorValue of a matching compound whose color the user
+///   changed from its built-in default (custom compounds always qualify). It
+///   should win over the static redesign palette.
+/// - `any`: any matching compound's colorValue, used as a last-resort fallback
+///   when there is no palette entry for the base.
+///
+/// Both are null when no catalogued compound has that base.
+({int? userSet, int? any}) colorCandidatesForBase(
+  String base, {
+  required List<CompoundDefinition> userCompounds,
+}) {
+  final key = base.toLowerCase().trim();
+  int? userSet;
+  int? any;
+  for (final c in cataloguedCompounds(userCompounds: userCompounds)) {
+    if (c.base.toLowerCase().trim() != key) continue;
+    any ??= c.colorValue;
+    final def = defaultDefFor(c);
+    if (def == null || def.colorValue != c.colorValue) {
+      userSet = c.colorValue; // explicit user color (custom or edited built-in)
+      break;
+    }
+  }
+  return (userSet: userSet, any: any);
+}
+
 /// True for compound types that are injected (steroids, peptides). Orals and
 /// ancillaries are taken by mouth, so they're "administered" rather than
 /// "injected" in UI copy.

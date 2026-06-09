@@ -26,7 +26,16 @@ class SwimlaneCard extends StatefulWidget {
   final List<Injection> injections;
   final DateTime now;
 
-  const SwimlaneCard({super.key, required this.injections, required this.now});
+  /// Live base→color resolver. Falls back to the static palette + snapshot
+  /// color when not supplied (e.g. in widget tests).
+  final Color Function(String baseName)? colorResolver;
+
+  const SwimlaneCard({
+    super.key,
+    required this.injections,
+    required this.now,
+    this.colorResolver,
+  });
 
   @override
   State<SwimlaneCard> createState() => _SwimlaneCardState();
@@ -90,6 +99,7 @@ class _SwimlaneCardState extends State<SwimlaneCard> {
               totalDays: totalDays,
               now: widget.now,
               showTopDivider: false,
+              colorResolver: widget.colorResolver,
             ),
           if (ancillaries.isNotEmpty)
             _Group(
@@ -100,6 +110,7 @@ class _SwimlaneCardState extends State<SwimlaneCard> {
               totalDays: totalDays,
               now: widget.now,
               showTopDivider: peptides.isNotEmpty,
+              colorResolver: widget.colorResolver,
             ),
           if (peptides.isEmpty && ancillaries.isEmpty)
             Padding(
@@ -278,6 +289,7 @@ class _Group extends StatelessWidget {
   final int totalDays;
   final DateTime now;
   final bool showTopDivider;
+  final Color Function(String baseName)? colorResolver;
 
   const _Group({
     required this.label,
@@ -287,6 +299,7 @@ class _Group extends StatelessWidget {
     required this.totalDays,
     required this.now,
     required this.showTopDivider,
+    this.colorResolver,
   });
 
   @override
@@ -319,6 +332,7 @@ class _Group extends StatelessWidget {
               windowEnd: windowEnd,
               totalDays: totalDays,
               now: now,
+              colorResolver: colorResolver,
             ),
           const SizedBox(height: 6),
         ],
@@ -333,6 +347,7 @@ class _LaneRow extends StatelessWidget {
   final DateTime windowEnd;
   final int totalDays;
   final DateTime now;
+  final Color Function(String baseName)? colorResolver;
 
   const _LaneRow({
     required this.lane,
@@ -340,6 +355,7 @@ class _LaneRow extends StatelessWidget {
     required this.windowEnd,
     required this.totalDays,
     required this.now,
+    this.colorResolver,
   });
 
   static const _laneH = 26.0;
@@ -367,7 +383,9 @@ class _LaneRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = AppTheme.compoundColor(lane.compound.base) ?? Color(lane.compound.colorValue);
+    final c = colorResolver?.call(lane.compound.base) ??
+        AppTheme.compoundColor(lane.compound.base) ??
+        Color(lane.compound.colorValue);
     final isWindow = lane.isWindow;
     final todayFrac = now.difference(windowStart).inMilliseconds /
         windowEnd.difference(windowStart).inMilliseconds;

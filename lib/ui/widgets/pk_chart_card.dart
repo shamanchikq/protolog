@@ -8,11 +8,16 @@ class PKChartCard extends StatelessWidget {
   final GraphSettings settings;
   final ValueChanged<String> onRangeChanged;
 
+  /// Live base→color resolver. Falls back to the static redesign palette when
+  /// not supplied (e.g. in widget tests).
+  final Color? Function(String baseName)? colorResolver;
+
   const PKChartCard({
     super.key,
     required this.graphData,
     required this.settings,
     required this.onRangeChanged,
+    this.colorResolver,
   });
 
   @override
@@ -48,7 +53,7 @@ class PKChartCard extends StatelessWidget {
                           graphData: graphData!,
                           settings: settings,
                           skipPeptides: true,
-                          colorResolver: AppTheme.compoundColor,
+                          colorResolver: colorResolver ?? AppTheme.compoundColor,
                         ),
                       ),
                     ),

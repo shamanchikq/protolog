@@ -569,6 +569,7 @@ class _MainScreenState extends State<MainScreen> {
           onDeleteInjection: _deleteInjection,
           onUpdateNotes: _updateInjectionNotes,
           onDaySelected: (d) => _calendarSelectedDay = d,
+          colorResolver: _buildColorResolver(),
         );
         break;
       case ShellTab.library:
@@ -821,7 +822,24 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  /// Builds a live base→color resolver from the *current* catalogue, so library
+  /// color edits recolor every surface (graph, swimlanes, calendar, hero)
+  /// immediately — including past logs. Precedence per base:
+  ///   1. an explicit user color (custom, or a built-in the user recolored)
+  ///   2. the static redesign palette (`AppTheme.compoundColor`)
+  ///   3. the current catalogue color, else a neutral grey.
+  /// Memoized per call so a paint loop over many markers stays O(1) per base.
+  Color Function(String) _buildColorResolver() {
+    final cache = <String, Color>{};
+    return (base) => cache.putIfAbsent(base, () {
+          final cand = colorCandidatesForBase(base, userCompounds: userCompounds);
+          if (cand.userSet != null) return Color(cand.userSet!);
+          return AppTheme.compoundColor(base) ?? Color(cand.any ?? 0xFF9AA0A8);
+        });
+  }
+
   Widget _buildDashboard() {
+    final colorOf = _buildColorResolver();
     final activeStats = _getActiveStats();
     final injectableStats = activeStats
         .where((s) => s.type == CompoundType.steroid || s.type == CompoundType.oral)
@@ -833,7 +851,7 @@ class _MainScreenState extends State<MainScreen> {
               label: s.name,
               valueMg: s.activeAmount,
               shareOfTotal: totalActive > 0 ? s.activeAmount / totalActive : 0,
-              color: AppTheme.compoundColor(s.name) ?? Color(s.colorValue),
+              color: colorOf(s.name),
             ))
         .toList();
     final delta = deltaSteroidNowVsPrior7(injections: injections, now: DateTime.now());
@@ -857,6 +875,7 @@ class _MainScreenState extends State<MainScreen> {
               return PKChartCard(
                 graphData: snapshot.data,
                 settings: settings,
+                colorResolver: colorOf,
                 onRangeChanged: (range) {
                   setState(() {
                     settings = GraphSettings(
@@ -872,7 +891,11 @@ class _MainScreenState extends State<MainScreen> {
             },
           ),
           const SizedBox(height: 18),
-          SwimlaneCard(injections: injections, now: DateTime.now()),
+          SwimlaneCard(
+            injections: injections,
+            now: DateTime.now(),
+            colorResolver: colorOf,
+          ),
         ],
       ),
     );

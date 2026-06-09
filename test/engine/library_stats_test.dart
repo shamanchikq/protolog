@@ -407,6 +407,56 @@ void main() {
     });
   });
 
+  group('colorCandidatesForBase', () {
+    test('unedited built-in: userSet null, any is the live default color', () {
+      final r = colorCandidatesForBase('Testosterone', userCompounds: const []);
+      expect(r.userSet, isNull);
+      expect(r.any, isNotNull); // some Testosterone built-in color
+    });
+
+    test('user-edited built-in color wins as userSet', () {
+      // Shadow the built-in Testosterone Cypionate with a recolored override.
+      final recolored =
+          defaultDefFor(_testCyp())!.copyWith(colorValue: 0xFF123456);
+      final r = colorCandidatesForBase('Testosterone',
+          userCompounds: [recolored]);
+      expect(r.userSet, 0xFF123456);
+    });
+
+    test('custom compound color is reported as userSet', () {
+      const custom = CompoundDefinition(
+        id: 'mine', base: 'MyPeptide', ester: 'None',
+        type: CompoundType.peptide, graphType: GraphType.event,
+        halfLife: 0, timeToPeak: 0, ratio: 1.0, unit: Unit.mcg,
+        colorValue: 0xFFABCDEF, isCustom: true,
+      );
+      final r = colorCandidatesForBase('MyPeptide', userCompounds: const [custom]);
+      expect(r.userSet, 0xFFABCDEF);
+      expect(r.any, 0xFFABCDEF);
+    });
+
+    test('does not read injection snapshots (resolves from live catalogue)', () {
+      // Even with a logged injection carrying an OLD snapshot color, the
+      // candidate color comes from the current catalogue override.
+      final recolored =
+          defaultDefFor(_testCyp())!.copyWith(colorValue: 0xFF00FF00);
+      final r = colorCandidatesForBase('Testosterone',
+          userCompounds: [recolored]);
+      expect(r.userSet, 0xFF00FF00);
+    });
+
+    test('unknown base returns nulls', () {
+      final r = colorCandidatesForBase('Nonexistent', userCompounds: const []);
+      expect(r.userSet, isNull);
+      expect(r.any, isNull);
+    });
+
+    test('matches base case-insensitively', () {
+      final r = colorCandidatesForBase('testosterone', userCompounds: const []);
+      expect(r.any, isNotNull);
+    });
+  });
+
   group('isEditedFromDefault', () {
     test('false when values equal the BASE_LIBRARY default', () {
       // A seed-style row that matches the default exactly.
