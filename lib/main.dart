@@ -513,8 +513,9 @@ class _MainScreenState extends State<MainScreen> {
       final ago = Duration(milliseconds: diffMs);
       final agoString = ago.inDays > 0 ? "${ago.inDays}d ago" : "${ago.inHours}h ago";
 
-      // Skip if latest injection is very old
-      if (diffMs > 2592000000) continue;
+      // Skip if latest injection is past the compound's relevance window.
+      final statHl = inj.snapshot.halfLife > 0.05 ? inj.snapshot.halfLife : 1.0;
+      if (diffMs > statRelevanceWindowDays(statHl) * 86400000) continue;
 
       String mainValue = "";
       String subLabel = "";
