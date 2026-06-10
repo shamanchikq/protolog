@@ -1,30 +1,35 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:protolog_tracker/main.dart';
+import 'package:protolog_tracker/ui/widgets/protolog_shell.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const ProtoLogApp());
+  testWidgets('shell renders brand, tabs, body, and FAB; reports tab taps',
+      (tester) async {
+    ShellTab? tapped;
+    var fabPressed = false;
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    await tester.pumpWidget(MaterialApp(
+      home: ProtoLogShell(
+        activeTab: ShellTab.today,
+        onTabChanged: (t) => tapped = t,
+        onFabPressed: () => fabPressed = true,
+        fabLabel: 'Log dose',
+        body: const Text('dashboard body'),
+      ),
+    ));
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    expect(find.text('protolog'), findsOneWidget);
+    expect(find.text('Today'), findsOneWidget);
+    expect(find.text('Calendar'), findsOneWidget);
+    expect(find.text('Library'), findsOneWidget);
+    expect(find.text('Reminders'), findsOneWidget);
+    expect(find.text('dashboard body'), findsOneWidget);
+    expect(find.text('Log dose'), findsOneWidget);
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    await tester.tap(find.text('Library'));
+    expect(tapped, ShellTab.library);
+
+    await tester.tap(find.text('Log dose'));
+    expect(fabPressed, isTrue);
   });
 }
