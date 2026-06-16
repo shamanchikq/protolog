@@ -42,15 +42,23 @@ class ProtoLogApp extends StatelessWidget {
       title: 'ProtoLog',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF020617), // Slate 950
+        scaffoldBackgroundColor: AppTheme.bg,
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF10B981), // Emerald 500
-          surface: Color(0xFF1E293B), // Slate 800
-          onSurface: Color(0xFFE2E8F0), // Slate 200
+          primary: AppTheme.accent,
+          surface: AppTheme.surface,
+          onSurface: AppTheme.fg,
         ),
-        cardTheme: CardThemeData(
-          color: const Color(0xFF1E293B),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        dialogTheme: const DialogThemeData(
+          backgroundColor: AppTheme.surface2,
+          shape: RoundedRectangleBorder(
+            side: BorderSide(color: AppTheme.border, width: 1),
+          ),
+        ),
+        cardTheme: const CardThemeData(
+          color: AppTheme.surface,
+          shape: RoundedRectangleBorder(
+            side: BorderSide(color: AppTheme.border, width: 1),
+          ),
           margin: EdgeInsets.zero,
         ),
       ),
@@ -156,6 +164,19 @@ class _MainScreenState extends State<MainScreen> {
     if (match == null) return;
     final def = _compoundForReminder(match);
     if (def != null) _openAddInjectionWizard(prefill: def);
+  }
+
+  /// Lab Sheet-styled snackbar. `color` is the background; `dark` switches the
+  /// text to bg-on-light for warm/light backgrounds.
+  void _snack(String message, {Color color = AppTheme.surface2, bool dark = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(
+        message,
+        style: AppTheme.sans(size: 12, color: dark ? AppTheme.bg : AppTheme.fg),
+      ),
+      backgroundColor: color,
+    ));
   }
 
   Future<void> _loadData() async {
@@ -279,11 +300,7 @@ class _MainScreenState extends State<MainScreen> {
         }
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to schedule notification: $e'), backgroundColor: Colors.red),
-        );
-      }
+      _snack('Failed to schedule notification: $e', color: AppTheme.warn);
     }
   }
 
@@ -295,21 +312,13 @@ class _MainScreenState extends State<MainScreen> {
 
   void _exportToMarkdown() {
     Clipboard.setData(ClipboardData(text: injectionsToMarkdown(injections)));
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Log exported to clipboard as Markdown'), backgroundColor: Color(0xFF10B981)),
-      );
-    }
+    _snack('Log exported to clipboard as Markdown', color: AppTheme.accentDeep);
   }
 
   Future<void> _importFromMarkdown() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     if (data == null || data.text == null || data.text!.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Clipboard is empty'), backgroundColor: Colors.red),
-        );
-      }
+      _snack('Clipboard is empty', color: AppTheme.warn);
       return;
     }
 
@@ -320,11 +329,7 @@ class _MainScreenState extends State<MainScreen> {
     );
 
     if (parsed.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No new entries found in clipboard'), backgroundColor: Colors.orange),
-        );
-      }
+      _snack('No new entries found in clipboard', color: AppTheme.warm, dark: true);
       return;
     }
 
@@ -332,12 +337,23 @@ class _MainScreenState extends State<MainScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E293B),
-        title: const Text('Import Data'),
-        content: Text('Found ${parsed.length} new entries to import. Proceed?'),
+        backgroundColor: AppTheme.surface2,
+        title: Text('Import data',
+            style: AppTheme.sans(size: 14, weight: FontWeight.w600, color: AppTheme.fg)),
+        content: Text(
+          'Found ${parsed.length} new entries to import. Proceed?',
+          style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Import', style: TextStyle(color: Color(0xFF10B981)))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel', style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Import',
+                style: AppTheme.sans(size: 12, weight: FontWeight.w600, color: AppTheme.accent)),
+          ),
         ],
       ),
     );
