@@ -26,6 +26,7 @@ import 'ui/views/compound_editor_page.dart';
 import 'ui/views/reminders_page.dart';
 import 'ui/views/reminder_editor_page.dart';
 import 'engine/reminder_schedule.dart';
+import 'engine/log_serde.dart';
 
 // --- Entry Point ---
 void main() {
@@ -246,18 +247,7 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _exportToMarkdown() {
-    final sorted = List<Injection>.from(injections)..sort((a, b) => b.date.compareTo(a.date));
-    final buf = StringBuffer();
-    buf.writeln('| Date | Compound | Ester | Dosage | Unit |');
-    buf.writeln('|------|----------|-------|--------|------|');
-    for (var inj in sorted) {
-      final d = inj.date;
-      final dateStr = '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
-      final ester = inj.snapshot.ester == 'None' ? '' : inj.snapshot.ester;
-      final unit = inj.snapshot.unit.toString().split('.').last;
-      buf.writeln('| $dateStr | ${inj.snapshot.base} | $ester | ${inj.dosage} | $unit |');
-    }
-    Clipboard.setData(ClipboardData(text: buf.toString()));
+    Clipboard.setData(ClipboardData(text: injectionsToMarkdown(injections)));
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Log exported to clipboard as Markdown'), backgroundColor: Color(0xFF10B981)),
@@ -275,80 +265,17 @@ class _MainScreenState extends State<MainScreen> {
       }
       return;
     }
-    final lines = data.text!.split('\n').where((l) => l.trim().startsWith('|') && !l.contains('---')).toList();
-    // Skip header row
-    final dataLines = lines.length > 1 ? lines.sublist(1) : <String>[];
-    if (dataLines.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No valid data found in clipboard'), backgroundColor: Colors.red),
-        );
-      }
-      return;
-    }
 
-    final List<Injection> parsed = [];
-    for (var line in dataLines) {
-      // Split by | and keep empty cells to preserve column positions
-      final rawCells = line.split('|').map((c) => c.trim()).toList();
-      // Remove first and last if empty (from leading/trailing |)
-      if (rawCells.isNotEmpty && rawCells.first.isEmpty) rawCells.removeAt(0);
-      if (rawCells.isNotEmpty && rawCells.last.isEmpty) rawCells.removeLast();
-      if (rawCells.length < 5) continue;
-      final dateStr = rawCells[0]; // dd/MM/yyyy HH:mm
-      final base = rawCells[1];
-      final ester = rawCells[2].isEmpty ? 'None' : rawCells[2];
-      final dosage = double.tryParse(rawCells[3]);
-      final unitStr = rawCells[4];
-      if (dosage == null || base.isEmpty) continue;
-
-      // Parse date: dd/MM/yyyy HH:mm
-      final parts = dateStr.split(' ');
-      if (parts.length < 2) continue;
-      final dateParts = parts[0].split('/');
-      final timeParts = parts[1].split(':');
-      if (dateParts.length < 3 || timeParts.length < 2) continue;
-      final day = int.tryParse(dateParts[0]);
-      final month = int.tryParse(dateParts[1]);
-      final year = int.tryParse(dateParts[2]);
-      final hour = int.tryParse(timeParts[0]);
-      final minute = int.tryParse(timeParts[1]);
-      if (day == null || month == null || year == null || hour == null || minute == null) continue;
-      final date = DateTime(year, month, day, hour, minute);
-
-      // Skip if this injection already exists (same compound+date+dosage)
-      final alreadyExists = injections.any((i) =>
-        i.snapshot.base == base && i.snapshot.ester == ester &&
-        i.date.difference(date).inMinutes.abs() < 1 && i.dosage == dosage
-      );
-      if (alreadyExists) continue;
-
-      // Look up compound definition
-      CompoundDefinition? def;
-      for (var c in userCompounds) {
-        if (c.base == base && c.ester == ester) { def = c; break; }
-      }
-      def ??= lookupLibraryDef(base, ester);
-      if (def == null) continue;
-
-      final unit = unitStr == 'mcg' ? Unit.mcg : unitStr == 'iu' ? Unit.iu : Unit.mg;
-      parsed.add(Injection(
-        id: '${date.millisecondsSinceEpoch}_$base',
-        compoundId: def.id,
-        date: date,
-        dosage: dosage,
-        snapshot: CompoundDefinition(
-          id: def.id, base: def.base, ester: def.ester, type: def.type,
-          graphType: def.graphType, halfLife: def.halfLife, timeToPeak: def.timeToPeak,
-          ratio: def.ratio, unit: unit, colorValue: def.colorValue,
-        ),
-      ));
-    }
+    final parsed = parseMarkdownLog(
+      data.text!,
+      userCompounds: userCompounds,
+      existing: injections,
+    );
 
     if (parsed.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No new entries to import'), backgroundColor: Colors.orange),
+          const SnackBar(content: Text('No new entries found in clipboard'), backgroundColor: Colors.orange),
         );
       }
       return;
