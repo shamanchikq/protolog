@@ -90,6 +90,10 @@ class _MainScreenState extends State<MainScreen> {
   // most 7 slots; interval mode uses _kIntervalOccurrences.)
   static const int _kMaxNotificationIdsPerReminder = 64;
 
+  // Set when a notification tap arrives before _loadData has finished
+  // (cold start); processed at the end of _loadData.
+  String? _pendingNotificationPayload;
+
   @override
   void initState() {
     super.initState();
@@ -107,7 +111,17 @@ class _MainScreenState extends State<MainScreen> {
       requestSoundPermission: true,
     );
     const initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
-    await _notificationsPlugin.initialize(initSettings);
+    await _notificationsPlugin.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: (resp) =>
+          _handleNotificationTap(resp.payload),
+    );
+
+    // App launched by tapping a notification while terminated.
+    final launch = await _notificationsPlugin.getNotificationAppLaunchDetails();
+    if (launch?.didNotificationLaunchApp ?? false) {
+      _handleNotificationTap(launch!.notificationResponse?.payload);
+    }
 
     // Request POST_NOTIFICATIONS permission after the first frame,
     // so the Activity is fully ready to show the system dialog.
@@ -124,6 +138,24 @@ class _MainScreenState extends State<MainScreen> {
     } catch (_) {
       // Permission request may fail on older Android versions; safe to ignore.
     }
+  }
+
+  void _handleNotificationTap(String? payload) {
+    if (payload == null || payload.isEmpty) return;
+    if (_loading) {
+      _pendingNotificationPayload = payload;
+      return;
+    }
+    Reminder? match;
+    for (final r in reminders) {
+      if (r.id == payload) {
+        match = r;
+        break;
+      }
+    }
+    if (match == null) return;
+    final def = _compoundForReminder(match);
+    if (def != null) _openAddInjectionWizard(prefill: def);
   }
 
   Future<void> _loadData() async {
@@ -155,6 +187,12 @@ class _MainScreenState extends State<MainScreen> {
 
     setState(() => _loading = false);
     _refreshGraph();
+
+    if (_pendingNotificationPayload != null) {
+      final p = _pendingNotificationPayload;
+      _pendingNotificationPayload = null;
+      _handleNotificationTap(p);
+    }
   }
 
   Future<void> _saveData() async {
@@ -215,6 +253,7 @@ class _MainScreenState extends State<MainScreen> {
             scheduledTz,
             details,
             androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+            payload: reminder.id,
             uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
             matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
           );
@@ -232,6 +271,7 @@ class _MainScreenState extends State<MainScreen> {
             scheduledTz,
             details,
             androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+            payload: reminder.id,
             uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
             matchDateTimeComponents: null,
           );
