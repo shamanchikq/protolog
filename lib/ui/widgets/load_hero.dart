@@ -141,7 +141,7 @@ class _PaperPanel extends StatelessWidget {
               SizedBox(height: 12 * scale),
               Row(
                 children: [
-                  Text('Last 7 days · ',
+                  Text('Injectables 7d · ',
                       style: AppTheme.sans(size: 11 * scale, color: AppTheme.paperInk.withValues(alpha: 0.7))),
                   Text(arrow,
                       style: AppTheme.sans(size: 11 * scale, color: arrowColor, weight: FontWeight.w600)),
