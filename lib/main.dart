@@ -80,6 +80,16 @@ class _MainScreenState extends State<MainScreen> {
   // Notifications
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
 
+  // Interval reminders pre-schedule this many one-shot notifications so they
+  // keep firing even when the app isn't opened for several cycles.
+  static const int _kIntervalOccurrences = 10;
+
+  // Cancellation always sweeps this many ids per reminder, regardless of the
+  // reminder's *current* mode/slot count — a mode switch must not orphan ids
+  // scheduled under the previous shape. (Custom mode realistically uses at
+  // most 7 slots; interval mode uses _kIntervalOccurrences.)
+  static const int _kMaxNotificationIdsPerReminder = 64;
+
   @override
   void initState() {
     super.initState();
@@ -213,7 +223,7 @@ class _MainScreenState extends State<MainScreen> {
         // Interval mode: schedule the next few one-shots (fractional spacing
         // drifts the time-of-day, so no repeating matchDateTimeComponents).
         var cursor = nextOccurrence(reminder, now);
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < _kIntervalOccurrences; i++) {
           final scheduledTz = tz.TZDateTime.from(cursor, tz.local);
           await _notificationsPlugin.zonedSchedule(
             reminder.id.hashCode + i,
@@ -238,11 +248,8 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> _cancelReminder(Reminder reminder) async {
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < _kMaxNotificationIdsPerReminder; i++) {
       await _notificationsPlugin.cancel(reminder.id.hashCode + i);
-    }
-    for (int i = 0; i < reminder.customSlots.length; i++) {
-      await _notificationsPlugin.cancel(reminder.id.hashCode + i + 1);
     }
   }
 
