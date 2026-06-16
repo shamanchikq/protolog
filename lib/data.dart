@@ -95,22 +95,3 @@ final List<CompoundDefinition> INITIAL_COMPOUNDS = [
   BASE_LIBRARY['Testosterone Cypionate']!.copyWith(id: 'test-c'),
   BASE_LIBRARY['Oxandrolone']!.copyWith(id: 'anavar'),
 ];
-
-extension CopyWith on CompoundDefinition {
-  CompoundDefinition copyWith({String? id, String? ester, double? halfLife, double? timeToPeak, double? ratio}) {
-    return CompoundDefinition(
-      id: id ?? this.id,
-      base: base,
-      ester: ester ?? this.ester,
-      type: type,
-      graphType: graphType,
-      halfLife: halfLife ?? this.halfLife,
-      defaultHalfLife: defaultHalfLife,
-      timeToPeak: timeToPeak ?? this.timeToPeak,
-      ratio: ratio ?? this.ratio,
-      unit: unit,
-      colorValue: colorValue,
-      isCustom: isCustom,
-    );
-  }
-}
