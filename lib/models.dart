@@ -250,19 +250,6 @@ class PeptideLaneData {
   Color get color => Color(colorValue);
 }
 
-class ActiveCompoundStat {
-  final String name;
-  final double activeAmount; // Numeric value for calculations
-  final String mainValue;    // String for display (e.g., "200.5" or "2d ago")
-  final String subLabel;     // Unit or empty
-  final int colorValue;
-  final CompoundType type;
-  final GraphType graphType;
-  final String statusText;
-
-  ActiveCompoundStat(this.name, this.activeAmount, this.mainValue, this.subLabel, this.colorValue, this.type, this.graphType, this.statusText);
-}
-
 class InjectionMarkerData {
   final double xPct;
   final double yLevel;

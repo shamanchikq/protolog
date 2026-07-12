@@ -10,6 +10,70 @@ import 'compute_engine.dart';
 double statRelevanceWindowDays(double halfLife) =>
     math.max(30.0, halfLife * 8);
 
+/// One row of the LoadHero breakdown: an injectable base and its summed
+/// active level at a point in time.
+class ActiveLoadEntry {
+  final String base;
+  final CompoundType type;
+  final double activeMg;
+  const ActiveLoadEntry({
+    required this.base,
+    required this.type,
+    required this.activeMg,
+  });
+}
+
+/// Per-base active injectable load (steroid + oral only) at [now].
+/// A base is included while its level is ≥ 0.05 mg, or unconditionally for
+/// 48h after its latest dose so a fresh log shows up before the Bateman
+/// curve has risen off the baseline.
+List<ActiveLoadEntry> activeInjectableLoad({
+  required List<Injection> injections,
+  required DateTime now,
+}) {
+  final totals = <String, double>{};
+  final latest = <String, Injection>{};
+
+  for (final inj in injections) {
+    if (inj.snapshot.type != CompoundType.steroid &&
+        inj.snapshot.type != CompoundType.oral) {
+      continue;
+    }
+    final diffDays = now.difference(inj.date).inSeconds / 86400.0;
+    if (diffDays < 0) continue; // future injection
+
+    final base = inj.snapshot.base;
+    final prev = latest[base];
+    if (prev == null || inj.date.isAfter(prev.date)) latest[base] = inj;
+
+    final hl = inj.snapshot.halfLife > 0.05 ? inj.snapshot.halfLife : 1.0;
+    if (diffDays > hl * 8) continue; // fully decayed
+    totals[base] = (totals[base] ?? 0) +
+        calculateActiveLevel(
+          inj.dosage,
+          diffDays,
+          hl,
+          inj.snapshot.timeToPeak,
+          inj.snapshot.ratio,
+          inj.snapshot.ester,
+        );
+  }
+
+  final out = <ActiveLoadEntry>[];
+  for (final entry in latest.entries) {
+    final mg = totals[entry.key] ?? 0.0;
+    final recentlyDosed =
+        now.difference(entry.value.date) < const Duration(hours: 48);
+    if (mg < 0.05 && !recentlyDosed) continue;
+    out.add(ActiveLoadEntry(
+      base: entry.key,
+      type: entry.value.snapshot.type,
+      activeMg: mg,
+    ));
+  }
+  return out;
+}
+
 double averageActiveMgOverRange({
   required CompoundType type,
   required List<Injection> injections,

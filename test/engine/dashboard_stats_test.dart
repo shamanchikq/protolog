@@ -117,6 +117,75 @@ void main() {
     expect(samples.any((v) => v > 0), isTrue);
   });
 
+  group('activeInjectableLoad', () {
+    const anavar = CompoundDefinition(
+      id: 'anavar', base: 'Oxandrolone', ester: 'None',
+      type: CompoundType.oral, graphType: GraphType.curve,
+      halfLife: 0.4, timeToPeak: 0.06, ratio: 1.0,
+      unit: Unit.mg, colorValue: 0xFFC9B062,
+    );
+    const hcg = CompoundDefinition(
+      id: 'hcg', base: 'HCG', ester: 'None',
+      type: CompoundType.peptide, graphType: GraphType.activeWindow,
+      halfLife: 1.5, timeToPeak: 0.25, ratio: 1.0,
+      unit: Unit.iu, colorValue: 0xFF8FC5A8,
+    );
+
+    test('groups doses by base and sums their active levels', () {
+      final cyp = _testCyp();
+      final now = DateTime(2026, 5, 19, 12);
+      final entries = activeInjectableLoad(injections: [
+        _inj(cyp, now.subtract(const Duration(days: 2)), 250),
+        _inj(cyp, now.subtract(const Duration(days: 5)), 250),
+      ], now: now);
+      expect(entries, hasLength(1));
+      expect(entries.first.base, 'Testosterone');
+      expect(entries.first.type, CompoundType.steroid);
+      final single = activeInjectableLoad(injections: [
+        _inj(cyp, now.subtract(const Duration(days: 2)), 250),
+      ], now: now);
+      expect(entries.first.activeMg, greaterThan(single.first.activeMg));
+    });
+
+    test('separates bases and includes orals, excludes peptides', () {
+      final cyp = _testCyp();
+      final now = DateTime(2026, 5, 19, 12);
+      final entries = activeInjectableLoad(injections: [
+        _inj(cyp, now.subtract(const Duration(days: 2)), 250),
+        _inj(anavar, now.subtract(const Duration(hours: 3)), 20),
+        _inj(hcg, now.subtract(const Duration(hours: 3)), 500),
+      ], now: now);
+      expect(entries.map((e) => e.base).toSet(), {'Testosterone', 'Oxandrolone'});
+    });
+
+    test('ignores future injections', () {
+      final cyp = _testCyp();
+      final now = DateTime(2026, 5, 19, 12);
+      final entries = activeInjectableLoad(injections: [
+        _inj(cyp, now.add(const Duration(days: 1)), 250),
+      ], now: now);
+      expect(entries, isEmpty);
+    });
+
+    test('keeps a just-dosed base even while its level is still ~0', () {
+      final cyp = _testCyp();
+      final now = DateTime(2026, 5, 19, 12);
+      final entries = activeInjectableLoad(injections: [
+        _inj(cyp, now.subtract(const Duration(minutes: 1)), 0.1),
+      ], now: now);
+      expect(entries, hasLength(1));
+    });
+
+    test('drops a base whose only dose is fully decayed', () {
+      final cyp = _testCyp(); // t½ 5d → relevance window 40d
+      final now = DateTime(2026, 5, 19, 12);
+      final entries = activeInjectableLoad(injections: [
+        _inj(cyp, now.subtract(const Duration(days: 60)), 250),
+      ], now: now);
+      expect(entries, isEmpty);
+    });
+  });
+
   group('statRelevanceWindowDays', () {
     test('floors at 30 days for short half-lives and event compounds', () {
       expect(statRelevanceWindowDays(0.1), 30.0);

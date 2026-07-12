@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -476,100 +475,6 @@ class _MainScreenState extends State<MainScreen> {
     _refreshGraph();
   }
 
-  List<ActiveCompoundStat> _getActiveStats() {
-    final now = DateTime.now();
-    final Map<String, ActiveCompoundStat> stats = {};
-
-    // Sort to handle timeline correctly
-    final sortedInjections = List<Injection>.from(injections)..sort((a,b) => a.date.compareTo(b.date));
-
-    // Map to hold cumulative active amounts by BASE
-    final Map<String, double> activeTotals = {};
-    // Map to hold reference injection for metadata (the latest one)
-    final Map<String, Injection> latestInjections = {};
-
-    for(var inj in sortedInjections) {
-      final diffMs = now.difference(inj.date).inMilliseconds;
-      if (diffMs < 0) continue; // Future injection
-
-      final base = inj.snapshot.base;
-      latestInjections[base] = inj; // Overwrite, so last loop item is latest by date
-
-      // Read graphType/halfLife from the frozen snapshot so library edits never
-      // silently rewrite history. Retroactive changes go through the explicit
-      // "apply to past logs" flow (rewriteSnapshots).
-      final graphType = inj.snapshot.graphType;
-      final double snapHl = inj.snapshot.halfLife;
-      final double halfLife = snapHl > 0.05 ? snapHl : 1.0;
-
-      // Calculate Active Amount to Sum
-      double active = 0;
-      if (inj.snapshot.type == CompoundType.steroid || inj.snapshot.type == CompoundType.oral) {
-        final diffDays = diffMs / 86400000.0;
-        active = calculateActiveLevel(inj.dosage, diffDays, halfLife, inj.snapshot.timeToPeak, inj.snapshot.ratio, inj.snapshot.ester);
-      } else if (graphType == GraphType.activeWindow) {
-        // Active Window Peptide: Cumulative exponential decay
-        final diffDays = diffMs / 86400000.0;
-        active = inj.dosage * math.pow(0.5, diffDays / halfLife);
-      }
-
-      // Only add to total if it's not effectively zero (arbitrary large decay)
-      if (diffMs <= halfLife * 8 * 86400000) {
-        activeTotals[base] = (activeTotals[base] ?? 0) + active;
-      }
-    }
-
-    // Now generate the stats cards based on unique bases found
-    for (var entry in latestInjections.entries) {
-      final base = entry.key;
-      final inj = entry.value;
-
-      final graphType = inj.snapshot.graphType;
-
-      final diffMs = now.difference(inj.date).inMilliseconds;
-      final ago = Duration(milliseconds: diffMs);
-      final agoString = ago.inDays > 0 ? "${ago.inDays}d ago" : "${ago.inHours}h ago";
-
-      // Skip if latest injection is past the compound's relevance window.
-      final statHl = inj.snapshot.halfLife > 0.05 ? inj.snapshot.halfLife : 1.0;
-      if (diffMs > statRelevanceWindowDays(statHl) * 86400000) continue;
-
-      String mainValue = "";
-      String subLabel = "";
-      String status = "";
-
-      // TYPE 1: Summed Values (Curve & Active Window)
-      if (inj.snapshot.type == CompoundType.steroid || inj.snapshot.type == CompoundType.oral || graphType == GraphType.activeWindow) {
-        double val = activeTotals[base] ?? 0;
-
-        // Check if recently pinned even if active levels haven't spiked yet (Bateman start)
-        bool recentlyPinned = diffMs < 172800000; // < 48 hours
-
-        if (val < 0.05 && !recentlyPinned) continue; // Don't show if zero and not recent
-
-        mainValue = val.toStringAsFixed(1);
-        subLabel = inj.snapshot.unit.toString().split('.').last;
-
-        status = agoString;
-      }
-      // TYPE 2: Event Only
-      else {
-        if (ago.inDays > 0) {
-          mainValue = "${ago.inDays}d ago";
-        } else {
-          mainValue = "${ago.inHours}h ago";
-        }
-
-        subLabel = "";
-        status = "$agoString • Last: ${inj.dosage} ${inj.snapshot.unit.toString().split('.').last}";
-      }
-
-      stats[base] = ActiveCompoundStat(base, activeTotals[base] ?? 0, mainValue, subLabel, inj.snapshot.colorValue, inj.snapshot.type, graphType, status);
-    }
-
-    return stats.values.toList();
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -858,18 +763,15 @@ class _MainScreenState extends State<MainScreen> {
 
   Widget _buildDashboard() {
     final colorOf = _buildColorResolver();
-    final activeStats = _getActiveStats();
-    final injectableStats = activeStats
-        .where((s) => s.type == CompoundType.steroid || s.type == CompoundType.oral)
-        .toList();
-    final totalActive = injectableStats.fold<double>(0.0, (s, x) => s + x.activeAmount);
-    final breakdown = (injectableStats.toList()
-          ..sort((a, b) => b.activeAmount.compareTo(a.activeAmount)))
-        .map((s) => LoadHeroRow(
-              label: s.name,
-              valueMg: s.activeAmount,
-              shareOfTotal: totalActive > 0 ? s.activeAmount / totalActive : 0,
-              color: colorOf(s.name),
+    final load = activeInjectableLoad(injections: injections, now: DateTime.now());
+    final totalActive = load.fold<double>(0.0, (s, e) => s + e.activeMg);
+    final breakdown = (load.toList()
+          ..sort((a, b) => b.activeMg.compareTo(a.activeMg)))
+        .map((e) => LoadHeroRow(
+              label: e.base,
+              valueMg: e.activeMg,
+              shareOfTotal: totalActive > 0 ? e.activeMg / totalActive : 0,
+              color: colorOf(e.base),
             ))
         .toList();
     final delta = deltaSteroidNowVsPrior7(injections: injections, now: DateTime.now());
