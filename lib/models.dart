@@ -309,6 +309,14 @@ class Reminder {
   final DateTime? lastScheduledDate; // legacy; superseded by anchorDate
   final DateTime? anchorDate;        // interval: next expected dose (rhythm origin)
   final DateTime? acknowledgedUntil; // custom: suppress occurrences at/before this
+  // Base for platform notification ids. Persisted because String.hashCode is
+  // not guaranteed stable across Dart versions — a recomputed base would
+  // orphan already-scheduled notifications. Null only until first save.
+  final int? notificationSeed;
+
+  /// Stable base for notification ids; falls back to id.hashCode for
+  /// reminders that predate the seed (toJson freezes the fallback).
+  int get notificationIdBase => notificationSeed ?? id.hashCode;
 
   const Reminder({
     required this.id,
@@ -323,6 +331,7 @@ class Reminder {
     this.lastScheduledDate,
     this.anchorDate,
     this.acknowledgedUntil,
+    this.notificationSeed,
   });
 
   Map<String, dynamic> toJson() => {
@@ -338,6 +347,7 @@ class Reminder {
     'lastScheduledDate': lastScheduledDate?.toIso8601String(),
     'anchorDate': anchorDate?.toIso8601String(),
     'acknowledgedUntil': acknowledgedUntil?.toIso8601String(),
+    'notificationSeed': notificationIdBase,
   };
 
   factory Reminder.fromJson(Map<String, dynamic> json) {
@@ -359,6 +369,7 @@ class Reminder {
       lastScheduledDate: legacyLast,
       anchorDate: parse('anchorDate') ?? legacyLast,
       acknowledgedUntil: parse('acknowledgedUntil'),
+      notificationSeed: (json['notificationSeed'] as num?)?.toInt(),
     );
   }
 
@@ -375,6 +386,7 @@ class Reminder {
     DateTime? lastScheduledDate,
     DateTime? anchorDate,
     DateTime? acknowledgedUntil,
+    int? notificationSeed,
   }) {
     return Reminder(
       id: id ?? this.id,
@@ -389,6 +401,7 @@ class Reminder {
       lastScheduledDate: lastScheduledDate ?? this.lastScheduledDate,
       anchorDate: anchorDate ?? this.anchorDate,
       acknowledgedUntil: acknowledgedUntil ?? this.acknowledgedUntil,
+      notificationSeed: notificationSeed ?? this.notificationSeed,
     );
   }
 }

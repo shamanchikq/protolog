@@ -84,6 +84,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
         scheduleMode: 'interval', intervalDays: _interval,
         hour: _time.hour, minute: _time.minute, enabled: widget.editing?.enabled ?? true,
         anchorDate: anchor,
+        notificationSeed: widget.editing?.notificationSeed,
       );
     }
     final slots = (_dayTimes.keys.toList()..sort())
@@ -93,6 +94,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
       id: id, compoundBase: _base!, compoundEster: _ester ?? 'None',
       scheduleMode: 'custom', intervalDays: 0, hour: 8, minute: 0,
       customSlots: slots, enabled: widget.editing?.enabled ?? true,
+      notificationSeed: widget.editing?.notificationSeed,
     );
   }
 

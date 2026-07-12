@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 import 'models.dart';
@@ -106,12 +107,25 @@ class _MainScreenState extends State<MainScreen> {
   void initState() {
     super.initState();
     settings = const GraphSettings(normalized: false, cumulative: false, showPeptides: true, timeRange: 'standard');
-    _initNotifications();
-    _loadData();
+    _bootstrap();
+  }
+
+  // The plugin must be initialized and tz.local set before _loadData
+  // reschedules reminders, so the two steps are awaited in sequence.
+  Future<void> _bootstrap() async {
+    await _initNotifications();
+    await _loadData();
   }
 
   Future<void> _initNotifications() async {
     tz.initializeTimeZones();
+    try {
+      final info = await FlutterTimezone.getLocalTimezone();
+      tz.setLocalLocation(tz.getLocation(info.identifier));
+    } catch (_) {
+      // tz.local stays UTC: one-shots still fire at the right instant; only
+      // weekly repeats lose wall-clock anchoring until the next app launch.
+    }
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
@@ -203,6 +217,11 @@ class _MainScreenState extends State<MainScreen> {
     if (remString != null) {
       final List<dynamic> jsonList = jsonDecode(remString);
       reminders = jsonList.map((j) => Reminder.fromJson(j)).toList();
+      // Freeze notification-id seeds for reminders saved before the seed
+      // existed, while id.hashCode still matches what was scheduled.
+      if (jsonList.any((j) => j['notificationSeed'] == null)) {
+        _saveReminders();
+      }
     }
     _rescheduleAllReminders(); // fire-and-forget
 
@@ -244,69 +263,81 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _scheduleReminder(Reminder reminder) async {
     if (!reminder.enabled) return;
-    try {
-      final now = DateTime.now();
-      final compoundLabel = '${reminder.compoundBase}${reminder.compoundEster != 'None' ? ' ${reminder.compoundEster}' : ''}';
-      final androidDetails = AndroidNotificationDetails(
-        'protolog_reminders',
-        'Administration Reminders',
-        channelDescription: 'Recurring compound administration reminders',
-        importance: Importance.high,
-        priority: Priority.high,
-      );
-      const iosDetails = DarwinNotificationDetails();
-      final details = NotificationDetails(android: androidDetails, iOS: iosDetails);
+    final now = DateTime.now();
+    final compoundLabel = '${reminder.compoundBase}${reminder.compoundEster != 'None' ? ' ${reminder.compoundEster}' : ''}';
+    final androidDetails = AndroidNotificationDetails(
+      'protolog_reminders',
+      'Administration Reminders',
+      channelDescription: 'Recurring compound administration reminders',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    const iosDetails = DarwinNotificationDetails();
+    final details = NotificationDetails(android: androidDetails, iOS: iosDetails);
 
-      if (reminder.scheduleMode == 'custom' && reminder.customSlots.isNotEmpty) {
-        // Schedule one notification per custom slot (next occurrence of each weekday+time)
-        for (int i = 0; i < reminder.customSlots.length; i++) {
-          final slot = reminder.customSlots[i];
-          var next = DateTime(now.year, now.month, now.day, slot.hour, slot.minute);
-          // Advance to the correct weekday
-          while (next.weekday != slot.weekday || next.isBefore(now)) {
-            next = next.add(const Duration(days: 1));
-          }
-          final scheduledTz = tz.TZDateTime.from(next, tz.local);
-          await _notificationsPlugin.zonedSchedule(
-            reminder.id.hashCode + i + 1,
-            'ProtoLog Reminder',
-            'Time to administer $compoundLabel',
-            scheduledTz,
-            details,
-            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-            payload: reminder.id,
-            uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-            matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
-          );
-        }
-      } else {
-        // Interval mode: schedule the next few one-shots (fractional spacing
-        // drifts the time-of-day, so no repeating matchDateTimeComponents).
-        var cursor = nextOccurrence(reminder, now);
-        for (int i = 0; i < _kIntervalOccurrences; i++) {
-          final scheduledTz = tz.TZDateTime.from(cursor, tz.local);
-          await _notificationsPlugin.zonedSchedule(
-            reminder.id.hashCode + i,
-            'ProtoLog Reminder',
-            'Time to administer $compoundLabel',
-            scheduledTz,
-            details,
-            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-            payload: reminder.id,
-            uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-            matchDateTimeComponents: null,
-          );
-          cursor = cursor.add(Duration(milliseconds: (reminder.intervalDays * 86400000).round()));
-        }
+    // Exact alarms when permitted (auto-granted on Android 13+ via
+    // USE_EXACT_ALARM); inexact delivery can lag by up to an hour in Doze.
+    bool canExact = false;
+    try {
+      final androidImpl = _notificationsPlugin
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      canExact = await androidImpl?.canScheduleExactNotifications() ?? false;
+    } catch (_) {}
+    final mode = canExact
+        ? AndroidScheduleMode.exactAllowWhileIdle
+        : AndroidScheduleMode.inexactAllowWhileIdle;
+
+    // Per-call try so one bad occurrence doesn't drop the rest of the batch.
+    Object? firstError;
+    Future<void> schedule(int id, tz.TZDateTime when, DateTimeComponents? match) async {
+      try {
+        await _notificationsPlugin.zonedSchedule(
+          id,
+          'ProtoLog Reminder',
+          'Time to administer $compoundLabel',
+          when,
+          details,
+          androidScheduleMode: mode,
+          payload: reminder.id,
+          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+          matchDateTimeComponents: match,
+        );
+      } catch (e) {
+        firstError ??= e;
       }
-    } catch (e) {
-      _snack('Failed to schedule notification: $e', color: AppTheme.warn);
+    }
+
+    if (reminder.scheduleMode == 'custom' && reminder.customSlots.isNotEmpty) {
+      // Schedule one weekly-repeating notification per custom slot. Wall-clock
+      // arithmetic happens in tz.local so the slot time survives DST shifts.
+      final nowTz = tz.TZDateTime.from(now, tz.local);
+      for (int i = 0; i < reminder.customSlots.length; i++) {
+        final slot = reminder.customSlots[i];
+        var next = tz.TZDateTime(tz.local, nowTz.year, nowTz.month, nowTz.day, slot.hour, slot.minute);
+        // Advance to the next strictly-future occurrence of the slot weekday
+        while (next.weekday != slot.weekday || !next.isAfter(nowTz)) {
+          next = tz.TZDateTime(tz.local, next.year, next.month, next.day + 1, slot.hour, slot.minute);
+        }
+        await schedule(reminder.notificationIdBase + i + 1, next, DateTimeComponents.dayOfWeekAndTime);
+      }
+    } else {
+      // Interval mode: schedule the next few one-shots (fractional spacing
+      // drifts the time-of-day, so no repeating matchDateTimeComponents).
+      var cursor = nextOccurrence(reminder, now);
+      for (int i = 0; i < _kIntervalOccurrences; i++) {
+        await schedule(reminder.notificationIdBase + i, tz.TZDateTime.from(cursor, tz.local), null);
+        cursor = cursor.add(Duration(milliseconds: (reminder.intervalDays * 86400000).round()));
+      }
+    }
+
+    if (firstError != null) {
+      _snack('Failed to schedule notification: $firstError', color: AppTheme.warn);
     }
   }
 
   Future<void> _cancelReminder(Reminder reminder) async {
     for (int i = 0; i < _kMaxNotificationIdsPerReminder; i++) {
-      await _notificationsPlugin.cancel(reminder.id.hashCode + i);
+      await _notificationsPlugin.cancel(reminder.notificationIdBase + i);
     }
   }
 
