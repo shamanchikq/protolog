@@ -1,4 +1,4 @@
-package com.example.protolog_tracker
+package com.zak.protolog_tracker
 
 import io.flutter.embedding.android.FlutterActivity
 
