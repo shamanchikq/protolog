@@ -1,7 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_selector/file_selector.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
@@ -27,6 +31,7 @@ import 'ui/views/reminders_page.dart';
 import 'ui/views/reminder_editor_page.dart';
 import 'engine/reminder_schedule.dart';
 import 'engine/log_serde.dart';
+import 'engine/backup.dart';
 
 // --- Entry Point ---
 void main() {
@@ -340,6 +345,130 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  /// Reads the wizard-owned custom site lists straight from prefs (the
+  /// wizard persists them as JSON-encoded string lists).
+  List<String> _readSites(SharedPreferences prefs, String key) {
+    final raw = prefs.getString(key);
+    if (raw == null) return const [];
+    try {
+      return (jsonDecode(raw) as List).cast<String>();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// F1: full-state backup — everything SharedPreferences holds, as one
+  /// versioned JSON file pushed through the Android share sheet.
+  Future<void> _exportBackupFile() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final payload = encodeBackup(
+        injections: injections,
+        compounds: userCompounds,
+        reminders: reminders,
+        customSitesIM: _readSites(prefs, 'customSitesIM'),
+        customSitesSubQ: _readSites(prefs, 'customSitesSubQ'),
+      );
+      final dir = await getTemporaryDirectory();
+      final d = DateTime.now();
+      final name = 'protolog_backup_${d.year}'
+          '-${d.month.toString().padLeft(2, '0')}'
+          '-${d.day.toString().padLeft(2, '0')}.json';
+      final file = File('${dir.path}${Platform.pathSeparator}$name');
+      await file.writeAsString(payload);
+      await SharePlus.instance.share(ShareParams(
+        files: [XFile(file.path, mimeType: 'application/json')],
+        subject: 'ProtoLog backup',
+      ));
+    } catch (e) {
+      _snack('Backup failed: $e', color: AppTheme.warn);
+    }
+  }
+
+  Future<void> _importBackupFile() async {
+    try {
+      const group = XTypeGroup(
+        label: 'ProtoLog backup',
+        extensions: ['json'],
+        // Broad mime list: share targets sometimes re-tag JSON attachments.
+        mimeTypes: ['application/json', 'application/octet-stream', 'text/plain'],
+      );
+      final picked = await openFile(acceptedTypeGroups: const [group]);
+      if (picked == null) return;
+      final data = decodeBackup(await picked.readAsString());
+      if (data == null) {
+        _snack('Not a valid ProtoLog backup file', color: AppTheme.warn);
+        return;
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+      final sitesIM = _readSites(prefs, 'customSitesIM');
+      final sitesSubQ = _readSites(prefs, 'customSitesSubQ');
+      final res = mergeBackup(
+        injections: injections,
+        compounds: userCompounds,
+        reminders: reminders,
+        customSitesIM: sitesIM,
+        customSitesSubQ: sitesSubQ,
+        incoming: data,
+      );
+      final newSites = (res.customSitesIM.length - sitesIM.length) +
+          (res.customSitesSubQ.length - sitesSubQ.length);
+      final changes = res.newInjections +
+          res.changedCompounds +
+          res.changedReminders +
+          newSites;
+      if (changes == 0) {
+        _snack('Backup matches current data — nothing to merge',
+            color: AppTheme.warm, dark: true);
+        return;
+      }
+
+      if (!mounted) return;
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.surface2,
+          title: Text('Merge backup?',
+              style: AppTheme.sans(size: 14, weight: FontWeight.w600, color: AppTheme.fg)),
+          content: Text(
+            '${res.newInjections} new logs, ${res.changedCompounds} compound '
+            'updates, ${res.changedReminders} reminder updates, $newSites new '
+            'sites. Existing data is never deleted.',
+            style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text('Cancel', style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text('Merge',
+                  style: AppTheme.sans(size: 12, weight: FontWeight.w600, color: AppTheme.accent)),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+
+      setState(() {
+        injections = res.injections;
+        userCompounds = res.compounds;
+        reminders = res.reminders;
+      });
+      await _saveData();
+      await _saveReminders();
+      await prefs.setString('customSitesIM', jsonEncode(res.customSitesIM));
+      await prefs.setString('customSitesSubQ', jsonEncode(res.customSitesSubQ));
+      await _rescheduleAllReminders();
+      _refreshGraph();
+      _snack('Backup merged', color: AppTheme.accentDeep);
+    } catch (e) {
+      _snack('Restore failed: $e', color: AppTheme.warn);
+    }
+  }
+
   void _exportToMarkdown() {
     Clipboard.setData(ClipboardData(text: injectionsToMarkdown(injections)));
     _snack('Log exported to clipboard as Markdown', color: AppTheme.accentDeep);
@@ -501,6 +630,8 @@ class _MainScreenState extends State<MainScreen> {
           injections: injections,
           onExport: _exportToMarkdown,
           onImport: _importFromMarkdown,
+          onBackup: _exportBackupFile,
+          onRestore: _importBackupFile,
           onOpenDetail: _openCompoundDetail,
           onOpenCreate: () => _openCompoundEditor(),
         );

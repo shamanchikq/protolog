@@ -13,6 +13,8 @@ class LibraryPage extends StatefulWidget {
   final List<Injection> injections;
   final VoidCallback onExport;
   final VoidCallback onImport;
+  final VoidCallback onBackup;
+  final VoidCallback onRestore;
   final void Function(CompoundDefinition compound) onOpenDetail;
   final VoidCallback onOpenCreate;
 
@@ -22,6 +24,8 @@ class LibraryPage extends StatefulWidget {
     required this.injections,
     required this.onExport,
     required this.onImport,
+    required this.onBackup,
+    required this.onRestore,
     required this.onOpenDetail,
     required this.onOpenCreate,
   });
@@ -63,6 +67,8 @@ class _LibraryPageState extends State<LibraryPage> {
             statsLine: statsLine,
             onExport: widget.onExport,
             onImport: widget.onImport,
+            onBackup: widget.onBackup,
+            onRestore: widget.onRestore,
             onCreate: widget.onOpenCreate,
           ),
           const SizedBox(height: 14),
@@ -171,11 +177,15 @@ class _Header extends StatelessWidget {
   final String statsLine;
   final VoidCallback onExport;
   final VoidCallback onImport;
+  final VoidCallback onBackup;
+  final VoidCallback onRestore;
   final VoidCallback onCreate;
   const _Header({
     required this.statsLine,
     required this.onExport,
     required this.onImport,
+    required this.onBackup,
+    required this.onRestore,
     required this.onCreate,
   });
 
@@ -203,7 +213,12 @@ class _Header extends StatelessWidget {
             ],
           ),
         ),
-        _ImportExportPill(onExport: onExport, onImport: onImport),
+        _ImportExportPill(
+          onExport: onExport,
+          onImport: onImport,
+          onBackup: onBackup,
+          onRestore: onRestore,
+        ),
         const SizedBox(width: 6),
         LabPill(label: '+ New', primary: true, onTap: onCreate),
       ],
@@ -214,7 +229,14 @@ class _Header extends StatelessWidget {
 class _ImportExportPill extends StatelessWidget {
   final VoidCallback onExport;
   final VoidCallback onImport;
-  const _ImportExportPill({required this.onExport, required this.onImport});
+  final VoidCallback onBackup;
+  final VoidCallback onRestore;
+  const _ImportExportPill({
+    required this.onExport,
+    required this.onImport,
+    required this.onBackup,
+    required this.onRestore,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -229,6 +251,8 @@ class _ImportExportPill extends StatelessWidget {
       onSelected: (v) {
         if (v == 'export') onExport();
         if (v == 'import') onImport();
+        if (v == 'backup') onBackup();
+        if (v == 'restore') onRestore();
       },
       itemBuilder: (_) => [
         PopupMenuItem(
@@ -239,6 +263,17 @@ class _ImportExportPill extends StatelessWidget {
         PopupMenuItem(
           value: 'import',
           child: Text('Import log from clipboard',
+              style: AppTheme.sans(size: 12, color: AppTheme.fg)),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: 'backup',
+          child: Text('Back up everything to file…',
+              style: AppTheme.sans(size: 12, color: AppTheme.fg)),
+        ),
+        PopupMenuItem(
+          value: 'restore',
+          child: Text('Restore from backup file…',
               style: AppTheme.sans(size: 12, color: AppTheme.fg)),
         ),
       ],
