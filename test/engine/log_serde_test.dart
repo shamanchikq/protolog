@@ -86,6 +86,18 @@ void main() {
       expect(parsed, isEmpty);
     });
 
+    test('same-minute rows with different doses get distinct ids', () {
+      const md = '''
+| Date | Compound | Ester | Dosage | Unit | Site | Notes |
+|------|----------|-------|--------|------|------|-------|
+| 01/06/2026 08:30 | Testosterone | Enanthate | 150.0 | mg |  |  |
+| 01/06/2026 08:30 | Testosterone | Enanthate | 100.0 | mg |  |  |
+''';
+      final parsed = parseMarkdownLog(md, userCompounds: [_testE], existing: []);
+      expect(parsed, hasLength(2));
+      expect(parsed[0].id, isNot(parsed[1].id));
+    });
+
     test('skips rows whose compound cannot be resolved', () {
       const unknown = '''
 | Date | Compound | Ester | Dosage | Unit |

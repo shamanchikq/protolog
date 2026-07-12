@@ -104,7 +104,10 @@ List<Injection> parseMarkdownLog(
             ? Unit.iu
             : Unit.mg;
     parsed.add(Injection(
-      id: '${date.millisecondsSinceEpoch}_$base',
+      // Suffix with the running count: minute-resolution dates alone would
+      // give two same-compound rows in one minute identical ids, and
+      // deleting one would then remove both.
+      id: '${date.millisecondsSinceEpoch}_${base}_${parsed.length}',
       compoundId: def.id,
       date: date,
       dosage: dosage,

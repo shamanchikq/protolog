@@ -607,7 +607,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
   }
 
   Widget _buildDoseDirect(CompoundDefinition c) {
-    final dose = double.tryParse(_doseText) ?? 0;
+    final dose = parseFlexibleDouble(_doseText) ?? 0;
     final conc = _concentrationDraft;
     String? hint;
     if (conc != null && conc > 0 && dose > 0) {
@@ -676,7 +676,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
 
   Widget _buildDoseByVolume(CompoundDefinition c) {
     final conc = _concentrationDraft;
-    final volumeRaw = double.tryParse(_volumeText) ?? 0;
+    final volumeRaw = parseFlexibleDouble(_volumeText) ?? 0;
     // Convert the user-entered volume to mL using the U100 standard
     // (100 IU = 1 mL) when they're inputting in IU.
     final volumeMl = (_isPeptide && _volumeInputUnit == 'IU') ? volumeRaw / 100.0 : volumeRaw;
@@ -738,7 +738,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
                   child: TextField(
                     controller: _concController,
                     onChanged: (v) => setState(() {
-                      final parsed = double.tryParse(v);
+                      final parsed = parseFlexibleDouble(v);
                       _concentrationDraft = (parsed != null && parsed > 0) ? parsed : null;
                     }),
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -1475,7 +1475,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
 
   Widget _buildStickyBar() {
     final c = _selectedCompound;
-    final doseVal = double.tryParse(_doseText) ?? 0;
+    final doseVal = parseFlexibleDouble(_doseText) ?? 0;
     final hasDose = doseVal > 0;
     final showSite = c != null &&
         c.type != CompoundType.oral &&
@@ -1541,7 +1541,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
   void _submit() {
     final picked = _selectedCompound;
     if (picked == null) return;
-    final doseVal = double.tryParse(_doseText);
+    final doseVal = parseFlexibleDouble(_doseText);
     if (doseVal == null || doseVal <= 0) return;
     final fullDate = DateTime(
       _date.year, _date.month, _date.day, _time.hour, _time.minute,
@@ -1745,8 +1745,8 @@ class _ReconstitutionSheetState extends State<_ReconstitutionSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final mg = double.tryParse(_mg.text) ?? 0;
-    final volRaw = double.tryParse(_vol.text) ?? 0;
+    final mg = parseFlexibleDouble(_mg.text) ?? 0;
+    final volRaw = parseFlexibleDouble(_vol.text) ?? 0;
     // At U100, 100 IU = 1 mL.
     final volMl = _volUnit == 'IU' ? volRaw / 100.0 : volRaw;
     final conc = (mg > 0 && volMl > 0) ? (mg / volMl) : 0.0;

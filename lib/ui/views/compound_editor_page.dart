@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models.dart';
 import '../../engine/library_stats.dart';
+import '../../utils.dart';
 import '../theme.dart';
 import '../widgets/lab_primitives.dart';
 import '../widgets/library_section.dart';
@@ -93,6 +94,9 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
   }
 
   bool get _canSave {
+    // A non-positive half-life would produce NaN curves (ke = ln2/0).
+    final hl = parseFlexibleDouble(_hl.text) ?? 0;
+    if (hl <= 0) return false;
     // Built-in identity is locked, so name/ester are always valid.
     if (_isBuiltInEdit) return true;
     if (_name.text.trim().isEmpty) return false;
@@ -578,9 +582,9 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
     final ester = (_type == CompoundType.steroid && esterText.isNotEmpty)
         ? esterText
         : 'None';
-    final halfLife = double.tryParse(_hl.text) ?? 0;
-    final timeToPeak = double.tryParse(_tp.text) ?? 0;
-    final ratio = (double.tryParse(_yld.text) ?? 100) / 100;
+    final halfLife = parseFlexibleDouble(_hl.text) ?? 0;
+    final timeToPeak = parseFlexibleDouble(_tp.text) ?? 0;
+    final ratio = (parseFlexibleDouble(_yld.text) ?? 100) / 100;
     final graphType = (_type == CompoundType.steroid || _type == CompoundType.oral)
         ? GraphType.curve
         : _visMode;

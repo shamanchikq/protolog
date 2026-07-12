@@ -596,18 +596,29 @@ class _EntryRow extends StatelessWidget {
                 Container(width: 3, height: 18, color: color),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: RichText(
-                    overflow: TextOverflow.ellipsis,
-                    text: TextSpan(
-                      children: [
-                        TextSpan(text: name, style: AppTheme.sans(size: 13, color: AppTheme.fg)),
-                        if (injection.site != null && injection.site!.isNotEmpty)
-                          TextSpan(
-                            text: ' · ${injection.site}',
+                  // Site sits outside the name's ellipsis scope so a long
+                  // compound name truncates instead of hiding the site.
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.sans(size: 13, color: AppTheme.fg),
+                        ),
+                      ),
+                      if (injection.site != null && injection.site!.isNotEmpty)
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 110),
+                          child: Text(
+                            ' · ${injection.site}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: AppTheme.sans(size: 11, color: AppTheme.fgDim),
                           ),
-                      ],
-                    ),
+                        ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 8),

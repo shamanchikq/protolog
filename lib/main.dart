@@ -393,11 +393,7 @@ class _MainScreenState extends State<MainScreen> {
     setState(() => injections.addAll(parsed));
     _saveData();
     _refreshGraph();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Imported ${parsed.length} entries'), backgroundColor: const Color(0xFF10B981)),
-      );
-    }
+    _snack('Imported ${parsed.length} entries', color: AppTheme.accentDeep);
   }
 
   Future<void> _addInjection(Injection inj, {bool advanceReminder = false}) async {

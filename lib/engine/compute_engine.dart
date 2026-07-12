@@ -22,6 +22,9 @@ double _solveKa(double ke, double tmax) {
 
 double _calculateBatemanValue(double dose, double t, double halfLife, double tmax, double ratio) {
   if (t < 0) return 0.0;
+  // Same floor as _getActiveStats: a non-positive/near-zero half-life would
+  // make ke infinite and poison the curve with NaN (math.max keeps NaN).
+  if (halfLife <= 0.05) halfLife = 1.0;
   double effectiveDose = dose * ratio;
   double ke = math.log(2) / halfLife;
   double ka = _solveKa(ke, tmax);
