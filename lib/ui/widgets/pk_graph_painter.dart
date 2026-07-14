@@ -9,6 +9,9 @@ class PKGraphPainter extends CustomPainter {
   final GraphSettings settings;
   final bool skipPeptides;
   final Color? Function(String baseName)? colorResolver;
+
+  /// F6: lab-draw dates overlaid as warm dashed verticals with a diamond cap.
+  final List<DateTime> bloodworkDates;
   final double peptideLaneHeight = 24.0;
   final double leftLabelAreaWidth = 60.0;
 
@@ -17,6 +20,7 @@ class PKGraphPainter extends CustomPainter {
     required this.settings,
     this.skipPeptides = false,
     this.colorResolver,
+    this.bloodworkDates = const [],
   });
 
   Color _curveColor(CurveData curve) {
@@ -104,6 +108,23 @@ class PKGraphPainter extends CustomPainter {
         Offset(todayX, chartHeight),
         Paint()..color = AppTheme.fg.withValues(alpha: 0.5)..strokeWidth = 1,
       );
+    }
+
+    // Bloodwork markers: dashed warm vertical + diamond cap at each lab date.
+    final bwLine = Paint()..color = AppTheme.warm.withValues(alpha: 0.55)..strokeWidth = 1;
+    final bwFill = Paint()..color = AppTheme.warm;
+    for (final d in bloodworkDates) {
+      final pct = (d.millisecondsSinceEpoch - startMs) / graphData.totalDurationMs;
+      if (pct < 0 || pct > 1) continue;
+      final x = paddingLeft + (pct * chartWidth);
+      _drawDashedLine(canvas, Offset(x, 0), Offset(x, chartHeight), bwLine, dash: 3, gap: 3);
+      final diamond = Path()
+        ..moveTo(x, 1)
+        ..lineTo(x + 4, 6)
+        ..lineTo(x, 11)
+        ..lineTo(x - 4, 6)
+        ..close();
+      canvas.drawPath(diamond, bwFill);
     }
 
     for (var curve in graphData.curves) {

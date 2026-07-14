@@ -133,6 +133,46 @@ void main() {
       expect(res.customSitesIM, ['Quad sweep L']);
     });
 
+    test('carries bloodwork entries and merges them additively by id', () {
+      final b1 = BloodworkEntry(
+        id: 'bw1', date: DateTime(2026, 7, 1), marker: 'Total T',
+        value: 38.5, unit: 'nmol/L',
+      );
+      final b2 = BloodworkEntry(
+        id: 'bw2', date: DateTime(2026, 7, 8), marker: 'E2',
+        value: 120, unit: 'pmol/L',
+      );
+      final incoming = decodeBackup(encodeBackup(
+        injections: [],
+        compounds: [],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        bloodwork: [b1, b2],
+      ))!;
+      expect(incoming.bloodwork, hasLength(2));
+
+      final res = mergeBackup(
+        injections: [],
+        compounds: [],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        bloodwork: [b1], // bw1 already present
+        incoming: incoming,
+      );
+      expect(res.bloodwork.map((b) => b.id).toSet(), {'bw1', 'bw2'});
+      expect(res.newBloodwork, 1);
+    });
+
+    test('old backups without a bloodwork key decode with an empty list', () {
+      const legacy = '{"app":"protolog","schemaVersion":1,'
+          '"injections":[],"compounds":[],"reminders":[],'
+          '"customSitesIM":[],"customSitesSubQ":[]}';
+      expect(decodeBackup(legacy), isNotNull);
+      expect(decodeBackup(legacy)!.bloodwork, isEmpty);
+    });
+
     test('unions custom sites without duplicates', () {
       final incoming = decodeBackup(encodeBackup(
         injections: [],

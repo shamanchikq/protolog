@@ -11,6 +11,7 @@ class BackupData {
   final List<Reminder> reminders;
   final List<String> customSitesIM;
   final List<String> customSitesSubQ;
+  final List<BloodworkEntry> bloodwork;
 
   const BackupData({
     required this.injections,
@@ -18,6 +19,7 @@ class BackupData {
     required this.reminders,
     required this.customSitesIM,
     required this.customSitesSubQ,
+    this.bloodwork = const [],
   });
 }
 
@@ -27,9 +29,11 @@ class BackupMergeResult {
   final List<Reminder> reminders;
   final List<String> customSitesIM;
   final List<String> customSitesSubQ;
+  final List<BloodworkEntry> bloodwork;
   final int newInjections;
   final int changedCompounds;
   final int changedReminders;
+  final int newBloodwork;
 
   const BackupMergeResult({
     required this.injections,
@@ -37,9 +41,11 @@ class BackupMergeResult {
     required this.reminders,
     required this.customSitesIM,
     required this.customSitesSubQ,
+    required this.bloodwork,
     required this.newInjections,
     required this.changedCompounds,
     required this.changedReminders,
+    required this.newBloodwork,
   });
 }
 
@@ -49,6 +55,7 @@ String encodeBackup({
   required List<Reminder> reminders,
   required List<String> customSitesIM,
   required List<String> customSitesSubQ,
+  List<BloodworkEntry> bloodwork = const [],
   DateTime? exportedAt,
 }) {
   return jsonEncode({
@@ -60,6 +67,7 @@ String encodeBackup({
     'reminders': reminders.map((e) => e.toJson()).toList(),
     'customSitesIM': customSitesIM,
     'customSitesSubQ': customSitesSubQ,
+    'bloodwork': bloodwork.map((e) => e.toJson()).toList(),
   });
 }
 
@@ -84,6 +92,7 @@ BackupData? decodeBackup(String text) {
       reminders: parseList('reminders', Reminder.fromJson),
       customSitesIM: ((root['customSitesIM'] as List?) ?? const []).cast<String>(),
       customSitesSubQ: ((root['customSitesSubQ'] as List?) ?? const []).cast<String>(),
+      bloodwork: parseList('bloodwork', BloodworkEntry.fromJson),
     );
   } catch (_) {
     return null;
@@ -100,6 +109,7 @@ BackupMergeResult mergeBackup({
   required List<Reminder> reminders,
   required List<String> customSitesIM,
   required List<String> customSitesSubQ,
+  List<BloodworkEntry> bloodwork = const [],
   required BackupData incoming,
 }) {
   final mergedInjections = List<Injection>.from(injections);
@@ -138,6 +148,8 @@ BackupMergeResult mergeBackup({
       compounds, incoming.compounds, (c) => c.id, (c) => c.toJson());
   final (mergedReminders, changedReminders) = upsert<Reminder>(
       reminders, incoming.reminders, (r) => r.id, (r) => r.toJson());
+  final (mergedBloodwork, newBloodwork) = upsert<BloodworkEntry>(
+      bloodwork, incoming.bloodwork, (b) => b.id, (b) => b.toJson());
 
   List<String> union(List<String> a, List<String> b) =>
       {...a, ...b}.toList();
@@ -148,8 +160,10 @@ BackupMergeResult mergeBackup({
     reminders: mergedReminders,
     customSitesIM: union(customSitesIM, incoming.customSitesIM),
     customSitesSubQ: union(customSitesSubQ, incoming.customSitesSubQ),
+    bloodwork: mergedBloodwork,
     newInjections: newInjections,
     changedCompounds: changedCompounds,
     changedReminders: changedReminders,
+    newBloodwork: newBloodwork,
   );
 }

@@ -250,6 +250,61 @@ class PeptideLaneData {
   Color get color => Color(colorValue);
 }
 
+/// One lab result (F6): a measured blood marker at a point in time,
+/// overlaid on the PK chart and listed on the dashboard.
+class BloodworkEntry {
+  final String id;
+  final DateTime date;
+  final String marker; // e.g. 'Total T', 'E2', 'SHBG'
+  final double value;
+  final String unit;   // free text, e.g. 'nmol/L', 'pmol/L'
+  final String? notes;
+
+  const BloodworkEntry({
+    required this.id,
+    required this.date,
+    required this.marker,
+    required this.value,
+    required this.unit,
+    this.notes,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'date': date.toIso8601String(),
+        'marker': marker,
+        'value': value,
+        'unit': unit,
+        'notes': notes,
+      };
+
+  factory BloodworkEntry.fromJson(Map<String, dynamic> json) => BloodworkEntry(
+        id: json['id'],
+        date: DateTime.parse(json['date'] as String),
+        marker: json['marker'],
+        value: (json['value'] as num).toDouble(),
+        unit: json['unit'] ?? '',
+        notes: json['notes'],
+      );
+
+  BloodworkEntry copyWith({
+    String? id,
+    DateTime? date,
+    String? marker,
+    double? value,
+    String? unit,
+    String? notes,
+  }) =>
+      BloodworkEntry(
+        id: id ?? this.id,
+        date: date ?? this.date,
+        marker: marker ?? this.marker,
+        value: value ?? this.value,
+        unit: unit ?? this.unit,
+        notes: notes ?? this.notes,
+      );
+}
+
 class InjectionMarkerData {
   final double xPct;
   final double yLevel;

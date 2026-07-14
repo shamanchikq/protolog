@@ -13,6 +13,9 @@ class PKChartCard extends StatelessWidget {
   /// not supplied (e.g. in widget tests).
   final Color? Function(String baseName)? colorResolver;
 
+  /// F6: lab-draw dates rendered as overlay markers on the chart.
+  final List<DateTime> bloodworkDates;
+
   const PKChartCard({
     super.key,
     required this.graphData,
@@ -20,6 +23,7 @@ class PKChartCard extends StatelessWidget {
     required this.onRangeChanged,
     required this.onSettingsChanged,
     this.colorResolver,
+    this.bloodworkDates = const [],
   });
 
   @override
@@ -84,6 +88,7 @@ class PKChartCard extends StatelessWidget {
                           settings: settings,
                           skipPeptides: true,
                           colorResolver: colorResolver ?? AppTheme.compoundColor,
+                          bloodworkDates: bloodworkDates,
                         ),
                       ),
                     ),

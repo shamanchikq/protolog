@@ -20,6 +20,8 @@ import 'ui/widgets/protolog_shell.dart';
 import 'ui/widgets/load_hero.dart';
 import 'ui/widgets/pk_chart_card.dart';
 import 'ui/widgets/swimlane_card.dart';
+import 'ui/widgets/bloodwork_card.dart';
+import 'ui/widgets/bloodwork_editor_dialog.dart';
 import 'ui/theme.dart';
 import 'engine/dashboard_stats.dart';
 import 'ui/views/add_injection_wizard.dart';
@@ -99,6 +101,7 @@ class _MainScreenState extends State<MainScreen> {
   List<Injection> injections = [];
   List<CompoundDefinition> userCompounds = [];
   List<Reminder> reminders = [];
+  List<BloodworkEntry> bloodwork = [];
   late GraphSettings settings;
   Future<ComputedGraphData>? _graphDataFuture;
   bool _loading = true;
@@ -240,6 +243,13 @@ class _MainScreenState extends State<MainScreen> {
       userCompounds = List.from(INITIAL_COMPOUNDS);
     }
 
+    // Load Bloodwork
+    final bwString = prefs.getString('bloodwork');
+    if (bwString != null) {
+      final List<dynamic> jsonList = jsonDecode(bwString);
+      bloodwork = jsonList.map((j) => BloodworkEntry.fromJson(j)).toList();
+    }
+
     // Load Reminders
     final remString = prefs.getString('reminders');
     if (remString != null) {
@@ -289,6 +299,11 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _saveReminders() async {
     final prefs = await SharedPreferences.getInstance();
     prefs.setString('reminders', jsonEncode(reminders.map((r) => r.toJson()).toList()));
+  }
+
+  Future<void> _saveBloodwork() async {
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setString('bloodwork', jsonEncode(bloodwork.map((b) => b.toJson()).toList()));
   }
 
   Future<void> _scheduleReminder(Reminder reminder) async {
@@ -380,6 +395,46 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  // Common markers with their usual units — tapping a chip in the editor
+  // prefills both fields. Free-text stays possible for anything else.
+  static const _markerSuggestions = <String, String>{
+    'Total T': 'nmol/L',
+    'Free T': 'pmol/L',
+    'E2': 'pmol/L',
+    'SHBG': 'nmol/L',
+    'Prolactin': 'mIU/L',
+    'HDL': 'mmol/L',
+    'LDL': 'mmol/L',
+    'ALT': 'U/L',
+    'AST': 'U/L',
+    'Hct': '%',
+  };
+
+  Future<void> _openBloodworkEditor({BloodworkEntry? editing}) async {
+    final result = await showDialog<BloodworkDialogResult>(
+      context: context,
+      builder: (_) => BloodworkEditorDialog(
+        editing: editing,
+        markerSuggestions: _markerSuggestions,
+      ),
+    );
+    if (result == null) return;
+    setState(() {
+      if (result.delete) {
+        bloodwork.removeWhere((b) => b.id == editing!.id);
+      } else {
+        final entry = result.entry!;
+        final i = bloodwork.indexWhere((b) => b.id == entry.id);
+        if (i >= 0) {
+          bloodwork[i] = entry;
+        } else {
+          bloodwork.add(entry);
+        }
+      }
+    });
+    _saveBloodwork();
+  }
+
   /// Reads the wizard-owned custom site lists straight from prefs (the
   /// wizard persists them as JSON-encoded string lists).
   List<String> _readSites(SharedPreferences prefs, String key) {
@@ -403,6 +458,7 @@ class _MainScreenState extends State<MainScreen> {
         reminders: reminders,
         customSitesIM: _readSites(prefs, 'customSitesIM'),
         customSitesSubQ: _readSites(prefs, 'customSitesSubQ'),
+        bloodwork: bloodwork,
       );
       final dir = await getTemporaryDirectory();
       final d = DateTime.now();
@@ -445,6 +501,7 @@ class _MainScreenState extends State<MainScreen> {
         reminders: reminders,
         customSitesIM: sitesIM,
         customSitesSubQ: sitesSubQ,
+        bloodwork: bloodwork,
         incoming: data,
       );
       final newSites = (res.customSitesIM.length - sitesIM.length) +
@@ -452,6 +509,7 @@ class _MainScreenState extends State<MainScreen> {
       final changes = res.newInjections +
           res.changedCompounds +
           res.changedReminders +
+          res.newBloodwork +
           newSites;
       if (changes == 0) {
         _snack('Backup matches current data — nothing to merge',
@@ -468,8 +526,9 @@ class _MainScreenState extends State<MainScreen> {
               style: AppTheme.sans(size: 14, weight: FontWeight.w600, color: AppTheme.fg)),
           content: Text(
             '${res.newInjections} new logs, ${res.changedCompounds} compound '
-            'updates, ${res.changedReminders} reminder updates, $newSites new '
-            'sites. Existing data is never deleted.',
+            'updates, ${res.changedReminders} reminder updates, '
+            '${res.newBloodwork} lab results, $newSites new sites. '
+            'Existing data is never deleted.',
             style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5),
           ),
           actions: [
@@ -491,9 +550,11 @@ class _MainScreenState extends State<MainScreen> {
         injections = res.injections;
         userCompounds = res.compounds;
         reminders = res.reminders;
+        bloodwork = res.bloodwork;
       });
       await _saveData();
       await _saveReminders();
+      await _saveBloodwork();
       await prefs.setString('customSitesIM', jsonEncode(res.customSitesIM));
       await prefs.setString('customSitesSubQ', jsonEncode(res.customSitesSubQ));
       await _rescheduleAllReminders();
@@ -978,6 +1039,7 @@ class _MainScreenState extends State<MainScreen> {
                 graphData: snapshot.data,
                 settings: settings,
                 colorResolver: colorOf,
+                bloodworkDates: [for (final b in bloodwork) b.date],
                 onRangeChanged: (range) {
                   setState(() {
                     settings = GraphSettings(
@@ -1003,6 +1065,12 @@ class _MainScreenState extends State<MainScreen> {
             injections: injections,
             now: DateTime.now(),
             colorResolver: colorOf,
+          ),
+          const SizedBox(height: 18),
+          BloodworkCard(
+            entries: bloodwork,
+            onCreate: () => _openBloodworkEditor(),
+            onTap: (e) => _openBloodworkEditor(editing: e),
           ),
         ],
       ),
