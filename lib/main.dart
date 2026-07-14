@@ -119,6 +119,7 @@ class _MainScreenState extends State<MainScreen> {
   // Set when a notification tap arrives before _loadData has finished
   // (cold start); processed at the end of _loadData.
   String? _pendingNotificationPayload;
+  String? _pendingNotificationAction;
 
   @override
   void initState() {
@@ -153,13 +154,16 @@ class _MainScreenState extends State<MainScreen> {
     await _notificationsPlugin.initialize(
       initSettings,
       onDidReceiveNotificationResponse: (resp) =>
-          _handleNotificationTap(resp.payload),
+          _handleNotificationTap(resp.payload, actionId: resp.actionId),
     );
 
     // App launched by tapping a notification while terminated.
     final launch = await _notificationsPlugin.getNotificationAppLaunchDetails();
     if (launch?.didNotificationLaunchApp ?? false) {
-      _handleNotificationTap(launch!.notificationResponse?.payload);
+      _handleNotificationTap(
+        launch!.notificationResponse?.payload,
+        actionId: launch.notificationResponse?.actionId,
+      );
     }
 
     // Request POST_NOTIFICATIONS permission after the first frame,
@@ -179,10 +183,11 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  void _handleNotificationTap(String? payload) {
+  void _handleNotificationTap(String? payload, {String? actionId}) {
     if (payload == null || payload.isEmpty) return;
     if (_loading) {
       _pendingNotificationPayload = payload;
+      _pendingNotificationAction = actionId;
       return;
     }
     Reminder? match;
@@ -193,6 +198,12 @@ class _MainScreenState extends State<MainScreen> {
       }
     }
     if (match == null) return;
+    if (actionId == 'skip') {
+      _skipReminder(match);
+      _snack('Skipped ${match.compoundBase} — rescheduled', color: AppTheme.surface2);
+      return;
+    }
+    // Body tap or the "Log now" action: open the wizard prefilled.
     final def = _compoundForReminder(match);
     if (def != null) _openAddInjectionWizard(prefill: def);
   }
@@ -247,8 +258,10 @@ class _MainScreenState extends State<MainScreen> {
 
     if (_pendingNotificationPayload != null) {
       final p = _pendingNotificationPayload;
+      final a = _pendingNotificationAction;
       _pendingNotificationPayload = null;
-      _handleNotificationTap(p);
+      _pendingNotificationAction = null;
+      _handleNotificationTap(p, actionId: a);
     }
   }
 
@@ -281,13 +294,22 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _scheduleReminder(Reminder reminder) async {
     if (!reminder.enabled) return;
     final now = DateTime.now();
-    final compoundLabel = '${reminder.compoundBase}${reminder.compoundEster != 'None' ? ' ${reminder.compoundEster}' : ''}';
+    final body = reminderNotificationBody(reminder, injections);
     final androidDetails = AndroidNotificationDetails(
       'protolog_reminders',
       'Administration Reminders',
       channelDescription: 'Recurring compound administration reminders',
       importance: Importance.high,
       priority: Priority.high,
+      category: AndroidNotificationCategory.reminder,
+      actions: const <AndroidNotificationAction>[
+        // Both actions bring the app to the foreground: Log opens the wizard
+        // prefilled; Skip advances the schedule via the same tap handler.
+        AndroidNotificationAction('log', 'Log now',
+            showsUserInterface: true, cancelNotification: true),
+        AndroidNotificationAction('skip', 'Skip',
+            showsUserInterface: true, cancelNotification: true),
+      ],
     );
     const iosDetails = DarwinNotificationDetails();
     final details = NotificationDetails(android: androidDetails, iOS: iosDetails);
@@ -311,7 +333,7 @@ class _MainScreenState extends State<MainScreen> {
         await _notificationsPlugin.zonedSchedule(
           id,
           'ProtoLog Reminder',
-          'Time to administer $compoundLabel',
+          body,
           when,
           details,
           androidScheduleMode: mode,

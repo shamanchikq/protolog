@@ -76,6 +76,28 @@ Reminder advanceAfterDose(Reminder r, DateTime takenAt) {
   return r.copyWith(anchorDate: takenAt.add(_intervalDuration(r.intervalDays)));
 }
 
+/// Notification body for a due reminder. Reminders don't store a dose, so
+/// the most recent matching log supplies the "last dose" context.
+String reminderNotificationBody(Reminder r, List<Injection> injections) {
+  final ester = r.compoundEster;
+  final showEster = ester.isNotEmpty && ester.toLowerCase() != 'none';
+  final label = showEster ? '${r.compoundBase} $ester' : r.compoundBase;
+
+  Injection? last;
+  for (final i in injections) {
+    if (i.snapshot.base != r.compoundBase) continue;
+    if (i.snapshot.ester != r.compoundEster) continue;
+    if (last == null || i.date.isAfter(last.date)) last = i;
+  }
+  if (last == null) return 'Time to administer $label';
+
+  final d = last.dosage;
+  final doseStr = d == d.roundToDouble()
+      ? d.toStringAsFixed(0)
+      : d.toString();
+  return 'Time to administer $label · last dose $doseStr ${last.snapshot.unit.name}';
+}
+
 const _wdShort = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const _wdLetter = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const _wdFull = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];

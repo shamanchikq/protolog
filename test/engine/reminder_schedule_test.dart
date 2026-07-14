@@ -168,6 +168,51 @@ void main() {
     });
   });
 
+  group('reminderNotificationBody', () {
+    const testCyp = CompoundDefinition(
+      id: 'test_cyp', base: 'Testosterone', ester: 'Cypionate',
+      type: CompoundType.steroid, graphType: GraphType.curve,
+      halfLife: 5.0, timeToPeak: 1.8, ratio: 0.69,
+      unit: Unit.mg, colorValue: 0xFFA8C9E8,
+    );
+    Injection inj(DateTime when, double mg) => Injection(
+          id: when.toIso8601String(), compoundId: 'test_cyp',
+          date: when, dosage: mg, snapshot: testCyp,
+        );
+
+    test('plain label when the compound has never been logged', () {
+      final r = interval(days: 3.5, anchor: DateTime(2026, 5, 18, 8, 0));
+      expect(reminderNotificationBody(r, const []),
+          'Time to administer Testosterone Cypionate');
+    });
+
+    test('includes the most recent dose when history exists', () {
+      final r = interval(days: 3.5, anchor: DateTime(2026, 5, 18, 8, 0));
+      final body = reminderNotificationBody(r, [
+        inj(DateTime(2026, 5, 10, 8, 0), 200),
+        inj(DateTime(2026, 5, 14, 8, 0), 250), // latest wins
+      ]);
+      expect(body, 'Time to administer Testosterone Cypionate · last dose 250 mg');
+    });
+
+    test('omits "None" ester and trims trailing zeros', () {
+      final r = custom([ReminderSlot(weekday: 1, hour: 8, minute: 0)]);
+      const bpc = CompoundDefinition(
+        id: 'bpc', base: 'BPC-157', ester: 'None',
+        type: CompoundType.peptide, graphType: GraphType.activeWindow,
+        halfLife: 0.2, timeToPeak: 0.05, ratio: 1.0,
+        unit: Unit.mcg, colorValue: 0xFF8FC5A8,
+      );
+      final body = reminderNotificationBody(r, [
+        Injection(
+          id: 'x', compoundId: 'bpc',
+          date: DateTime(2026, 5, 17, 8, 0), dosage: 250.0, snapshot: bpc,
+        ),
+      ]);
+      expect(body, 'Time to administer BPC-157 · last dose 250 mcg');
+    });
+  });
+
   group('weekAgenda', () {
     test('places compound colors on the correct days', () {
       const red = Color(0xFFFF0000);
