@@ -558,6 +558,15 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  void _updateInjection(Injection updated) {
+    setState(() {
+      final i = injections.indexWhere((inj) => inj.id == updated.id);
+      if (i >= 0) injections[i] = updated;
+    });
+    _saveData();
+    _refreshGraph();
+  }
+
   void _deleteInjection(String id) {
     setState(() {
       injections.removeWhere((i) => i.id == id);
@@ -633,6 +642,7 @@ class _MainScreenState extends State<MainScreen> {
           injections: injections,
           onDeleteInjection: _deleteInjection,
           onUpdateNotes: _updateInjectionNotes,
+          onEditInjection: (inj) => _openAddInjectionWizard(editing: inj),
           onDaySelected: (d) => _calendarSelectedDay = d,
           colorResolver: _buildColorResolver(),
         );
@@ -752,7 +762,11 @@ class _MainScreenState extends State<MainScreen> {
 
   DateTime _calendarSelectedDay = DateTime.now();
 
-  void _openAddInjectionWizard({CompoundDefinition? prefill, DateTime? prefillDate}) {
+  void _openAddInjectionWizard({
+    CompoundDefinition? prefill,
+    DateTime? prefillDate,
+    Injection? editing,
+  }) {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => Scaffold(
         backgroundColor: AppTheme.bg,
@@ -767,6 +781,8 @@ class _MainScreenState extends State<MainScreen> {
             reminders: reminders,
             prefillCompound: prefill,
             prefillDate: prefillDate,
+            editingInjection: editing,
+            onEdit: _updateInjection,
           ),
         ),
       ),

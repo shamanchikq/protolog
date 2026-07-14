@@ -18,6 +18,12 @@ class AddInjectionWizard extends StatefulWidget {
   final CompoundDefinition? prefillCompound;
   final DateTime? prefillDate;
 
+  /// Edit mode (F2): opens directly on the details step prefilled from this
+  /// injection; Confirm replaces it in place via [onEdit] instead of logging
+  /// a new dose. The frozen PK snapshot is preserved.
+  final Injection? editingInjection;
+  final void Function(Injection updated)? onEdit;
+
   const AddInjectionWizard({
     super.key,
     required this.onAdd,
@@ -29,6 +35,8 @@ class AddInjectionWizard extends StatefulWidget {
     required this.injections,
     this.prefillCompound,
     this.prefillDate,
+    this.editingInjection,
+    this.onEdit,
   });
 
   @override
@@ -59,7 +67,10 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
 
   bool _advanceReminder = true;
 
+  bool get _isEdit => widget.editingInjection != null;
+
   Reminder? get _matchingReminder {
+    if (_isEdit) return null; // editing history never advances reminders
     final c = _selectedCompound;
     if (c == null) return null;
     for (final r in widget.reminders) {
@@ -80,13 +91,46 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
   void initState() {
     super.initState();
     _loadCustomSites();
+    final editing = widget.editingInjection;
     final pre = widget.prefillCompound;
-    if (pre != null) {
+    if (editing != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _enterEditMode(editing);
+      });
+    } else if (pre != null) {
       // _enterStep2 calls setState, so schedule it after the first frame.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _enterStep2(pre);
       });
     }
+  }
+
+  /// Prefills the details step from an existing injection. Unlike
+  /// [_enterStep2], the compound is the injection's own frozen snapshot —
+  /// editing a log must never silently re-canonicalize its PK.
+  void _enterEditMode(Injection inj) {
+    setState(() {
+      _selectedCompound = inj.snapshot;
+      _lastForCompound = null;
+      _unit = inj.snapshot.unit;
+      _mode = 'direct';
+      _doseText = _trimZero(inj.dosage);
+      _doseController.text = _doseText;
+      _volumeText = '';
+      _volumeController.text = '';
+      _notes = inj.notes ?? '';
+      _notesController.text = _notes;
+      _concentrationDraft = inj.snapshot.concentration;
+      _concController.text = inj.snapshot.concentration != null
+          ? _trimZero(inj.snapshot.concentration!)
+          : '';
+      _site = inj.site ??
+          (inj.snapshot.type == CompoundType.peptide ? 'Abdominal R' : 'Vent. glute R');
+      _date = inj.date;
+      _time = TimeOfDay.fromDateTime(inj.date);
+      _advanceReminder = false;
+      _step = 2;
+    });
   }
 
   Future<void> _loadCustomSites() async {
@@ -1391,10 +1435,10 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Step 2 of 2',
+              Text(_isEdit ? 'Editing logged dose' : 'Step 2 of 2',
                   style: AppTheme.sans(size: 11, color: AppTheme.fgDim)),
               const SizedBox(height: 4),
-              Text('Dose & time',
+              Text(_isEdit ? 'Edit dose' : 'Dose & time',
                   style: AppTheme.serif(
                       size: 22, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.4)),
             ],
@@ -1402,11 +1446,13 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
         ),
         GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () => setState(() => _step = 1),
+          // In edit mode there is no step 1 to go back to — close instead.
+          onTap: _isEdit ? widget.onCancel : () => setState(() => _step = 1),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(border: Border.all(color: AppTheme.border, width: 1)),
-            child: Text('Back', style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
+            child: Text(_isEdit ? 'Cancel' : 'Back',
+                style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
           ),
         ),
       ],
@@ -1462,12 +1508,13 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
               ],
             ),
           ),
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => setState(() => _step = 1),
-            child: Text('Change',
-                style: AppTheme.sans(size: 11, color: AppTheme.accent)),
-          ),
+          if (!_isEdit)
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() => _step = 1),
+              child: Text('Change',
+                  style: AppTheme.sans(size: 11, color: AppTheme.accent)),
+            ),
         ],
       ),
     );
@@ -1502,7 +1549,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('LOGGING',
+              Text(_isEdit ? 'EDITING' : 'LOGGING',
                   style: AppTheme.sans(size: 10, color: AppTheme.fgDim, letterSpacing: 0.6)),
               const SizedBox(height: 2),
               Text(
@@ -1522,7 +1569,10 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
                 alignment: Alignment.center,
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 color: hasDose ? AppTheme.accent : AppTheme.surface2,
-                child: Text(_isPillForm ? 'Log administration' : 'Log injection',
+                child: Text(
+                    _isEdit
+                        ? 'Save changes'
+                        : (_isPillForm ? 'Log administration' : 'Log injection'),
                     style: AppTheme.sans(
                         size: 13,
                         weight: FontWeight.w600,
@@ -1546,6 +1596,25 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
     final fullDate = DateTime(
       _date.year, _date.month, _date.day, _time.hour, _time.minute,
     );
+
+    // Edit mode: replace the log in place. The snapshot stays frozen (only
+    // the display unit follows the selector) and userCompounds are untouched.
+    final editing = widget.editingInjection;
+    if (editing != null) {
+      final showSite = !_isPillForm;
+      widget.onEdit?.call(Injection(
+        id: editing.id,
+        compoundId: editing.compoundId,
+        date: fullDate,
+        dosage: doseVal,
+        snapshot: editing.snapshot.copyWith(unit: _unit),
+        site: (showSite && _site.isNotEmpty) ? _site : null,
+        notes: _notes.trim().isEmpty ? null : _notes.trim(),
+      ));
+      widget.onSuccess();
+      return;
+    }
+
     // Find or materialize the user compound; bake in the latest concentration.
     final existing = widget.userCompounds.firstWhere(
       (c) => c.base == picked.base && c.ester == picked.ester,

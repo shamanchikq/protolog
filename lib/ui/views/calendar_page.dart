@@ -7,6 +7,9 @@ class CalendarPage extends StatefulWidget {
   final List<Injection> injections;
   final void Function(String injectionId) onDeleteInjection;
   final void Function(String injectionId, String? notes) onUpdateNotes;
+
+  /// F2: tapping a day-detail row opens the wizard in edit mode.
+  final void Function(Injection injection)? onEditInjection;
   final ValueChanged<DateTime>? onDaySelected;
 
   /// Live base→color resolver. Falls back to the static palette + snapshot
@@ -18,6 +21,7 @@ class CalendarPage extends StatefulWidget {
     required this.injections,
     required this.onDeleteInjection,
     required this.onUpdateNotes,
+    this.onEditInjection,
     this.onDaySelected,
     this.colorResolver,
   });
@@ -28,17 +32,42 @@ class CalendarPage extends StatefulWidget {
 
 class _CalendarPageState extends State<CalendarPage> {
   static const _monthNames = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
   ];
   static const _weekdayInitials = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
   static const _weekdayFull = [
-    'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY',
-    'FRIDAY', 'SATURDAY', 'SUNDAY',
+    'MONDAY',
+    'TUESDAY',
+    'WEDNESDAY',
+    'THURSDAY',
+    'FRIDAY',
+    'SATURDAY',
+    'SUNDAY',
   ];
   static const _monthNamesShort = [
-    'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
-    'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC',
+    'JAN',
+    'FEB',
+    'MAR',
+    'APR',
+    'MAY',
+    'JUN',
+    'JUL',
+    'AUG',
+    'SEP',
+    'OCT',
+    'NOV',
+    'DEC',
   ];
 
   late DateTime _month;
@@ -65,7 +94,8 @@ class _CalendarPageState extends State<CalendarPage> {
       ..sort((a, b) => a.date.compareTo(b.date));
     for (final inj in sorted) {
       if (inj.date.year == year && inj.date.month == month) {
-        final color = widget.colorResolver?.call(inj.snapshot.base) ??
+        final color =
+            widget.colorResolver?.call(inj.snapshot.base) ??
             AppTheme.compoundColor(inj.snapshot.base) ??
             Color(inj.snapshot.colorValue);
         final list = out.putIfAbsent(inj.date.day, () => []);
@@ -77,9 +107,14 @@ class _CalendarPageState extends State<CalendarPage> {
 
   List<Injection> _entriesForSelectedDay() {
     final d = _selectedDay;
-    final list = widget.injections.where((i) =>
-      i.date.year == d.year && i.date.month == d.month && i.date.day == d.day
-    ).toList();
+    final list = widget.injections
+        .where(
+          (i) =>
+              i.date.year == d.year &&
+              i.date.month == d.month &&
+              i.date.day == d.day,
+        )
+        .toList();
     list.sort((a, b) => a.date.compareTo(b.date));
     return list;
   }
@@ -104,7 +139,8 @@ class _CalendarPageState extends State<CalendarPage> {
     final dosageStr = inj.dosage == inj.dosage.truncateToDouble()
         ? inj.dosage.toStringAsFixed(0)
         : inj.dosage.toString();
-    final description = "${inj.snapshot.base}${hasEster ? ' $esterRaw' : ''} — $dosageStr $unit";
+    final description =
+        "${inj.snapshot.base}${hasEster ? ' $esterRaw' : ''} — $dosageStr $unit";
 
     final result = await showDialog<bool>(
       context: context,
@@ -121,20 +157,44 @@ class _CalendarPageState extends State<CalendarPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Delete entry?', style: AppTheme.serif(size: 18, weight: FontWeight.w500, color: AppTheme.fg)),
+              Text(
+                'Delete entry?',
+                style: AppTheme.serif(
+                  size: 18,
+                  weight: FontWeight.w500,
+                  color: AppTheme.fg,
+                ),
+              ),
               const SizedBox(height: 10),
-              Text(description, style: AppTheme.sans(size: 13, color: AppTheme.fgMute)),
+              Text(
+                description,
+                style: AppTheme.sans(size: 13, color: AppTheme.fgMute),
+              ),
               const SizedBox(height: 18),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
                     onPressed: () => Navigator.of(ctx).pop(false),
-                    child: Text('Cancel', style: AppTheme.sans(size: 13, weight: FontWeight.w500, color: AppTheme.fgMute)),
+                    child: Text(
+                      'Cancel',
+                      style: AppTheme.sans(
+                        size: 13,
+                        weight: FontWeight.w500,
+                        color: AppTheme.fgMute,
+                      ),
+                    ),
                   ),
                   TextButton(
                     onPressed: () => Navigator.of(ctx).pop(true),
-                    child: Text('Delete', style: AppTheme.sans(size: 13, weight: FontWeight.w500, color: AppTheme.warn)),
+                    child: Text(
+                      'Delete',
+                      style: AppTheme.sans(
+                        size: 13,
+                        weight: FontWeight.w500,
+                        color: AppTheme.warn,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -183,6 +243,7 @@ class _CalendarPageState extends State<CalendarPage> {
             onDeleteConfirm: _confirmDelete,
             onDelete: widget.onDeleteInjection,
             onEditNotes: widget.onUpdateNotes,
+            onEditInjection: widget.onEditInjection,
             colorResolver: widget.colorResolver,
           ),
         ),
@@ -215,12 +276,22 @@ class _MonthHeader extends StatelessWidget {
           Expanded(
             child: RichText(
               text: TextSpan(
-                style: AppTheme.serif(size: 26, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.5),
+                style: AppTheme.serif(
+                  size: 26,
+                  weight: FontWeight.w500,
+                  color: AppTheme.fg,
+                  letterSpacing: -0.5,
+                ),
                 children: [
                   TextSpan(text: '${monthNames[month.month - 1]} '),
                   TextSpan(
                     text: '${month.year}',
-                    style: AppTheme.serif(size: 26, weight: FontWeight.w300, color: AppTheme.fgMute, letterSpacing: -0.5),
+                    style: AppTheme.serif(
+                      size: 26,
+                      weight: FontWeight.w300,
+                      color: AppTheme.fgMute,
+                      letterSpacing: -0.5,
+                    ),
                   ),
                 ],
               ),
@@ -252,7 +323,10 @@ class _ChevronButton extends StatelessWidget {
         decoration: BoxDecoration(
           border: Border.all(color: AppTheme.border, width: 1),
         ),
-        child: Text(glyph, style: AppTheme.sans(size: 14, color: AppTheme.fgMute)),
+        child: Text(
+          glyph,
+          style: AppTheme.sans(size: 14, color: AppTheme.fgMute),
+        ),
       ),
     );
   }
@@ -268,19 +342,21 @@ class _WeekdayStrip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 14),
       child: Row(
         children: initials
-            .map((d) => Expanded(
-                  child: Center(
-                    child: Text(
-                      d,
-                      style: AppTheme.sans(
-                        size: 10,
-                        weight: FontWeight.w500,
-                        color: AppTheme.fgDim,
-                        letterSpacing: 0.5,
-                      ),
+            .map(
+              (d) => Expanded(
+                child: Center(
+                  child: Text(
+                    d,
+                    style: AppTheme.sans(
+                      size: 10,
+                      weight: FontWeight.w500,
+                      color: AppTheme.fgDim,
+                      letterSpacing: 0.5,
                     ),
                   ),
-                ))
+                ),
+              ),
+            )
             .toList(),
       ),
     );
@@ -339,8 +415,12 @@ class _MonthGrid extends StatelessWidget {
               return const SizedBox.shrink();
             }
             final day = index - leading + 1;
-            final isToday = today.year == year && today.month == m && today.day == day;
-            final isSelected = selectedDay.year == year && selectedDay.month == m && selectedDay.day == day;
+            final isToday =
+                today.year == year && today.month == m && today.day == day;
+            final isSelected =
+                selectedDay.year == year &&
+                selectedDay.month == m &&
+                selectedDay.day == day;
             final bars = dayBars[day] ?? const <Color>[];
             return _DayCell(
               day: day,
@@ -410,9 +490,7 @@ class _DayCell extends StatelessWidget {
                   children: [
                     for (int i = 0; i < bars.length; i++) ...[
                       if (i > 0) const SizedBox(width: 2),
-                      Expanded(
-                        child: Container(height: 2, color: bars[i]),
-                      ),
+                      Expanded(child: Container(height: 2, color: bars[i])),
                     ],
                   ],
                 ),
@@ -432,6 +510,7 @@ class _SelectedDaySection extends StatelessWidget {
   final Future<bool> Function(Injection inj) onDeleteConfirm;
   final void Function(String injectionId) onDelete;
   final void Function(String injectionId, String? notes) onEditNotes;
+  final void Function(Injection injection)? onEditInjection;
   final Color Function(String baseName)? colorResolver;
 
   const _SelectedDaySection({
@@ -442,6 +521,7 @@ class _SelectedDaySection extends StatelessWidget {
     required this.onDeleteConfirm,
     required this.onDelete,
     required this.onEditNotes,
+    this.onEditInjection,
     this.colorResolver,
   });
 
@@ -449,7 +529,8 @@ class _SelectedDaySection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final header = '${weekdayFull[selectedDay.weekday - 1]}, ${monthShort[selectedDay.month - 1]} ${selectedDay.day}';
+    final header =
+        '${weekdayFull[selectedDay.weekday - 1]}, ${monthShort[selectedDay.month - 1]} ${selectedDay.day}';
     final count = entries.length;
     final countStr = '$count ${count == 1 ? 'entry' : 'entries'}';
 
@@ -520,6 +601,7 @@ class _SelectedDaySection extends StatelessWidget {
                         showTopBorder: i > 0,
                         twoDigits: _twoDigits,
                         onEditNotes: onEditNotes,
+                        onEditInjection: onEditInjection,
                         colorResolver: colorResolver,
                       ),
                     ),
@@ -537,6 +619,7 @@ class _EntryRow extends StatelessWidget {
   final bool showTopBorder;
   final String Function(int) twoDigits;
   final void Function(String injectionId, String? notes) onEditNotes;
+  final void Function(Injection injection)? onEditInjection;
   final Color Function(String baseName)? colorResolver;
 
   const _EntryRow({
@@ -544,6 +627,7 @@ class _EntryRow extends StatelessWidget {
     required this.showTopBorder,
     required this.twoDigits,
     required this.onEditNotes,
+    this.onEditInjection,
     this.colorResolver,
   });
 
@@ -562,81 +646,111 @@ class _EntryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final esterRaw = injection.snapshot.ester;
     final hasEster = esterRaw.isNotEmpty && esterRaw.toLowerCase() != 'none';
-    final name = hasEster ? '${injection.snapshot.base} $esterRaw' : injection.snapshot.base;
-    final time = '${twoDigits(injection.date.hour)}:${twoDigits(injection.date.minute)}';
+    final name = hasEster
+        ? '${injection.snapshot.base} $esterRaw'
+        : injection.snapshot.base;
+    final time =
+        '${twoDigits(injection.date.hour)}:${twoDigits(injection.date.minute)}';
     final unit = injection.snapshot.unit.toString().split('.').last;
     final dosageStr = injection.dosage == injection.dosage.truncateToDouble()
         ? injection.dosage.toStringAsFixed(0)
         : injection.dosage.toString();
-    final color = colorResolver?.call(injection.snapshot.base) ??
+    final color =
+        colorResolver?.call(injection.snapshot.base) ??
         AppTheme.compoundColor(injection.snapshot.base) ??
         Color(injection.snapshot.colorValue);
-    final hasNotes = injection.notes != null && injection.notes!.trim().isNotEmpty;
+    final hasNotes =
+        injection.notes != null && injection.notes!.trim().isNotEmpty;
 
     return Container(
       decoration: BoxDecoration(
         color: AppTheme.surface,
         border: showTopBorder
-            ? const Border(top: BorderSide(color: AppTheme.borderSoft, width: 1))
+            ? const Border(
+                top: BorderSide(color: AppTheme.borderSoft, width: 1),
+              )
             : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                SizedBox(
-                  width: 48,
-                  child: Text(time, style: AppTheme.mono(size: 11, color: AppTheme.fgMute)),
-                ),
-                const SizedBox(width: 12),
-                Container(width: 3, height: 18, color: color),
-                const SizedBox(width: 12),
-                Expanded(
-                  // Site sits outside the name's ellipsis scope so a long
-                  // compound name truncates instead of hiding the site.
-                  child: Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppTheme.sans(size: 13, color: AppTheme.fg),
-                        ),
-                      ),
-                      if (injection.site != null && injection.site!.isNotEmpty)
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 110),
-                          child: Text(
-                            ' · ${injection.site}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: AppTheme.sans(size: 11, color: AppTheme.fgDim),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => _editNotes(context),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                    child: Icon(
-                      hasNotes ? Icons.sticky_note_2_outlined : Icons.add_comment_outlined,
-                      size: 14,
-                      color: hasNotes ? AppTheme.accent : AppTheme.fgDim,
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            // Row tap opens the full edit flow; the notes icon inside keeps
+            // its own handler and wins hit-testing over this one.
+            onTap: onEditInjection != null
+                ? () => onEditInjection!(injection)
+                : null,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 48,
+                    child: Text(
+                      time,
+                      style: AppTheme.mono(size: 11, color: AppTheme.fgMute),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Text('$dosageStr $unit', style: AppTheme.mono(size: 12, color: AppTheme.fg)),
-              ],
+                  const SizedBox(width: 12),
+                  Container(width: 3, height: 18, color: color),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    // Site sits outside the name's ellipsis scope so a long
+                    // compound name truncates instead of hiding the site.
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTheme.sans(size: 13, color: AppTheme.fg),
+                          ),
+                        ),
+                        if (injection.site != null &&
+                            injection.site!.isNotEmpty)
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 110),
+                            child: Text(
+                              ' · ${injection.site}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppTheme.sans(
+                                size: 11,
+                                color: AppTheme.fgDim,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _editNotes(context),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 2,
+                      ),
+                      child: Icon(
+                        hasNotes
+                            ? Icons.sticky_note_2_outlined
+                            : Icons.add_comment_outlined,
+                        size: 14,
+                        color: hasNotes ? AppTheme.accent : AppTheme.fgDim,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '$dosageStr $unit',
+                    style: AppTheme.mono(size: 12, color: AppTheme.fg),
+                  ),
+                ],
+              ),
             ),
           ),
           if (hasNotes)
@@ -648,11 +762,17 @@ class _EntryRow extends StatelessWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const SizedBox(width: 48 + 12 + 3 + 12), // align with name column
+                    const SizedBox(
+                      width: 48 + 12 + 3 + 12,
+                    ), // align with name column
                     Expanded(
                       child: Text(
                         injection.notes!,
-                        style: AppTheme.sans(size: 11, color: AppTheme.fgMute, height: 1.35),
+                        style: AppTheme.sans(
+                          size: 11,
+                          color: AppTheme.fgMute,
+                          height: 1.35,
+                        ),
                       ),
                     ),
                   ],
@@ -674,7 +794,9 @@ class _EditNotesDialog extends StatefulWidget {
 }
 
 class _EditNotesDialogState extends State<_EditNotesDialog> {
-  late final TextEditingController _ctl = TextEditingController(text: widget.initial);
+  late final TextEditingController _ctl = TextEditingController(
+    text: widget.initial,
+  );
   final FocusNode _focus = FocusNode();
 
   @override
@@ -707,9 +829,15 @@ class _EditNotesDialogState extends State<_EditNotesDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Notes',
-                style: AppTheme.serif(
-                    size: 18, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.3)),
+            Text(
+              'Notes',
+              style: AppTheme.serif(
+                size: 18,
+                weight: FontWeight.w500,
+                color: AppTheme.fg,
+                letterSpacing: -0.3,
+              ),
+            ),
             const SizedBox(height: 14),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -741,9 +869,14 @@ class _EditNotesDialogState extends State<_EditNotesDialog> {
                   behavior: HitTestBehavior.opaque,
                   onTap: () => Navigator.of(context).pop(null),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                    child: Text('Cancel',
-                        style: AppTheme.sans(size: 13, color: AppTheme.fgMute)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    child: Text(
+                      'Cancel',
+                      style: AppTheme.sans(size: 13, color: AppTheme.fgMute),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 4),
@@ -751,11 +884,20 @@ class _EditNotesDialogState extends State<_EditNotesDialog> {
                   behavior: HitTestBehavior.opaque,
                   onTap: _save,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
                     color: AppTheme.accent,
-                    child: Text('Save',
-                        style: AppTheme.sans(
-                            size: 13, weight: FontWeight.w600, color: AppTheme.bg, letterSpacing: 0.3)),
+                    child: Text(
+                      'Save',
+                      style: AppTheme.sans(
+                        size: 13,
+                        weight: FontWeight.w600,
+                        color: AppTheme.bg,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
                   ),
                 ),
               ],
