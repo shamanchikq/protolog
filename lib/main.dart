@@ -35,6 +35,19 @@ import 'engine/backup.dart';
 
 // --- Entry Point ---
 void main() {
+  // Bundled-font OFL notices (Inter, Fraunces, JetBrains Mono) — surfaced in
+  // the standard Flutter licenses screen, mirroring what google_fonts did
+  // before the fonts were vendored in (F4).
+  LicenseRegistry.addLicense(() async* {
+    for (final path in const [
+      'assets/fonts/OFL-Inter.txt',
+      'assets/fonts/OFL-Fraunces.txt',
+      'assets/fonts/OFL-JetBrainsMono.txt',
+    ]) {
+      yield LicenseEntryWithLineBreaks(
+          const ['bundled_fonts'], await rootBundle.loadString(path));
+    }
+  });
   runApp(const ProtoLogApp());
 }
 

@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../../models.dart';
 import '../../utils.dart';
 import '../theme.dart';
@@ -135,10 +134,10 @@ class PKGraphPainter extends CustomPainter {
       }
     }
 
-    final tickStyle = GoogleFonts.jetBrainsMono(
+    final tickStyle = AppTheme.mono(
       color: AppTheme.fgDim,
-      fontSize: 9,
-      fontWeight: FontWeight.w400,
+      size: 9,
+      weight: FontWeight.w400,
     );
     final oralTickStyle = tickStyle.copyWith(color: AppTheme.warm);
     if (!settings.normalized) {

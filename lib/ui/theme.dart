@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 /// "Lab Sheet" design tokens. Dark theme only for v1.
 class AppTheme {
@@ -71,7 +70,8 @@ class AppTheme {
     Color? color,
     double? letterSpacing,
     double? height,
-  }) => GoogleFonts.inter(
+  }) => TextStyle(
+        fontFamily: 'Inter',
         fontSize: size,
         fontWeight: weight,
         color: color ?? fg,
@@ -85,7 +85,8 @@ class AppTheme {
     Color? color,
     double? letterSpacing,
     double? height,
-  }) => GoogleFonts.fraunces(
+  }) => TextStyle(
+        fontFamily: 'Fraunces',
         fontSize: size,
         fontWeight: weight,
         color: color ?? fg,
@@ -98,7 +99,8 @@ class AppTheme {
     FontWeight weight = FontWeight.w400,
     Color? color,
     double? letterSpacing,
-  }) => GoogleFonts.jetBrainsMono(
+  }) => TextStyle(
+        fontFamily: 'JetBrainsMono',
         fontSize: size,
         fontWeight: weight,
         color: color ?? fg,
