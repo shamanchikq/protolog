@@ -7,6 +7,7 @@ class PKChartCard extends StatelessWidget {
   final ComputedGraphData? graphData;
   final GraphSettings settings;
   final ValueChanged<String> onRangeChanged;
+  final ValueChanged<GraphSettings> onSettingsChanged;
 
   /// Live base→color resolver. Falls back to the static redesign palette when
   /// not supplied (e.g. in widget tests).
@@ -17,6 +18,7 @@ class PKChartCard extends StatelessWidget {
     required this.graphData,
     required this.settings,
     required this.onRangeChanged,
+    required this.onSettingsChanged,
     this.colorResolver,
   });
 
@@ -41,6 +43,34 @@ class PKChartCard extends StatelessWidget {
             ),
           ),
           Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
+            child: Row(
+              children: [
+                _ModePill(
+                  label: '% of peak',
+                  active: settings.normalized,
+                  onTap: () => onSettingsChanged(GraphSettings(
+                    normalized: !settings.normalized,
+                    cumulative: settings.cumulative,
+                    showPeptides: settings.showPeptides,
+                    timeRange: settings.timeRange,
+                  )),
+                ),
+                const SizedBox(width: 6),
+                _ModePill(
+                  label: 'Σ total',
+                  active: settings.cumulative,
+                  onTap: () => onSettingsChanged(GraphSettings(
+                    normalized: settings.normalized,
+                    cumulative: !settings.cumulative,
+                    showPeptides: settings.showPeptides,
+                    timeRange: settings.timeRange,
+                  )),
+                ),
+              ],
+            ),
+          ),
+          Padding(
             padding: const EdgeInsets.fromLTRB(4, 4, 14, 14),
             child: graphData == null
                 ? const SizedBox(height: 240, child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
@@ -60,6 +90,39 @@ class PKChartCard extends StatelessWidget {
                   ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Small toggle for the engine-side graph modes (normalized / cumulative).
+class _ModePill extends StatelessWidget {
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+  const _ModePill({required this.label, required this.active, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: active ? AppTheme.surface2 : Colors.transparent,
+          border: Border.all(
+            color: active ? AppTheme.accentDeep : AppTheme.borderSoft,
+            width: 1,
+          ),
+        ),
+        child: Text(
+          label,
+          style: AppTheme.sans(
+            size: 10,
+            color: active ? AppTheme.accent : AppTheme.fgDim,
+            weight: active ? FontWeight.w600 : FontWeight.w400,
+          ),
+        ),
       ),
     );
   }

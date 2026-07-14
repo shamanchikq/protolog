@@ -951,6 +951,12 @@ class _MainScreenState extends State<MainScreen> {
                   });
                   _refreshGraph();
                 },
+                onSettingsChanged: (s) {
+                  setState(() => settings = s);
+                  // Cumulative adds a curve engine-side; normalized is
+                  // paint-only but the recompute is cheap and keeps one path.
+                  _refreshGraph();
+                },
               );
             },
           ),
