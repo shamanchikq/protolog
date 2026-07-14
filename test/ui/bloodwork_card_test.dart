@@ -13,6 +13,10 @@ void main() {
       id: 'b2', date: DateTime(2026, 6, 2), marker: 'E2',
       value: 120, unit: 'pmol/L',
     ),
+    BloodworkEntry(
+      id: 'b0', date: DateTime(2026, 5, 1), marker: 'Total T',
+      value: 30, unit: 'nmol/L',
+    ),
   ];
 
   testWidgets('lists entries newest first with marker, value, unit', (tester) async {
@@ -22,9 +26,11 @@ void main() {
       ),
     ));
     expect(find.text('Bloodwork'), findsOneWidget);
-    expect(find.text('Total T'), findsOneWidget);
+    expect(find.text('Total T'), findsNWidgets(2));
     expect(find.text('38.5 nmol/L'), findsOneWidget);
     expect(find.text('120 pmol/L'), findsOneWidget);
+    // Latest Total T shows its change vs the previous draw.
+    expect(find.text('↑ 8.5'), findsOneWidget);
   });
 
   testWidgets('empty state invites the first entry', (tester) async {
@@ -50,7 +56,7 @@ void main() {
     ));
     await tester.tap(find.text('+ Add'));
     expect(created, isTrue);
-    await tester.tap(find.text('Total T'));
+    await tester.tap(find.text('Total T').first); // newest row first
     expect(tapped?.id, 'b1');
   });
 }

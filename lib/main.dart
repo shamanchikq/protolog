@@ -22,6 +22,7 @@ import 'ui/widgets/pk_chart_card.dart';
 import 'ui/widgets/swimlane_card.dart';
 import 'ui/widgets/bloodwork_card.dart';
 import 'ui/widgets/bloodwork_editor_dialog.dart';
+import 'ui/views/bloodwork_page.dart';
 import 'ui/theme.dart';
 import 'engine/dashboard_stats.dart';
 import 'ui/views/add_injection_wizard.dart';
@@ -63,10 +64,35 @@ class ProtoLogApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: AppTheme.bg,
+        // Fill every slot pickers reach for — ColorScheme.dark() defaults
+        // secondary/containers to Material teal (#03DAC6), which leaked an
+        // "emerald" look into date/time pickers.
         colorScheme: const ColorScheme.dark(
           primary: AppTheme.accent,
+          onPrimary: AppTheme.bg,
+          secondary: AppTheme.accent,
+          onSecondary: AppTheme.bg,
+          primaryContainer: AppTheme.accentDeep,
+          onPrimaryContainer: AppTheme.fg,
+          secondaryContainer: AppTheme.surface2,
+          onSecondaryContainer: AppTheme.fg,
           surface: AppTheme.surface,
           onSurface: AppTheme.fg,
+          onSurfaceVariant: AppTheme.fgMute,
+          outline: AppTheme.border,
+        ),
+        datePickerTheme: const DatePickerThemeData(
+          backgroundColor: AppTheme.surface2,
+          headerBackgroundColor: AppTheme.surface,
+          shape: RoundedRectangleBorder(
+            side: BorderSide(color: AppTheme.border, width: 1),
+          ),
+        ),
+        timePickerTheme: const TimePickerThemeData(
+          backgroundColor: AppTheme.surface2,
+          shape: RoundedRectangleBorder(
+            side: BorderSide(color: AppTheme.border, width: 1),
+          ),
         ),
         dialogTheme: const DialogThemeData(
           backgroundColor: AppTheme.surface2,
@@ -409,6 +435,20 @@ class _MainScreenState extends State<MainScreen> {
     'AST': 'U/L',
     'Hct': '%',
   };
+
+  void _openBloodworkPage({String? initialMarker}) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => BloodworkPage(
+        initialEntries: bloodwork,
+        initialMarker: initialMarker,
+        markerSuggestions: _markerSuggestions,
+        onChanged: (list) {
+          setState(() => bloodwork = List.of(list));
+          _saveBloodwork();
+        },
+      ),
+    ));
+  }
 
   Future<void> _openBloodworkEditor({BloodworkEntry? editing}) async {
     final result = await showDialog<BloodworkDialogResult>(
@@ -1039,7 +1079,6 @@ class _MainScreenState extends State<MainScreen> {
                 graphData: snapshot.data,
                 settings: settings,
                 colorResolver: colorOf,
-                bloodworkDates: [for (final b in bloodwork) b.date],
                 onRangeChanged: (range) {
                   setState(() {
                     settings = GraphSettings(
@@ -1070,7 +1109,7 @@ class _MainScreenState extends State<MainScreen> {
           BloodworkCard(
             entries: bloodwork,
             onCreate: () => _openBloodworkEditor(),
-            onTap: (e) => _openBloodworkEditor(editing: e),
+            onTap: (e) => _openBloodworkPage(initialMarker: e.marker),
           ),
         ],
       ),

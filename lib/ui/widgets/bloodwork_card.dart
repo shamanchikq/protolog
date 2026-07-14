@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import '../../engine/bloodwork_stats.dart';
 import '../../models.dart';
 import '../theme.dart';
 import 'lab_primitives.dart';
 
-/// Dashboard card (F6): recent lab results, newest first. Rows open the
-/// editor via [onTap]; the pill opens the create dialog via [onCreate].
+/// Dashboard card (F6): recent lab results, newest first, each with its
+/// change vs the previous draw of the same marker. Rows open the full
+/// bloodwork page via [onTap]; the pill opens the create dialog via [onCreate].
 class BloodworkCard extends StatelessWidget {
   final List<BloodworkEntry> entries;
   final VoidCallback onCreate;
@@ -22,12 +24,35 @@ class BloodworkCard extends StatelessWidget {
   });
 
   static const _monthsShort = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
 
   String _fmtValue(double v) =>
       v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
+
+  Widget _delta(BloodworkEntry e) {
+    final d = deltaVsPrevious(e, entries);
+    if (d == null || d == 0) return const SizedBox.shrink();
+    return Text(
+      '${d > 0 ? '↑' : '↓'} ${_fmtValue(d.abs())}',
+      textAlign: TextAlign.right,
+      style: AppTheme.mono(
+        size: 10,
+        color: d > 0 ? AppTheme.accent : AppTheme.warn,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,14 +73,18 @@ class BloodworkCard extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(
-                  child: Text('Bloodwork',
-                      style: AppTheme.sans(size: 13, weight: FontWeight.w600)),
+                  child: Text(
+                    'Bloodwork',
+                    style: AppTheme.sans(size: 13, weight: FontWeight.w600),
+                  ),
                 ),
                 if (entries.length > maxRows)
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
-                    child: Text('${entries.length} total',
-                        style: AppTheme.mono(size: 10, color: AppTheme.fgDim)),
+                    child: Text(
+                      '${entries.length} total',
+                      style: AppTheme.mono(size: 10, color: AppTheme.fgDim),
+                    ),
                   ),
                 LabPill(label: '+ Add', onTap: onCreate),
               ],
@@ -65,7 +94,7 @@ class BloodworkCard extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
               child: Text(
-                'No lab results yet — add one to overlay it on the PK chart.',
+                'No lab results yet — log draws to track trends per marker.',
                 style: AppTheme.sans(size: 12, color: AppTheme.fgDim),
               ),
             )
@@ -78,17 +107,27 @@ class BloodworkCard extends StatelessWidget {
                   decoration: BoxDecoration(
                     border: i > 0
                         ? const Border(
-                            top: BorderSide(color: AppTheme.borderSoft, width: 1))
+                            top: BorderSide(
+                              color: AppTheme.borderSoft,
+                              width: 1,
+                            ),
+                          )
                         : null,
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
                   child: Row(
                     children: [
                       SizedBox(
                         width: 56,
                         child: Text(
                           '${_monthsShort[visible[i].date.month - 1]} ${visible[i].date.day}',
-                          style: AppTheme.mono(size: 11, color: AppTheme.fgMute),
+                          style: AppTheme.mono(
+                            size: 11,
+                            color: AppTheme.fgMute,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -102,9 +141,11 @@ class BloodworkCard extends StatelessWidget {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        '${_fmtValue(visible[i].value)} ${visible[i].unit}'.trim(),
+                        '${_fmtValue(visible[i].value)} ${visible[i].unit}'
+                            .trim(),
                         style: AppTheme.mono(size: 12, color: AppTheme.warm),
                       ),
+                      SizedBox(width: 44, child: _delta(visible[i])),
                     ],
                   ),
                 ),
