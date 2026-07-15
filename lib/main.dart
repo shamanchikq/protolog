@@ -442,6 +442,8 @@ class _MainScreenState extends State<MainScreen> {
         initialEntries: bloodwork,
         initialMarker: initialMarker,
         markerSuggestions: _markerSuggestions,
+        injections: injections,
+        colorResolver: _buildColorResolver(),
         onChanged: (list) {
           setState(() => bloodwork = List.of(list));
           _saveBloodwork();

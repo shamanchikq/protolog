@@ -40,7 +40,7 @@ void main() {
       await tester.tap(find.text('Total T'));
       await tester.pump();
       await tester.enterText(
-          find.widgetWithText(TextField, 'Value').first, '38,5');
+          find.byKey(const Key('bloodwork-value')), '38,5');
       await tester.pump();
       await tester.tap(find.text('Save'));
     });

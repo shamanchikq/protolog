@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models.dart';
 import '../../engine/bloodwork_stats.dart';
+import '../../engine/dashboard_stats.dart';
 import '../theme.dart';
 import '../widgets/lab_primitives.dart';
 import '../widgets/bloodwork_editor_dialog.dart';
@@ -15,12 +16,19 @@ class BloodworkPage extends StatefulWidget {
   final Map<String, String> markerSuggestions;
   final void Function(List<BloodworkEntry> entries) onChanged;
 
+  /// For the optional PK-overlay behind the trend: injections supply the
+  /// modeled injectable curve + peptide/ancillary activity lanes.
+  final List<Injection> injections;
+  final Color Function(String baseName)? colorResolver;
+
   const BloodworkPage({
     super.key,
     required this.initialEntries,
     this.initialMarker,
     this.markerSuggestions = const {},
     required this.onChanged,
+    this.injections = const [],
+    this.colorResolver,
   });
 
   @override
@@ -30,6 +38,7 @@ class BloodworkPage extends StatefulWidget {
 class _BloodworkPageState extends State<BloodworkPage> {
   late final List<BloodworkEntry> _entries = List.of(widget.initialEntries);
   String? _selected;
+  bool _showPk = false;
 
   static const _monthsShort = [
     'Jan',
@@ -97,6 +106,69 @@ class _BloodworkPageState extends State<BloodworkPage> {
         ? historyFor(_selected!, _entries)
         : <BloodworkEntry>[];
     final unit = history.isNotEmpty ? history.last.unit : '';
+
+    // Optional PK overlay: modeled injectable load (normalized to its own
+    // peak — no unit mapping implied) plus thin peptide/ancillary activity
+    // lanes, sampled across exactly the trend's time window.
+    final canOverlay = widget.injections.isNotEmpty && history.length >= 2;
+    List<double> pkSamples = const [];
+    List<(Color, List<double>)> pkLanes = const [];
+    if (_showPk && canOverlay) {
+      final winStart = history.first.date;
+      final winEnd = history.last.date;
+      List<double> normalized(List<double> raw) {
+        var m = 0.0;
+        for (final v in raw) {
+          if (v > m) m = v;
+        }
+        return m > 0 ? [for (final v in raw) v / m] : const [];
+      }
+
+      pkSamples = normalized(
+        sampleLaneIntensity(
+          injections: [
+            for (final i in widget.injections)
+              if (i.snapshot.type == CompoundType.steroid ||
+                  i.snapshot.type == CompoundType.oral)
+                i,
+          ],
+          windowStart: winStart,
+          windowEnd: winEnd,
+        ),
+      );
+
+      // Up to three peptide/ancillary lanes, most recently dosed first.
+      final paByBase = <String, List<Injection>>{};
+      for (final i in widget.injections) {
+        if (i.snapshot.type == CompoundType.peptide ||
+            i.snapshot.type == CompoundType.ancillary) {
+          paByBase.putIfAbsent(i.snapshot.base, () => []).add(i);
+        }
+      }
+      DateTime latestOf(String base) => paByBase[base]!
+          .map((i) => i.date)
+          .reduce((a, b) => a.isAfter(b) ? a : b);
+      final paBases = paByBase.keys.toList()
+        ..sort((a, b) => latestOf(b).compareTo(latestOf(a)));
+      final lanesTmp = <(Color, List<double>)>[];
+      for (final base in paBases.take(3)) {
+        final s = normalized(
+          sampleLaneIntensity(
+            injections: paByBase[base]!,
+            windowStart: winStart,
+            windowEnd: winEnd,
+          ),
+        );
+        if (s.isEmpty) continue;
+        lanesTmp.add((
+          widget.colorResolver?.call(base) ??
+              AppTheme.compoundColor(base) ??
+              const Color(0xFF9AA0A8),
+          s,
+        ));
+      }
+      pkLanes = lanesTmp;
+    }
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
@@ -191,12 +263,25 @@ class _BloodworkPageState extends State<BloodworkPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                '${_selected ?? ''}  ·  $unit',
-                                style: AppTheme.sans(
-                                  size: 11,
-                                  color: AppTheme.fgMute,
-                                ),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      '${_selected ?? ''}  ·  $unit',
+                                      style: AppTheme.sans(
+                                        size: 11,
+                                        color: AppTheme.fgMute,
+                                      ),
+                                    ),
+                                  ),
+                                  if (canOverlay)
+                                    LabPill(
+                                      label: 'PK overlay',
+                                      active: _showPk,
+                                      onTap: () =>
+                                          setState(() => _showPk = !_showPk),
+                                    ),
+                                ],
                               ),
                               const SizedBox(height: 8),
                               SizedBox(
@@ -217,6 +302,8 @@ class _BloodworkPageState extends State<BloodworkPage> {
                                     : CustomPaint(
                                         painter: _TrendPainter(
                                           history: history,
+                                          pkSamples: pkSamples,
+                                          lanes: pkLanes,
                                         ),
                                       ),
                               ),
@@ -255,11 +342,11 @@ class _BloodworkPageState extends State<BloodworkPage> {
   Widget _historyRow(BloodworkEntry e, {required bool first}) {
     final delta = deltaVsPrevious(e, _entries);
     String deltaStr = '';
-    Color deltaColor = AppTheme.fgDim;
     if (delta != null && delta != 0) {
       deltaStr = '${delta > 0 ? '↑' : '↓'} ${_fmt(delta.abs())}';
-      deltaColor = delta > 0 ? AppTheme.accent : AppTheme.warn;
     }
+    // Neutral: direction isn't universally good or bad across markers.
+    const deltaColor = AppTheme.fgMute;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => _openEditor(editing: e),
@@ -296,9 +383,18 @@ class _BloodworkPageState extends State<BloodworkPage> {
 }
 
 /// Time-proportional line chart of one marker's history in its own units.
+/// Optionally layers a normalized modeled-injectable-load silhouette and
+/// thin peptide/ancillary activity lanes behind the trend for timing
+/// context (no unit mapping is implied — the silhouette is 0..peak).
 class _TrendPainter extends CustomPainter {
   final List<BloodworkEntry> history; // oldest first, length >= 2
-  _TrendPainter({required this.history});
+  final List<double> pkSamples; // normalized 0..1, empty = overlay off
+  final List<(Color, List<double>)> lanes; // per-base activity strips
+  _TrendPainter({
+    required this.history,
+    this.pkSamples = const [],
+    this.lanes = const [],
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -334,6 +430,53 @@ class _TrendPainter extends CustomPainter {
       while (x < padL + w) {
         canvas.drawLine(Offset(x, y), Offset(x + 2, y), grid);
         x += 5;
+      }
+    }
+
+    // Semi-opaque modeled injectable-load silhouette behind the trend.
+    if (pkSamples.length > 1) {
+      final n = pkSamples.length;
+      final area = Path()..moveTo(padL, padT + h);
+      for (var i = 0; i < n; i++) {
+        area.lineTo(padL + w * (i / (n - 1)), padT + h * (1 - pkSamples[i]));
+      }
+      area.lineTo(padL + w, padT + h);
+      area.close();
+      canvas.drawPath(
+        area,
+        Paint()..color = AppTheme.accentDeep.withValues(alpha: 0.16),
+      );
+      final stroke = Path();
+      for (var i = 0; i < n; i++) {
+        final p = Offset(
+          padL + w * (i / (n - 1)),
+          padT + h * (1 - pkSamples[i]),
+        );
+        i == 0 ? stroke.moveTo(p.dx, p.dy) : stroke.lineTo(p.dx, p.dy);
+      }
+      canvas.drawPath(
+        stroke,
+        Paint()
+          ..color = AppTheme.accentDeep.withValues(alpha: 0.6)
+          ..strokeWidth = 1
+          ..style = PaintingStyle.stroke,
+      );
+    }
+
+    // Thin peptide/ancillary activity strips along the bottom.
+    for (var li = 0; li < lanes.length; li++) {
+      final (color, samples) = lanes[li];
+      if (samples.length < 2) continue;
+      final n = samples.length;
+      final y = padT + h - 2 - li * 5.0;
+      final segW = w / (n - 1);
+      for (var i = 0; i < n - 1; i++) {
+        final a = (samples[i] + samples[i + 1]) / 2;
+        if (a <= 0.02) continue;
+        canvas.drawRect(
+          Rect.fromLTWH(padL + segW * i, y - 1.5, segW + 0.5, 3),
+          Paint()..color = color.withValues(alpha: 0.12 + 0.68 * a),
+        );
       }
     }
 
@@ -403,5 +546,8 @@ class _TrendPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _TrendPainter old) => old.history != history;
+  bool shouldRepaint(covariant _TrendPainter old) =>
+      old.history != history ||
+      old.pkSamples != pkSamples ||
+      old.lanes != lanes;
 }

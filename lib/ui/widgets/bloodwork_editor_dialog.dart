@@ -2,20 +2,19 @@ import 'package:flutter/material.dart';
 import '../../models.dart';
 import '../../utils.dart';
 import '../theme.dart';
+import 'lab_primitives.dart';
 
 /// What the dialog pops with: a saved entry, or a delete request.
 class BloodworkDialogResult {
   final BloodworkEntry? entry;
   final bool delete;
   const BloodworkDialogResult.saved(this.entry) : delete = false;
-  const BloodworkDialogResult.deleted()
-      : entry = null,
-        delete = true;
+  const BloodworkDialogResult.deleted() : entry = null, delete = true;
 }
 
-/// Create/edit dialog for a lab result (F6). Owns its text controllers so
-/// they outlive the route's exit animation (disposing them in the caller
-/// right after showDialog returns crashes the framework mid-transition).
+/// Create/edit dialog for a lab result (F6), styled like the compound
+/// editor (LabField inputs, sharp-cornered Dialog, bordered actions).
+/// Owns its text controllers so they outlive the route's exit animation.
 class BloodworkEditorDialog extends StatefulWidget {
   final BloodworkEntry? editing;
 
@@ -33,12 +32,15 @@ class BloodworkEditorDialog extends StatefulWidget {
 }
 
 class _BloodworkEditorDialogState extends State<BloodworkEditorDialog> {
-  late final TextEditingController _marker =
-      TextEditingController(text: widget.editing?.marker ?? '');
+  late final TextEditingController _marker = TextEditingController(
+    text: widget.editing?.marker ?? '',
+  );
   late final TextEditingController _value = TextEditingController(
-      text: widget.editing != null ? _fmt(widget.editing!.value) : '');
-  late final TextEditingController _unit =
-      TextEditingController(text: widget.editing?.unit ?? '');
+    text: widget.editing != null ? _fmt(widget.editing!.value) : '',
+  );
+  late final TextEditingController _unit = TextEditingController(
+    text: widget.editing?.unit ?? '',
+  );
   late DateTime _date = widget.editing?.date ?? DateTime.now();
 
   static String _fmt(double v) =>
@@ -56,18 +58,26 @@ class _BloodworkEditorDialogState extends State<BloodworkEditorDialog> {
       _marker.text.trim().isNotEmpty &&
       (parseFlexibleDouble(_value.text) ?? 0) > 0;
 
-  InputDecoration _deco(String label) => InputDecoration(
-        labelText: label,
-        labelStyle: AppTheme.sans(size: 11, color: AppTheme.fgDim),
-        enabledBorder: const UnderlineInputBorder(
-            borderSide: BorderSide(color: AppTheme.border)),
-        focusedBorder: const UnderlineInputBorder(
-            borderSide: BorderSide(color: AppTheme.accent)),
-      );
+  static const _fieldDecoration = InputDecoration(
+    isDense: true,
+    border: InputBorder.none,
+    contentPadding: EdgeInsets.zero,
+  );
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 1)),
+    );
+    if (picked != null) setState(() => _date = picked);
+  }
 
   void _save() {
     final entry = BloodworkEntry(
-      id: widget.editing?.id ??
+      id:
+          widget.editing?.id ??
           DateTime.now().millisecondsSinceEpoch.toString(),
       date: DateTime(_date.year, _date.month, _date.day),
       marker: _marker.text.trim(),
@@ -78,117 +88,168 @@ class _BloodworkEditorDialogState extends State<BloodworkEditorDialog> {
     Navigator.of(context).pop(BloodworkDialogResult.saved(entry));
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: AppTheme.surface2,
-      title: Text(widget.editing == null ? 'Add lab result' : 'Edit lab result',
-          style: AppTheme.sans(size: 14, weight: FontWeight.w600, color: AppTheme.fg)),
-      content: SizedBox(
-        width: 320,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (final e in widget.markerSuggestions.entries)
-                  GestureDetector(
-                    onTap: () => setState(() {
-                      _marker.text = e.key;
-                      if (_unit.text.trim().isEmpty) _unit.text = e.value;
-                    }),
-                    child: Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                          border: Border.all(
-                              color: _marker.text == e.key
-                                  ? AppTheme.accentDeep
-                                  : AppTheme.border,
-                              width: 1)),
-                      child: Text(e.key,
-                          style: AppTheme.sans(
-                              size: 10,
-                              color: _marker.text == e.key
-                                  ? AppTheme.accent
-                                  : AppTheme.fgMute)),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _marker,
-              onChanged: (_) => setState(() {}),
-              style: AppTheme.sans(size: 13, color: AppTheme.fg),
-              decoration: _deco('Marker'),
-            ),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _value,
-                    onChanged: (_) => setState(() {}),
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    style: AppTheme.mono(size: 13, color: AppTheme.fg),
-                    decoration: _deco('Value'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: _unit,
-                    style: AppTheme.sans(size: 13, color: AppTheme.fg),
-                    decoration: _deco('Unit'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            GestureDetector(
-              onTap: () async {
-                final picked = await showDatePicker(
-                  context: context,
-                  initialDate: _date,
-                  firstDate: DateTime(2020),
-                  lastDate: DateTime.now().add(const Duration(days: 1)),
-                );
-                if (picked != null) setState(() => _date = picked);
-              },
-              child: Text(
-                'Drawn: ${formatDate(_date, 'yyyy-MM-dd')}  (tap to change)',
-                style: AppTheme.sans(size: 12, color: AppTheme.accent),
-              ),
-            ),
-          ],
+  Widget _button(
+    String label, {
+    required Color color,
+    bool filled = false,
+    VoidCallback? onTap,
+  }) {
+    final enabled = onTap != null;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: filled && enabled ? color : Colors.transparent,
+          border: Border.all(
+            color: enabled ? color : AppTheme.border,
+            width: 1,
+          ),
+        ),
+        child: Text(
+          label,
+          style: AppTheme.sans(
+            size: 12,
+            weight: FontWeight.w600,
+            letterSpacing: 0.2,
+            color: !enabled
+                ? AppTheme.fgDim
+                : filled
+                ? AppTheme.bg
+                : color,
+          ),
         ),
       ),
-      actions: [
-        if (widget.editing != null)
-          TextButton(
-            onPressed: () => Navigator.of(context)
-                .pop(const BloodworkDialogResult.deleted()),
-            child: Text('Delete',
-                style: AppTheme.sans(size: 12, color: AppTheme.warn)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.surface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+      shape: const RoundedRectangleBorder(
+        side: BorderSide(color: AppTheme.border, width: 1),
+        borderRadius: BorderRadius.zero,
+      ),
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                widget.editing == null ? 'Add lab result' : 'Edit lab result',
+                style: AppTheme.serif(
+                  size: 20,
+                  weight: FontWeight.w500,
+                  color: AppTheme.fg,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final e in widget.markerSuggestions.entries)
+                    LabPill(
+                      label: e.key,
+                      active: _marker.text == e.key,
+                      onTap: () => setState(() {
+                        _marker.text = e.key;
+                        if (_unit.text.trim().isEmpty) _unit.text = e.value;
+                      }),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              LabField(
+                label: 'Marker',
+                child: TextField(
+                  key: const Key('bloodwork-marker'),
+                  controller: _marker,
+                  onChanged: (_) => setState(() {}),
+                  style: AppTheme.serif(
+                    size: 18,
+                    weight: FontWeight.w500,
+                    color: AppTheme.fg,
+                  ),
+                  decoration: _fieldDecoration,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: LabField(
+                      label: 'Value',
+                      child: TextField(
+                        key: const Key('bloodwork-value'),
+                        controller: _value,
+                        onChanged: (_) => setState(() {}),
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        style: AppTheme.mono(size: 16, color: AppTheme.fg),
+                        decoration: _fieldDecoration,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: LabField(
+                      label: 'Unit',
+                      child: TextField(
+                        key: const Key('bloodwork-unit'),
+                        controller: _unit,
+                        style: AppTheme.sans(size: 14, color: AppTheme.fg),
+                        decoration: _fieldDecoration,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              LabField(
+                label: 'Drawn',
+                hint: 'tap to change',
+                onTap: _pickDate,
+                child: Text(
+                  formatDate(_date, 'yyyy-MM-dd'),
+                  style: AppTheme.mono(size: 14, color: AppTheme.fg),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  if (widget.editing != null)
+                    _button(
+                      'Delete',
+                      color: AppTheme.warn,
+                      onTap: () => Navigator.of(
+                        context,
+                      ).pop(const BloodworkDialogResult.deleted()),
+                    ),
+                  const Spacer(),
+                  _button(
+                    'Cancel',
+                    color: AppTheme.fgMute,
+                    onTap: () => Navigator.of(context).pop(),
+                  ),
+                  const SizedBox(width: 8),
+                  _button(
+                    'Save',
+                    color: AppTheme.accent,
+                    filled: true,
+                    onTap: _canSave ? _save : null,
+                  ),
+                ],
+              ),
+            ],
           ),
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text('Cancel',
-              style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
         ),
-        TextButton(
-          onPressed: _canSave ? _save : null,
-          child: Text('Save',
-              style: AppTheme.sans(
-                  size: 12,
-                  weight: FontWeight.w600,
-                  color: _canSave ? AppTheme.accent : AppTheme.fgDim)),
-        ),
-      ],
+      ),
     );
   }
 }

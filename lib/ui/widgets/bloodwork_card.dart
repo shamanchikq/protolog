@@ -4,9 +4,9 @@ import '../../models.dart';
 import '../theme.dart';
 import 'lab_primitives.dart';
 
-/// Dashboard card (F6): recent lab results, newest first, each with its
-/// change vs the previous draw of the same marker. Rows open the full
-/// bloodwork page via [onTap]; the pill opens the create dialog via [onCreate].
+/// Dashboard card (F6): the latest draw of each marker, most recently drawn
+/// first, with its change vs the previous draw. Older draws live on the
+/// bloodwork page, opened by tapping a row; the pill opens the create dialog.
 class BloodworkCard extends StatelessWidget {
   final List<BloodworkEntry> entries;
   final VoidCallback onCreate;
@@ -44,21 +44,21 @@ class BloodworkCard extends StatelessWidget {
   Widget _delta(BloodworkEntry e) {
     final d = deltaVsPrevious(e, entries);
     if (d == null || d == 0) return const SizedBox.shrink();
+    // Neutral color on purpose: "up" is good for some markers (Total T)
+    // and bad for others (LDL, E2) — the app shouldn't editorialize.
     return Text(
       '${d > 0 ? '↑' : '↓'} ${_fmtValue(d.abs())}',
       textAlign: TextAlign.right,
-      style: AppTheme.mono(
-        size: 10,
-        color: d > 0 ? AppTheme.accent : AppTheme.warn,
-      ),
+      style: AppTheme.mono(size: 10, color: AppTheme.fgMute),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final sorted = List<BloodworkEntry>.from(entries)
-      ..sort((a, b) => b.date.compareTo(a.date));
-    final visible = sorted.take(maxRows).toList();
+    // One row per marker — its latest draw — ordered by draw recency.
+    final visible = [
+      for (final m in distinctMarkers(entries)) historyFor(m, entries).last,
+    ].take(maxRows).toList();
 
     return Container(
       decoration: BoxDecoration(

@@ -14,12 +14,15 @@ void main() {
   ];
 
   Future<void> pump(WidgetTester tester,
-      {void Function(List<BloodworkEntry>)? onChanged, String? initialMarker}) async {
+      {void Function(List<BloodworkEntry>)? onChanged,
+      String? initialMarker,
+      List<Injection> injections = const []}) async {
     await tester.pumpWidget(MaterialApp(
       home: BloodworkPage(
         initialEntries: entries,
         initialMarker: initialMarker,
         markerSuggestions: const {'Total T': 'nmol/L'},
+        injections: injections,
         onChanged: onChanged ?? (_) {},
       ),
     ));
@@ -43,6 +46,35 @@ void main() {
     expect(find.text('120 pmol/L'), findsWidgets);
   });
 
+  testWidgets('PK overlay pill appears with injections and toggles cleanly', (tester) async {
+    const testE = CompoundDefinition(
+      id: 'test_e', base: 'Testosterone', ester: 'Enanthate',
+      type: CompoundType.steroid, graphType: GraphType.curve,
+      halfLife: 4.5, timeToPeak: 1.5, ratio: 0.72,
+      unit: Unit.mg, colorValue: 0xFF5DC59C,
+    );
+    const bpc = CompoundDefinition(
+      id: 'bpc', base: 'BPC-157', ester: 'None',
+      type: CompoundType.peptide, graphType: GraphType.activeWindow,
+      halfLife: 0.2, timeToPeak: 0.05, ratio: 1.0,
+      unit: Unit.mcg, colorValue: 0xFF8FC5A8,
+    );
+    final injections = [
+      Injection(id: 'i1', compoundId: 'test_e',
+          date: DateTime(2026, 6, 10), dosage: 250, snapshot: testE),
+      Injection(id: 'i2', compoundId: 'bpc',
+          date: DateTime(2026, 6, 20), dosage: 250, snapshot: bpc),
+    ];
+    await pump(tester, injections: injections);
+    expect(find.text('PK overlay'), findsOneWidget);
+    await tester.tap(find.text('PK overlay'));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.text('PK overlay')); // toggle back off
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('initialMarker preselects; + Add saves through the dialog and fires onChanged',
       (tester) async {
     List<BloodworkEntry>? changed;
@@ -54,7 +86,7 @@ void main() {
     expect(find.text('Add lab result'), findsOneWidget);
     await tester.tap(find.text('Total T').last); // suggestion chip in dialog
     await tester.pump();
-    await tester.enterText(find.widgetWithText(TextField, 'Value').first, '41');
+    await tester.enterText(find.byKey(const Key('bloodwork-value')), '41');
     await tester.pump();
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();

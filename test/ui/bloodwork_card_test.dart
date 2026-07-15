@@ -19,17 +19,19 @@ void main() {
     ),
   ];
 
-  testWidgets('lists entries newest first with marker, value, unit', (tester) async {
+  testWidgets('lists only the latest draw per marker, with its delta', (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: BloodworkCard(entries: entries, onCreate: () {}, onTap: (_) {}),
       ),
     ));
     expect(find.text('Bloodwork'), findsOneWidget);
-    expect(find.text('Total T'), findsNWidgets(2));
+    // One row per marker — older Total T draw is not listed.
+    expect(find.text('Total T'), findsOneWidget);
     expect(find.text('38.5 nmol/L'), findsOneWidget);
+    expect(find.text('30 nmol/L'), findsNothing);
     expect(find.text('120 pmol/L'), findsOneWidget);
-    // Latest Total T shows its change vs the previous draw.
+    // Latest Total T still shows its change vs the previous draw.
     expect(find.text('↑ 8.5'), findsOneWidget);
   });
 
@@ -56,7 +58,7 @@ void main() {
     ));
     await tester.tap(find.text('+ Add'));
     expect(created, isTrue);
-    await tester.tap(find.text('Total T').first); // newest row first
-    expect(tapped?.id, 'b1');
+    await tester.tap(find.text('Total T')); // one row per marker now
+    expect(tapped?.id, 'b1'); // the latest draw
   });
 }
