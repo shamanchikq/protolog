@@ -52,8 +52,6 @@ State is managed with `setState` + `shared_preferences` (no external state-manag
 - `lib/ui/widgets/` — shared components: `ProtoLogShell`, `LoadHero`, `PKChartCard`, `SwimlaneCard`, `PKGraphPainter`, `BloodworkCard`, `BloodworkEditorDialog`, the `Lab*` primitives, `LibrarySection`, `LibraryRow`.
 - `lib/ui/views/` — full-screen views: `CalendarPage`, `LibraryPage`, `CompoundDetailPage`, `CompoundEditorPage`, `RemindersPage`, `ReminderEditorPage`, `BloodworkPage`, `AddInjectionWizard`.
 
-See [`CLAUDE.md`](CLAUDE.md) for architecture details and conventions.
-
 ## 🧪 Tests
 
 ```
