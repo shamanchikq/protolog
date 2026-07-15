@@ -2,7 +2,7 @@
 
 ProtoLog is a mobile tracking app built with **Flutter** for managing and visualizing protocols for anabolic compounds, peptides, and ancillaries. It estimates active blood-serum levels over time with a pharmacokinetic (PK) plotter based on the Bateman equation.
 
-The interface uses a custom **"Lab Sheet"** design system (near-black surfaces + warm cream paper accents, top-tab navigation with a floating action button) applied across all four screens — **Dashboard, Calendar, Library, and Reminders**.
+The interface uses a custom **"Lab Sheet"** design system (near-black surfaces + warm cream paper accents, top-tab navigation with a floating action button) applied across all screens — **Dashboard, Calendar, Library, Reminders, and Bloodwork**.
 
 ## 🚀 Features
 
@@ -11,19 +11,26 @@ The interface uses a custom **"Lab Sheet"** design system (near-black surfaces +
     - Handles blends like **Sustanon** and **Tri-Tren**.
     - **Dual-axis graphing** — oral steroids scaled separately from injectables.
     - **Peptide / ancillary swimlanes** — active-window saturation bars or simple event markers.
+    - **% of peak / Σ total** chart modes (normalized and cumulative views).
 - **Dose logging**
     - Steroids (injectable/oral), peptides, and ancillaries.
     - Concentration → dose volume calculator; precise date & time.
     - Logging from the Calendar pre-fills the day you have selected.
+    - **Edit logged injections** in place from the Calendar — the frozen PK snapshot stays put, only the log entry changes.
 - **Compound library**
     - Pre-loaded compounds with accurate half-lives and ester weights.
     - Create custom compounds, or **edit built-ins** — behind a caution banner, with reset-to-default and an option to retroactively rewrite past logs.
+- **Bloodwork**
+    - Log lab draws (marker, value, unit, date); dashboard card shows the latest draw per marker.
+    - Full trend page per marker, with an optional **PK overlay** — each compound's modeled activity drawn as its own curve, in its library color, behind the trend line.
 - **Reminders**
     - **Interval** schedules (including fractional, e.g. every 3.5 days) anchored to a first dose, or **custom weekday** schedules.
     - Per-reminder state — **Overdue / Due / On / Paused** — with a next-dose estimate and a 7-day agenda strip.
     - **Log now / Skip** row actions; logging a dose can advance the matching reminder automatically.
-    - Local notifications via `flutter_local_notifications` (timezone-aware).
-- **Local persistence** — history, custom library, and reminders are saved on-device with `shared_preferences`.
+    - Local notifications via `flutter_local_notifications` (timezone-aware, exact alarms where permitted), with **Log / Skip actions right on the notification**.
+- **Backup & restore**
+    - Export the full local dataset (compounds, injections, reminders, bloodwork) to a file via the share sheet; restore additively from a backup — never deletes existing data.
+- **Local persistence** — history, custom library, reminders, and bloodwork are saved on-device with `shared_preferences`.
 
 ## 🛠️ Project Structure
 
@@ -39,9 +46,11 @@ State is managed with `setState` + `shared_preferences` (no external state-manag
     - `library_stats.dart` — catalog, protocol, and display helpers.
     - `compound_edits.dart` — retroactive snapshot rewrite for edited compounds.
     - `reminder_schedule.dart` — next occurrence, state, advance, schedule formatting, week agenda.
+    - `bloodwork_stats.dart` — per-marker history and delta helpers.
+    - `backup.dart` — versioned backup envelope: encode / decode / additive merge.
 - `lib/ui/theme.dart` — "Lab Sheet" design tokens (palette, fonts, per-compound colors).
-- `lib/ui/widgets/` — shared components: `ProtoLogShell`, `LoadHero`, `PKChartCard`, `SwimlaneCard`, `PKGraphPainter`, the `Lab*` primitives, `LibrarySection`, `LibraryRow`.
-- `lib/ui/views/` — full-screen views: `CalendarPage`, `LibraryPage`, `CompoundDetailPage`, `CompoundEditorPage`, `RemindersPage`, `ReminderEditorPage`, `AddInjectionWizard`.
+- `lib/ui/widgets/` — shared components: `ProtoLogShell`, `LoadHero`, `PKChartCard`, `SwimlaneCard`, `PKGraphPainter`, `BloodworkCard`, `BloodworkEditorDialog`, the `Lab*` primitives, `LibrarySection`, `LibraryRow`.
+- `lib/ui/views/` — full-screen views: `CalendarPage`, `LibraryPage`, `CompoundDetailPage`, `CompoundEditorPage`, `RemindersPage`, `ReminderEditorPage`, `BloodworkPage`, `AddInjectionWizard`.
 
 See [`CLAUDE.md`](CLAUDE.md) for architecture details and conventions.
 
@@ -75,12 +84,17 @@ The `test/engine/` suites cover the engine layer; the views have lightweight wid
     flutter run --release
     ```
 
+## 📦 Releases
+
+Signed Android APKs are published under [GitHub Releases](https://github.com/shamanchikq/protolog/releases). Download the latest `protolog-*.apk` and sideload it (Android will prompt to allow installs from your browser/file manager if this is the first ProtoLog install from outside a store).
+
 ## 📱 Dependencies
 
 - `flutter`: SDK
 - `shared_preferences`: local storage for persistence.
-- `flutter_local_notifications` + `timezone`: scheduled, timezone-aware dose reminders.
-- `google_fonts`: Inter / Fraunces / JetBrains Mono for the "Lab Sheet" UI.
+- `flutter_local_notifications` + `timezone` + `flutter_timezone`: scheduled, timezone-aware dose reminders with local timezone detection.
+- `share_plus` + `file_selector` + `path_provider`: backup export (share sheet) and restore (file picker).
+- Inter / Fraunces / JetBrains Mono are **bundled as static font assets** under `assets/fonts/` (no `google_fonts` dependency).
 - `flutter_launcher_icons`: (dev) app icon generation.
 
 ## 🎨 Customization
