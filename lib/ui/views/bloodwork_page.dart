@@ -107,15 +107,20 @@ class _BloodworkPageState extends State<BloodworkPage> {
         : <BloodworkEntry>[];
     final unit = history.isNotEmpty ? history.last.unit : '';
 
-    // Optional PK overlay: modeled injectable load (normalized to its own
-    // peak — no unit mapping implied) plus thin peptide/ancillary activity
-    // lanes, sampled across exactly the trend's time window.
+    // Optional PK overlay: per-compound modeled curves like the main PK
+    // chart, normalized to the tallest curve's peak (shared scale — no unit
+    // mapping onto the marker axis implied), plus thin peptide/ancillary
+    // activity lanes. Sampled across exactly the trend's time window.
     final canOverlay = widget.injections.isNotEmpty && history.length >= 2;
-    List<double> pkSamples = const [];
+    List<(Color, List<double>)> pkCurves = const [];
     List<(Color, List<double>)> pkLanes = const [];
     if (_showPk && canOverlay) {
       final winStart = history.first.date;
       final winEnd = history.last.date;
+      Color colorFor(String base) =>
+          widget.colorResolver?.call(base) ??
+          AppTheme.compoundColor(base) ??
+          const Color(0xFF9AA0A8);
       List<double> normalized(List<double> raw) {
         var m = 0.0;
         for (final v in raw) {
@@ -124,18 +129,34 @@ class _BloodworkPageState extends State<BloodworkPage> {
         return m > 0 ? [for (final v in raw) v / m] : const [];
       }
 
-      pkSamples = normalized(
-        sampleLaneIntensity(
-          injections: [
-            for (final i in widget.injections)
-              if (i.snapshot.type == CompoundType.steroid ||
-                  i.snapshot.type == CompoundType.oral)
-                i,
-          ],
+      // One curve per injectable base, all scaled against the same max so
+      // relative magnitudes stay honest.
+      final injByBase = <String, List<Injection>>{};
+      for (final i in widget.injections) {
+        if (i.snapshot.type == CompoundType.steroid ||
+            i.snapshot.type == CompoundType.oral) {
+          injByBase.putIfAbsent(i.snapshot.base, () => []).add(i);
+        }
+      }
+      final rawByBase = <String, List<double>>{};
+      var globalMax = 0.0;
+      for (final e in injByBase.entries) {
+        final raw = sampleLaneIntensity(
+          injections: e.value,
           windowStart: winStart,
           windowEnd: winEnd,
-        ),
-      );
+        );
+        for (final v in raw) {
+          if (v > globalMax) globalMax = v;
+        }
+        rawByBase[e.key] = raw;
+      }
+      if (globalMax > 0) {
+        pkCurves = [
+          for (final e in rawByBase.entries)
+            (colorFor(e.key), [for (final v in e.value) v / globalMax]),
+        ];
+      }
 
       // Up to three peptide/ancillary lanes, most recently dosed first.
       final paByBase = <String, List<Injection>>{};
@@ -160,12 +181,7 @@ class _BloodworkPageState extends State<BloodworkPage> {
           ),
         );
         if (s.isEmpty) continue;
-        lanesTmp.add((
-          widget.colorResolver?.call(base) ??
-              AppTheme.compoundColor(base) ??
-              const Color(0xFF9AA0A8),
-          s,
-        ));
+        lanesTmp.add((colorFor(base), s));
       }
       pkLanes = lanesTmp;
     }
@@ -302,7 +318,7 @@ class _BloodworkPageState extends State<BloodworkPage> {
                                     : CustomPaint(
                                         painter: _TrendPainter(
                                           history: history,
-                                          pkSamples: pkSamples,
+                                          pkCurves: pkCurves,
                                           lanes: pkLanes,
                                         ),
                                       ),
@@ -383,16 +399,16 @@ class _BloodworkPageState extends State<BloodworkPage> {
 }
 
 /// Time-proportional line chart of one marker's history in its own units.
-/// Optionally layers a normalized modeled-injectable-load silhouette and
-/// thin peptide/ancillary activity lanes behind the trend for timing
-/// context (no unit mapping is implied — the silhouette is 0..peak).
+/// Optionally layers per-compound modeled curves (shared 0..1 scale, like
+/// the main PK chart) and thin peptide/ancillary activity lanes behind the
+/// trend for timing context — no unit mapping onto the marker axis implied.
 class _TrendPainter extends CustomPainter {
   final List<BloodworkEntry> history; // oldest first, length >= 2
-  final List<double> pkSamples; // normalized 0..1, empty = overlay off
+  final List<(Color, List<double>)> pkCurves; // normalized, shared scale
   final List<(Color, List<double>)> lanes; // per-base activity strips
   _TrendPainter({
     required this.history,
-    this.pkSamples = const [],
+    this.pkCurves = const [],
     this.lanes = const [],
   });
 
@@ -433,32 +449,33 @@ class _TrendPainter extends CustomPainter {
       }
     }
 
-    // Semi-opaque modeled injectable-load silhouette behind the trend.
-    if (pkSamples.length > 1) {
-      final n = pkSamples.length;
+    // Semi-opaque per-compound modeled curves behind the trend, in each
+    // compound's own color (matching the main PK chart's palette).
+    for (final (color, samples) in pkCurves) {
+      if (samples.length < 2) continue;
+      var peak = 0.0;
+      for (final v in samples) {
+        if (v > peak) peak = v;
+      }
+      if (peak < 0.02) continue; // fully decayed in this window — skip noise
+      final n = samples.length;
       final area = Path()..moveTo(padL, padT + h);
       for (var i = 0; i < n; i++) {
-        area.lineTo(padL + w * (i / (n - 1)), padT + h * (1 - pkSamples[i]));
+        area.lineTo(padL + w * (i / (n - 1)), padT + h * (1 - samples[i]));
       }
       area.lineTo(padL + w, padT + h);
       area.close();
-      canvas.drawPath(
-        area,
-        Paint()..color = AppTheme.accentDeep.withValues(alpha: 0.16),
-      );
+      canvas.drawPath(area, Paint()..color = color.withValues(alpha: 0.08));
       final stroke = Path();
       for (var i = 0; i < n; i++) {
-        final p = Offset(
-          padL + w * (i / (n - 1)),
-          padT + h * (1 - pkSamples[i]),
-        );
+        final p = Offset(padL + w * (i / (n - 1)), padT + h * (1 - samples[i]));
         i == 0 ? stroke.moveTo(p.dx, p.dy) : stroke.lineTo(p.dx, p.dy);
       }
       canvas.drawPath(
         stroke,
         Paint()
-          ..color = AppTheme.accentDeep.withValues(alpha: 0.6)
-          ..strokeWidth = 1
+          ..color = color.withValues(alpha: 0.55)
+          ..strokeWidth = 1.2
           ..style = PaintingStyle.stroke,
       );
     }
@@ -547,7 +564,5 @@ class _TrendPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _TrendPainter old) =>
-      old.history != history ||
-      old.pkSamples != pkSamples ||
-      old.lanes != lanes;
+      old.history != history || old.pkCurves != pkCurves || old.lanes != lanes;
 }
