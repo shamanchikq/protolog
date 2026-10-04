@@ -1,16 +1,89 @@
 import 'package:flutter/material.dart';
 import '../../models.dart';
+import '../format.dart';
 import '../theme.dart';
+import '../widgets/lab_pickers.dart';
 import '../widgets/lab_primitives.dart';
+import '../../engine/calendar.dart';
 import '../../engine/reminder_schedule.dart';
 import '../../engine/library_stats.dart';
+import '../widgets/lab_tap.dart';
+import '../widgets/tap_target.dart';
+
+/// What saving the editor does to the reminder as it is *now*.
+///
+/// The editor saves the copy it was opened with ([opened]) plus the user's
+/// edits ([saved]); meanwhile the reminder may have moved on — a dose logged,
+/// a Skip from the notification shade — and writing [saved] as-is would put
+/// the old anchor / acknowledgement back. So, against [current]:
+///
+/// * the schedule the user left as it was (same mode, interval and first
+///   dose to the minute, or the same day slots) keeps [current]'s
+///   anchorDate and acknowledgedUntil; a changed schedule is a new rhythm
+///   and is taken as saved;
+/// * enabled and the notification seed always come from [current] — the
+///   editor doesn't edit them;
+/// * the compound and schedule fields come from [saved].
+///
+/// [openedAt] is the editor's `now`, which placed a legacy anchor-less
+/// reminder's first dose on that day.
+Reminder applyReminderEdit({
+  required Reminder opened,
+  required Reminder saved,
+  required Reminder current,
+  required DateTime openedAt,
+}) {
+  final keepProgress = _sameSchedule(opened, saved, openedAt);
+  return Reminder(
+    id: current.id,
+    compoundBase: saved.compoundBase,
+    compoundEster: saved.compoundEster,
+    scheduleMode: saved.scheduleMode,
+    intervalDays: saved.intervalDays,
+    hour: saved.hour,
+    minute: saved.minute,
+    customSlots: saved.customSlots,
+    enabled: current.enabled,
+    lastScheduledDate: saved.lastScheduledDate,
+    anchorDate: keepProgress ? (current.anchorDate ?? saved.anchorDate) : saved.anchorDate,
+    acknowledgedUntil: keepProgress ? current.acknowledgedUntil : saved.acknowledgedUntil,
+    notificationSeed: current.notificationSeed ?? saved.notificationSeed,
+  );
+}
+
+/// Whether [saved] has the schedule the editor showed for [opened].
+bool _sameSchedule(Reminder opened, Reminder saved, DateTime openedAt) {
+  if (opened.scheduleMode != saved.scheduleMode) return false;
+  if (saved.scheduleMode == 'custom') {
+    String key(List<ReminderSlot> slots) =>
+        ([for (final s in slots) '${s.weekday}@${s.hour}:${s.minute}']..sort()).join(',');
+    return key(opened.customSlots) == key(saved.customSlots);
+  }
+  if (opened.intervalDays != saved.intervalDays) return false;
+  // The editor shows the anchor to the minute; a legacy reminder without
+  // one starts on the day it was opened (see _ReminderEditorPageState).
+  final a = opened.anchorDate ??
+      DateTime(openedAt.year, openedAt.month, openedAt.day, opened.hour, opened.minute);
+  final b = saved.anchorDate;
+  return b != null &&
+      DateTime(a.year, a.month, a.day, a.hour, a.minute) ==
+          DateTime(b.year, b.month, b.day, b.hour, b.minute);
+}
 
 class ReminderEditorPage extends StatefulWidget {
+  /// The reminder being edited, as it was when the editor opened. Its
+  /// schedule progress may be stale by the time [onSave] fires; the host
+  /// applies the save with [applyReminderEdit].
   final Reminder? editing;
   final List<CompoundDefinition> userCompounds;
   final DateTime now;
   final void Function(Reminder) onSave;
   final VoidCallback? onDelete;
+
+  /// Live base → display color (MainScreen's resolver), so a library recolor
+  /// shows on the picker cards and the chosen-compound chip (B26). Without
+  /// one, the static palette and then the compound's stored color.
+  final Color Function(String base)? colorResolver;
 
   const ReminderEditorPage({
     super.key,
@@ -19,6 +92,7 @@ class ReminderEditorPage extends StatefulWidget {
     required this.onSave,
     this.onDelete,
     required this.now,
+    this.colorResolver,
   });
 
   @override
@@ -50,12 +124,14 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
   @override
   void initState() {
     super.initState();
-    _anchorDay = DateTime(widget.now.year, widget.now.month, widget.now.day);
+    _anchorDay = dateOnly(widget.now);
     final e = widget.editing;
     if (e != null) {
       _base = e.compoundBase;
       _ester = e.compoundEster;
-      _color = AppTheme.compoundColor(e.compoundBase) ?? AppTheme.fgMute;
+      _color = widget.colorResolver?.call(e.compoundBase) ??
+          AppTheme.compoundColor(e.compoundBase) ??
+          AppTheme.fgMute;
       if (e.scheduleMode == 'custom') {
         _mode = 'Custom days';
         for (final s in e.customSlots) {
@@ -66,7 +142,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
         _interval = e.intervalDays;
         final a = e.anchorDate ?? DateTime(widget.now.year, widget.now.month, widget.now.day, e.hour, e.minute);
         _time = TimeOfDay(hour: a.hour, minute: a.minute);
-        _anchorDay = DateTime(a.year, a.month, a.day);
+        _anchorDay = dateOnly(a);
       }
     } else {
       _dayTimes.addAll({1: const TimeOfDay(hour: 8, minute: 0), 3: const TimeOfDay(hour: 8, minute: 0), 5: const TimeOfDay(hour: 8, minute: 0)});
@@ -102,33 +178,35 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.bg,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _header(),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
-                children: [
-                  _label('Compound'),
-                  const SizedBox(height: 8),
-                  _base == null ? _compoundPicker() : _compoundChip(),
-                  const SizedBox(height: 18),
-                  LabSegmented<String>(
-                    value: _mode, options: const ['Interval', 'Custom days'],
-                    labelFor: (s) => s, onChange: (m) => setState(() => _mode = m),
-                  ),
-                  const SizedBox(height: 18),
-                  if (_mode == 'Interval') ..._intervalControls() else ..._customControls(),
-                  if (_base != null) ...[
+      body: TapTargetScope(
+        child: SafeArea(
+          child: Column(
+            children: [
+              _header(),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
+                  children: [
+                    _label('Compound'),
+                    const SizedBox(height: 8),
+                    _base == null ? _compoundPicker() : _compoundChip(),
                     const SizedBox(height: 18),
-                    _preview(),
+                    LabSegmented<String>(
+                      value: _mode, options: const ['Interval', 'Custom days'],
+                      labelFor: (s) => s, onChange: (m) => setState(() => _mode = m),
+                    ),
+                    const SizedBox(height: 18),
+                    if (_mode == 'Interval') ..._intervalControls() else ..._customControls(),
+                    if (_base != null) ...[
+                      const SizedBox(height: 18),
+                      _preview(),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-            _saveBar(),
-          ],
+              _saveBar(),
+            ],
+          ),
         ),
       ),
     );
@@ -147,9 +225,9 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              GestureDetector(
+              LabTap(
+                label: 'Back',
                 onTap: () => Navigator.of(context).pop(),
-                behavior: HitTestBehavior.opaque,
                 child: Container(
                   width: 34, height: 34,
                   decoration: BoxDecoration(border: Border.all(color: AppTheme.border, width: 1)),
@@ -157,9 +235,8 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
                 ),
               ),
               if (_editing && widget.onDelete != null)
-                GestureDetector(
+                LabTap(
                   onTap: _confirmDelete,
-                  behavior: HitTestBehavior.opaque,
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                     decoration: BoxDecoration(border: Border.all(color: AppTheme.warn, width: 1)),
@@ -169,7 +246,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
             ],
           ),
           const SizedBox(height: 12),
-          Text('Reminders · ${_editing ? 'edit' : 'new'}', style: AppTheme.sans(size: 11, color: AppTheme.fgDim)),
+          Text('Reminders · ${_editing ? 'edit' : 'new'}', style: AppTheme.sans(size: 11, color: AppTheme.fgDimText)),
           const SizedBox(height: 3),
           Text(_editing ? 'Edit reminder' : 'New reminder', style: AppTheme.serif(size: 24, weight: FontWeight.w500, letterSpacing: -0.5)),
         ],
@@ -177,60 +254,59 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
     );
   }
 
-  Widget _label(String s) => Text(s.toUpperCase(), style: AppTheme.sans(size: 9.5, color: AppTheme.fgDim, letterSpacing: 0.9));
+  Widget _label(String s) => Text(s.toUpperCase(), style: AppTheme.sans(size: 9.5, color: AppTheme.fgDimText, letterSpacing: 0.9));
 
   // ---- compound picker ----
-  List<CompoundDefinition> _catalogFor(String cat) {
+  // The catalogue is cataloguedCompounds (same set and order as the Library
+  // and wizard); the picker only groups it, one card per base, with a
+  // steroid base's esters behind a drill-down.
+  List<CompoundDefinition> _catalogFor(String cat, List<CompoundDefinition> catalogue) {
     final type = switch (cat) {
       'Injectable' => CompoundType.steroid,
       'Oral' => CompoundType.oral,
       'Peptide' => CompoundType.peptide,
       _ => CompoundType.ancillary,
     };
-    final all = cataloguedCompounds(userCompounds: widget.userCompounds).where((c) => c.type == type).toList();
-    if (type == CompoundType.steroid && _drillBase == null) {
-      final byBase = <String, CompoundDefinition>{};
-      for (final c in all) {
-        byBase.putIfAbsent(c.base, () => c);
-      }
-      return byBase.values.toList();
-    }
+    final ofType = catalogue.where((c) => c.type == type);
     if (type == CompoundType.steroid && _drillBase != null) {
-      return all.where((c) => c.base == _drillBase).toList();
+      return ofType.where((c) => c.base == _drillBase).toList();
     }
     final byBase = <String, CompoundDefinition>{};
-    for (final c in all) {
+    for (final c in ofType) {
       byBase.putIfAbsent(c.base, () => c);
     }
     return byBase.values.toList();
   }
 
-  int _esterCount(String base) =>
-      cataloguedCompounds(userCompounds: widget.userCompounds)
-          .where((c) => c.type == CompoundType.steroid && c.base == base)
-          .map((c) => c.ester)
-          .toSet()
-          .length;
+  static int _esterCount(String base, List<CompoundDefinition> catalogue) => catalogue
+      .where((c) => c.type == CompoundType.steroid && c.base == base)
+      .map((c) => c.ester)
+      .toSet()
+      .length;
+
+  Color _colorOf(CompoundDefinition c) =>
+      widget.colorResolver?.call(c.base) ?? AppTheme.compoundColor(c.base) ?? Color(c.colorValue);
 
   void _select(CompoundDefinition c) {
     setState(() {
       _base = c.base;
       _ester = c.ester;
-      _color = AppTheme.compoundColor(c.base) ?? Color(c.colorValue);
+      _color = _colorOf(c);
       _drillBase = null;
     });
   }
 
   Widget _compoundPicker() {
+    final catalogue = cataloguedCompounds(userCompounds: widget.userCompounds);
     if (_drillBase != null) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              GestureDetector(
+              LabTap(
+                label: 'Back to all injectables',
                 onTap: () => setState(() => _drillBase = null),
-                behavior: HitTestBehavior.opaque,
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                   decoration: BoxDecoration(border: Border.all(color: AppTheme.border, width: 1)),
@@ -246,17 +322,16 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
             decoration: BoxDecoration(color: AppTheme.surface, border: Border.all(color: AppTheme.border, width: 1)),
             child: Column(
               children: [
-                for (final c in _catalogFor('Injectable'))
-                  GestureDetector(
+                for (final c in _catalogFor('Injectable', catalogue))
+                  LabTap(
                     onTap: () => _select(c),
-                    behavior: HitTestBehavior.opaque,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(c.ester, style: AppTheme.sans(size: 13, weight: FontWeight.w500)),
-                          Text('›', style: AppTheme.sans(size: 16, color: AppTheme.fgDim)),
+                          ExcludeSemantics(child: Text('›', style: AppTheme.sans(size: 16, color: AppTheme.fgDim))),
                         ],
                       ),
                     ),
@@ -269,7 +344,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
     }
 
     const cats = ['Injectable', 'Oral', 'Peptide', 'Ancillary'];
-    final items = _catalogFor(_cat);
+    final items = _catalogFor(_cat, catalogue);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -285,26 +360,53 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
           ),
         ),
         const SizedBox(height: 12),
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 3,
-          mainAxisSpacing: 8,
-          crossAxisSpacing: 8,
-          childAspectRatio: 1.45,
-          children: [
-            for (final c in items) _pickerCard(c),
-          ],
-        ),
+        _pickerGrid(items, catalogue),
       ],
     );
   }
 
-  Widget _pickerCard(CompoundDefinition c) {
+  /// Three cards per row. The original 1.45 aspect ratio is only a minimum:
+  /// a row grows to fit large text or a wrapped name instead of overflowing
+  /// a fixed-ratio grid cell (C1).
+  Widget _pickerGrid(List<CompoundDefinition> items, List<CompoundDefinition> catalogue) {
+    const columns = 3;
+    const gap = 8.0;
+    return LayoutBuilder(builder: (context, constraints) {
+      final minHeight = (constraints.maxWidth - gap * (columns - 1)) / columns / 1.45;
+      return Column(
+        children: [
+          for (var i = 0; i < items.length; i += columns) ...[
+            if (i > 0) const SizedBox(height: gap),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var j = i; j < i + columns; j++) ...[
+                    if (j > i) const SizedBox(width: gap),
+                    Expanded(
+                      child: j < items.length
+                          ? ConstrainedBox(
+                              constraints: BoxConstraints(minHeight: minHeight),
+                              child: _pickerCard(items[j], catalogue),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      );
+    });
+  }
+
+  Widget _pickerCard(CompoundDefinition c, List<CompoundDefinition> catalogue) {
     final isInjectable = c.type == CompoundType.steroid;
-    final multi = isInjectable && _drillBase == null && _esterCount(c.base) > 1;
-    final color = AppTheme.compoundColor(c.base) ?? Color(c.colorValue);
-    return GestureDetector(
+    final esters = isInjectable ? _esterCount(c.base, catalogue) : 1;
+    final multi = isInjectable && _drillBase == null && esters > 1;
+    final color = _colorOf(c);
+    return LabTap(
       onTap: () {
         if (multi) {
           setState(() => _drillBase = c.base);
@@ -312,7 +414,6 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
           _select(c);
         }
       },
-      behavior: HitTestBehavior.opaque,
       child: Container(
         padding: const EdgeInsets.fromLTRB(12, 11, 12, 12),
         decoration: BoxDecoration(
@@ -331,7 +432,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
             Text(isInjectable && _drillBase == null ? c.base : (isInjectable ? c.ester : c.base),
                 style: AppTheme.sans(size: 12.5, weight: FontWeight.w600, height: 1.15)),
             Text(
-              multi ? '${_esterCount(c.base)} esters ›' : (isInjectable ? c.ester : c.type.name),
+              multi ? '$esters esters ›' : (isInjectable ? c.ester : c.type.name),
               style: AppTheme.sans(size: 10, color: AppTheme.fgMute),
             ),
           ],
@@ -361,9 +462,9 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
               style: AppTheme.sans(size: 14, weight: FontWeight.w600, letterSpacing: -0.2),
             ),
           ),
-          GestureDetector(
+          LabTap(
+            label: 'Change compound',
             onTap: () => setState(() { _base = null; _ester = null; _drillBase = null; }),
-            behavior: HitTestBehavior.opaque,
             child: Text('Change', style: AppTheme.sans(size: 11, color: AppTheme.accent)),
           ),
         ],
@@ -382,7 +483,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
         decoration: BoxDecoration(color: AppTheme.surface, border: Border.all(color: AppTheme.border, width: 1)),
         child: Row(
           children: [
-            _stepBtn('−', () => setState(() => _interval = (_interval - 0.5).clamp(0.5, 90))),
+            _stepBtn('−', 'Shorter interval', () => setState(() => _interval = (_interval - 0.5).clamp(0.5, 90))),
             Expanded(
               child: Center(
                 child: Row(
@@ -397,7 +498,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
                 ),
               ),
             ),
-            _stepBtn('+', () => setState(() => _interval = (_interval + 0.5).clamp(0.5, 90))),
+            _stepBtn('+', 'Longer interval', () => setState(() => _interval = (_interval + 0.5).clamp(0.5, 90))),
           ],
         ),
       ),
@@ -409,7 +510,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
             child: LabField(
               label: 'Time',
               onTap: _pickIntervalTime,
-              child: Text(_time.format(context), style: AppTheme.mono(size: 16, weight: FontWeight.w500)),
+              child: Text(formatHourMinute(_time.hour, _time.minute), style: AppTheme.mono(size: 16, weight: FontWeight.w500)),
             ),
           ),
           const SizedBox(width: 10),
@@ -420,9 +521,18 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  GestureDetector(onTap: () => setState(() => _anchorDay = _anchorDay.subtract(const Duration(days: 1))), child: Text('‹', style: AppTheme.sans(size: 16, color: AppTheme.fgMute))),
+                  // Calendar days: a 24 h step loses or skips a date at DST.
+                  LabTap(
+                    onTap: () => setState(() => _anchorDay = addCalendarDays(_anchorDay, -1)),
+                    label: 'First dose a day earlier',
+                    child: Text('‹', style: AppTheme.sans(size: 16, color: AppTheme.fgMute)),
+                  ),
                   Expanded(child: Center(child: Text(relativeDayLabel(_anchorDay, widget.now), style: AppTheme.sans(size: 13, weight: FontWeight.w500)))),
-                  GestureDetector(onTap: () => setState(() => _anchorDay = _anchorDay.add(const Duration(days: 1))), child: Text('›', style: AppTheme.sans(size: 16, color: AppTheme.fgMute))),
+                  LabTap(
+                    onTap: () => setState(() => _anchorDay = addCalendarDays(_anchorDay, 1)),
+                    label: 'First dose a day later',
+                    child: Text('›', style: AppTheme.sans(size: 16, color: AppTheme.fgMute)),
+                  ),
                 ],
               ),
             ),
@@ -432,9 +542,9 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
     ];
   }
 
-  Widget _stepBtn(String s, VoidCallback onTap) => GestureDetector(
+  Widget _stepBtn(String s, String label, VoidCallback onTap) => LabTap(
+        label: label,
         onTap: onTap,
-        behavior: HitTestBehavior.opaque,
         child: Container(
           width: 46,
           color: AppTheme.surface2,
@@ -442,64 +552,23 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
         ),
       );
 
+  /// The Lab Sheet picker with a 24-hour dial, matching how times read.
+  static Widget _picker24h(BuildContext ctx, Widget? child) => MediaQuery(
+        data: MediaQuery.of(ctx).copyWith(alwaysUse24HourFormat: true),
+        child: labPickerTheme(child!),
+      );
+
   Future<void> _pickIntervalTime() async {
     final t = await showTimePicker(
       context: context,
       initialTime: _time,
-      builder: (ctx, child) => _themedPickerWrapper(child!),
+      builder: _picker24h,
     );
-    if (t != null) setState(() => _time = t);
-  }
-
-  /// Wraps the Material time picker in the "Lab Sheet" theme (near-black
-  /// surfaces, mint accent, sharp corners) — mirrors the add-injection wizard.
-  Widget _themedPickerWrapper(Widget child) {
-    return Theme(
-      data: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: AppTheme.bg,
-        colorScheme: const ColorScheme.dark(
-          primary: AppTheme.accent,
-          onPrimary: AppTheme.bg,
-          surface: AppTheme.surface,
-          onSurface: AppTheme.fg,
-          surfaceContainerHighest: AppTheme.surface2,
-          outline: AppTheme.border,
-          secondary: AppTheme.accent,
-          onSecondary: AppTheme.bg,
-          error: AppTheme.warn,
-        ),
-        dialogTheme: const DialogThemeData(
-          backgroundColor: AppTheme.surface,
-          surfaceTintColor: Colors.transparent,
-          shape: RoundedRectangleBorder(),
-        ),
-        timePickerTheme: const TimePickerThemeData(
-          backgroundColor: AppTheme.surface,
-          dialBackgroundColor: AppTheme.surface2,
-          dialHandColor: AppTheme.accent,
-          dialTextColor: AppTheme.fg,
-          hourMinuteColor: AppTheme.surface2,
-          hourMinuteTextColor: AppTheme.fg,
-          dayPeriodColor: AppTheme.surface2,
-          dayPeriodTextColor: AppTheme.fg,
-          shape: RoundedRectangleBorder(),
-          hourMinuteShape: RoundedRectangleBorder(),
-          entryModeIconColor: AppTheme.fgMute,
-        ),
-        textButtonTheme: TextButtonThemeData(
-          style: TextButton.styleFrom(
-            foregroundColor: AppTheme.accent,
-            textStyle: AppTheme.sans(size: 13, weight: FontWeight.w600),
-          ),
-        ),
-      ),
-      child: child,
-    );
+    if (t != null && mounted) setState(() => _time = t);
   }
 
   // ---- custom controls ----
   List<Widget> _customControls() {
-    const wd = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
     return [
       _label('Days'),
       const SizedBox(height: 8),
@@ -517,7 +586,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
         children: [
           for (var i = 0; i < 7; i++) ...[
             if (i > 0) const SizedBox(width: 5),
-            Expanded(child: _dayToggle(i + 1, wd[i])),
+            Expanded(child: _dayToggle(i + 1, weekdayLetter(i + 1))),
           ],
         ],
       ),
@@ -548,7 +617,9 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
 
   Widget _dayToggle(int weekday, String letter) {
     final on = _dayTimes.containsKey(weekday);
-    return GestureDetector(
+    return LabTap(
+      selected: on,
+      label: weekdaysLong[weekday - 1],
       onTap: () => setState(() {
         if (on) {
           _dayTimes.remove(weekday);
@@ -556,7 +627,6 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
           _dayTimes[weekday] = const TimeOfDay(hour: 8, minute: 0);
         }
       }),
-      behavior: HitTestBehavior.opaque,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 11),
         decoration: BoxDecoration(
@@ -569,29 +639,29 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
   }
 
   Widget _dayTimeRow(int weekday) {
-    const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     final t = _dayTimes[weekday]!;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       child: Row(
         children: [
-          SizedBox(width: 44, child: Text(names[weekday - 1], style: AppTheme.sans(size: 12.5, weight: FontWeight.w500))),
+          SizedBox(width: 44, child: Text(weekdaysShort[weekday - 1], style: AppTheme.sans(size: 12.5, weight: FontWeight.w500))),
           const SizedBox(width: 12),
           Expanded(
-            child: GestureDetector(
+            child: LabTap(
+              key: ValueKey('slot-time-$weekday'),
+              label: '${weekdaysLong[weekday - 1]} time, ${formatHourMinute(t.hour, t.minute)}',
               onTap: () async {
                 final picked = await showTimePicker(
                   context: context,
                   initialTime: t,
-                  builder: (ctx, child) => _themedPickerWrapper(child!),
+                  builder: _picker24h,
                 );
-                if (picked != null) setState(() => _dayTimes[weekday] = picked);
+                if (picked != null && mounted) setState(() => _dayTimes[weekday] = picked);
               },
-              behavior: HitTestBehavior.opaque,
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(border: Border.all(color: AppTheme.border, width: 1)),
-                child: Text(t.format(context), style: AppTheme.mono(size: 13, weight: FontWeight.w500)),
+                child: Text(formatHourMinute(t.hour, t.minute), style: AppTheme.mono(size: 13, weight: FontWeight.w500)),
               ),
             ),
           ),
@@ -609,9 +679,9 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
       ReminderState.overdue => (AppTheme.warn, 'Overdue'),
       ReminderState.due => (AppTheme.warm, 'Due'),
       ReminderState.on => (AppTheme.accent, 'On'),
-      ReminderState.paused => (AppTheme.fgDim, 'Paused'),
+      ReminderState.paused => (AppTheme.fgDimText, 'Paused'),
     };
-    final doseLabel = '${relativeDayLabel(dose, widget.now)} · ${dose.hour.toString().padLeft(2, '0')}:${dose.minute.toString().padLeft(2, '0')}';
+    final doseLabel = '${relativeDayLabel(dose, widget.now)} · ${formatHourMinute(dose.hour, dose.minute)}';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(color: AppTheme.surface, border: Border.all(color: AppTheme.border, width: 1)),
@@ -643,14 +713,13 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
         color: AppTheme.surface,
         border: Border(top: BorderSide(color: AppTheme.border, width: 1)),
       ),
-      child: GestureDetector(
+      child: LabTap(
         onTap: _canSave
             ? () {
                 widget.onSave(_buildReminder());
                 Navigator.of(context).pop();
               }
             : null,
-        behavior: HitTestBehavior.opaque,
         child: Opacity(
           opacity: _canSave ? 1 : 0.75,
           child: Container(

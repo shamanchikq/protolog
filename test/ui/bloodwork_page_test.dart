@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:protolog_tracker/models.dart';
+import 'package:protolog_tracker/ui/theme.dart';
 import 'package:protolog_tracker/ui/views/bloodwork_page.dart';
 
 BloodworkEntry _e(String id, String marker, DateTime date, double value, String unit) =>
@@ -39,6 +40,70 @@ void main() {
     expect(find.textContaining('↑ 8.5'), findsOneWidget); // 38.5 vs 30
   });
 
+  testWidgets('history deltas have no float noise (B32)', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: BloodworkPage(
+        initialEntries: [
+          _e('a', 'Total T', DateTime(2026, 5, 1), 37.9, 'nmol/L'),
+          _e('b', 'Total T', DateTime(2026, 6, 1), 32.1, 'nmol/L'),
+          _e('c', 'Total T', DateTime(2026, 7, 1), 32.4, 'nmol/L'),
+        ],
+        onChanged: (_) {},
+      ),
+    ));
+    expect(find.text('↓ 5.8'), findsOneWidget);
+    expect(find.text('↑ 0.3'), findsOneWidget);
+    expect(find.textContaining('9999'), findsNothing);
+    expect(find.textContaining('0000'), findsNothing);
+  });
+
+  group('mixed units (B34)', () {
+    final mixed = [
+      _e('a', 'Total T', DateTime(2026, 1, 1), 30, 'nmol/L'),
+      _e('b', 'Total T', DateTime(2026, 3, 1), 900, 'ng/dL'),
+      _e('c', 'Total T', DateTime(2026, 5, 1), 35, 'nmol/L'),
+      _e('e1', 'E2', DateTime(2026, 4, 1), 120, 'pmol/L'),
+    ];
+
+    Future<void> pumpMixed(WidgetTester tester) => tester.pumpWidget(
+          MaterialApp(
+            home: BloodworkPage(initialEntries: mixed, onChanged: (_) {}),
+          ),
+        );
+
+    testWidgets('charts the most recent unit and flags the mismatch', (tester) async {
+      await pumpMixed(tester);
+      expect(find.text('Total T  ·  nmol/L'), findsOneWidget);
+      expect(find.textContaining('Mixed units'), findsOneWidget);
+      // Delta only against the same-unit draw (35 vs 30), none for ng/dL.
+      expect(find.text('↑ 5'), findsOneWidget);
+      expect(find.text('↑ 865'), findsNothing);
+      expect(find.text('↓ 865'), findsNothing);
+      // Full history still lists every draw so it can be fixed.
+      expect(find.text('900 ng/dL'), findsOneWidget);
+    });
+
+    testWidgets('unit pills switch the charted unit; marker switch resets it',
+        (tester) async {
+      await pumpMixed(tester);
+      await tester.tap(find.text('ng/dL'));
+      await tester.pump();
+      expect(find.text('Total T  ·  ng/dL'), findsOneWidget);
+      await tester.tap(find.text('E2'));
+      await tester.pump();
+      expect(find.text('E2  ·  pmol/L'), findsOneWidget);
+      expect(find.textContaining('Mixed units'), findsNothing);
+      await tester.tap(find.text('Total T'));
+      await tester.pump();
+      expect(find.text('Total T  ·  nmol/L'), findsOneWidget);
+    });
+
+    testWidgets('a single unit shows no mismatch flag', (tester) async {
+      await pump(tester);
+      expect(find.textContaining('Mixed units'), findsNothing);
+    });
+  });
+
   testWidgets('tapping another marker chip switches the history', (tester) async {
     await pump(tester);
     await tester.tap(find.text('E2'));
@@ -46,7 +111,7 @@ void main() {
     expect(find.text('120 pmol/L'), findsWidgets);
   });
 
-  testWidgets('PK overlay pill appears with injections and toggles cleanly', (tester) async {
+  testWidgets('PK overlay pill appears with injections and toggles the overlay drawing', (tester) async {
     const testE = CompoundDefinition(
       id: 'test_e', base: 'Testosterone', ester: 'Enanthate',
       type: CompoundType.steroid, graphType: GraphType.curve,
@@ -67,12 +132,43 @@ void main() {
     ];
     await pump(tester, injections: injections);
     expect(find.text('PK overlay'), findsOneWidget);
+
+    // The trend chart (Total T, May 1 → Jul 1; both doses fall inside it).
+    final trend = find.byWidgetPredicate(
+        (w) => w is CustomPaint && '${w.painter.runtimeType}' == '_TrendPainter');
+    expect(trend, findsOneWidget);
+    final testColor = AppTheme.compoundColor('Testosterone')!;
+    final bpcColor = AppTheme.compoundColor('BPC-157')!;
+    // Lane strips vary in alpha with activity; compare RGB only.
+    bool isBpcLane(Symbol method, List<dynamic> args) =>
+        method == #drawRect &&
+        ((args[1] as Paint).color.toARGB32() & 0xFFFFFF) == (bpcColor.toARGB32() & 0xFFFFFF);
+
+    // Off: only the warm marker line is stroked — no curve, no lanes.
+    expect(tester.renderObject(trend), paintsExactlyCountTimes(#drawPath, 1));
+    expect(tester.renderObject(trend), paints..path(color: AppTheme.warm));
+    expect(tester.renderObject(trend), paintsExactlyCountTimes(#drawRect, 0));
+
     await tester.tap(find.text('PK overlay'));
     await tester.pump();
     expect(tester.takeException(), isNull);
+    // On: the Testosterone curve (fill + stroke, in its palette color)
+    // behind the marker line, plus BPC-157 activity strips.
+    expect(
+      tester.renderObject(trend),
+      paints
+        ..path(color: testColor.withValues(alpha: 0.08))
+        ..path(color: testColor.withValues(alpha: 0.55))
+        ..path(color: AppTheme.warm),
+    );
+    expect(tester.renderObject(trend), paintsExactlyCountTimes(#drawPath, 3));
+    expect(tester.renderObject(trend), paints..something(isBpcLane));
+
     await tester.tap(find.text('PK overlay')); // toggle back off
     await tester.pump();
     expect(tester.takeException(), isNull);
+    expect(tester.renderObject(trend), paintsExactlyCountTimes(#drawPath, 1));
+    expect(tester.renderObject(trend), paintsExactlyCountTimes(#drawRect, 0));
   });
 
   testWidgets('initialMarker preselects; + Add saves through the dialog and fires onChanged',

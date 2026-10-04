@@ -1,0 +1,14 @@
+# Normalize text to LF in the repo and working tree (the project moved from
+# Windows; CRLF checkouts showed every file as modified).
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.jar binary
+*.jks binary
+*.keystore binary

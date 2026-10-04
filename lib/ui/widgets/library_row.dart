@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme.dart';
+import 'lab_tap.dart';
 
 /// One catalogue/protocol row: colored stripe · name (+custom tag) · meta ·
 /// used-ago (in-protocol section only) · chevron.
@@ -23,9 +24,8 @@ class LibraryRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return LabTap(
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
@@ -74,9 +74,11 @@ class LibraryRow extends StatelessWidget {
                 style: AppTheme.sans(size: 11, color: AppTheme.accent),
               ),
             const SizedBox(width: 14),
-            Text(
-              '›',
-              style: AppTheme.sans(size: 16, color: AppTheme.fgDim),
+            ExcludeSemantics(
+              child: Text(
+                '›',
+                style: AppTheme.sans(size: 16, color: AppTheme.fgDim),
+              ),
             ),
           ],
         ),

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import '../../models.dart';
 import '../../engine/library_stats.dart';
+import '../format.dart';
 import '../theme.dart';
 import '../widgets/lab_primitives.dart';
 import '../widgets/library_section.dart';
 import '../widgets/protolog_shell.dart';
+import '../widgets/lab_tap.dart';
 
 class CompoundDetailPage extends StatefulWidget {
   final CompoundDefinition compound;
@@ -15,8 +17,20 @@ class CompoundDetailPage extends StatefulWidget {
   /// updates its local state when this resolves non-null so the user sees
   /// the new values without leaving the screen.
   final Future<CompoundDefinition?> Function(CompoundDefinition compound) openEditor;
+  /// Called after the user confirms deleting the (custom) compound. The host
+  /// removes it — and its linked reminders, which the confirmation says go
+  /// too — then pops this page.
   final VoidCallback onDelete;
   final void Function(CompoundDefinition compound) onLogInjection;
+
+  /// Reminders for this compound's base+ester, named in the delete
+  /// confirmation.
+  final int linkedReminderCount;
+
+  /// Live base → display color (MainScreen's resolver), consulted on every
+  /// build so a recolor made in the editor shows on return (B26). Without
+  /// one, the static palette and then the compound's stored color.
+  final Color Function(String base)? colorResolver;
 
   const CompoundDetailPage({
     super.key,
@@ -26,6 +40,8 @@ class CompoundDetailPage extends StatefulWidget {
     required this.openEditor,
     required this.onDelete,
     required this.onLogInjection,
+    this.linkedReminderCount = 0,
+    this.colorResolver,
   });
 
   @override
@@ -81,7 +97,7 @@ class _CompoundDetailPageState extends State<CompoundDetailPage> {
                   onDelete: () => _confirmDelete(context),
                 ),
                 const SizedBox(height: 22),
-                _Hero(compound: c),
+                _Hero(compound: c, colorResolver: widget.colorResolver),
                 const SizedBox(height: 24),
                 _PKSection(compound: c),
                 const SizedBox(height: 22),
@@ -111,40 +127,65 @@ class _CompoundDetailPageState extends State<CompoundDetailPage> {
 
   Future<void> _confirmDelete(BuildContext context) async {
     final c = _compound;
-    final count = injectionCountFor(
-      base: c.base, ester: c.ester, injections: widget.injections,
-    );
-    final msg = count == 0
-        ? 'Delete ${displayName(c)}?'
-        : 'Delete ${displayName(c)}? $count injection${count == 1 ? "" : "s"} '
-            'of this compound will keep their logged data but will no longer '
-            'link to a saved definition.';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppTheme.surface2,
-        title: Text('Delete compound',
-            style: AppTheme.sans(size: 14, weight: FontWeight.w600, color: AppTheme.fg)),
-        content: Text(msg,
-            style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text('Cancel',
-                style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text('Delete',
-                style: AppTheme.sans(
-                  size: 12, weight: FontWeight.w600, color: AppTheme.warn,
-                )),
-          ),
-        ],
+    final ok = await confirmDeleteCompound(
+      context,
+      compound: c,
+      logCount: injectionCountFor(
+        base: c.base, ester: c.ester, injections: widget.injections,
       ),
+      linkedReminderCount: widget.linkedReminderCount,
     );
-    if (ok == true) widget.onDelete();
+    if (ok) widget.onDelete();
   }
+}
+
+/// "Delete compound" confirmation shared by the detail page and the Compound
+/// Editor. Says what happens to the compound's [logCount] logs (kept, but
+/// unlinked) and [linkedReminderCount] reminders (removed with it — the host's
+/// delete handler cancels and deletes them). True when the user confirms.
+Future<bool> confirmDeleteCompound(
+  BuildContext context, {
+  required CompoundDefinition compound,
+  required int logCount,
+  int linkedReminderCount = 0,
+}) async {
+  final noun = doseActionNoun(compound.type);
+  final msg = StringBuffer('Delete ${displayName(compound)}?');
+  if (logCount > 0) {
+    msg.write(' $logCount $noun${logCount == 1 ? '' : 's'} of this compound '
+        'will keep their logged data but will no longer link to a saved '
+        'definition.');
+  }
+  if (linkedReminderCount > 0) {
+    msg.write(linkedReminderCount == 1
+        ? ' Its reminder will be removed too.'
+        : ' Its $linkedReminderCount reminders will be removed too.');
+  }
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: AppTheme.surface2,
+      title: Text('Delete compound',
+          style: AppTheme.sans(size: 14, weight: FontWeight.w600, color: AppTheme.fg)),
+      content: Text(msg.toString(),
+          style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: Text('Cancel',
+              style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: Text('Delete',
+              style: AppTheme.sans(
+                size: 12, weight: FontWeight.w600, color: AppTheme.warn,
+              )),
+        ),
+      ],
+    ),
+  );
+  return ok == true;
 }
 
 class _ActionBar extends StatelessWidget {
@@ -166,7 +207,8 @@ class _ActionBar extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        GestureDetector(
+        LabTap(
+          label: 'Back to Library',
           onTap: onBack,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -188,7 +230,7 @@ class _ActionBar extends StatelessWidget {
               isEdited ? 'BUILT-IN · EDITED' : 'BUILT-IN',
               style: AppTheme.sans(
                 size: 10,
-                color: isEdited ? AppTheme.warm : AppTheme.fgDim,
+                color: isEdited ? AppTheme.warm : AppTheme.fgDimText,
                 letterSpacing: 0.8,
               ),
             ),
@@ -202,12 +244,15 @@ class _ActionBar extends StatelessWidget {
 
 class _Hero extends StatelessWidget {
   final CompoundDefinition compound;
-  const _Hero({required this.compound});
+  final Color Function(String base)? colorResolver;
+  const _Hero({required this.compound, this.colorResolver});
 
   @override
   Widget build(BuildContext context) {
     final c = compound;
-    final color = AppTheme.compoundColor(c.base) ?? Color(c.colorValue);
+    final color = colorResolver?.call(c.base) ??
+        AppTheme.compoundColor(c.base) ??
+        Color(c.colorValue);
     final hasEster = c.ester.trim().isNotEmpty && c.ester.toLowerCase() != 'none';
     final typeLabel = _typeUpper(c.type);
     final microlabel = hasEster ? '$typeLabel · ${c.ester.toUpperCase()}' : typeLabel;
@@ -273,9 +318,11 @@ class _PKSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = compound;
     final isEvent = c.graphType == GraphType.event;
-    final hl = isEvent ? '—' : c.halfLife.toStringAsFixed(1);
-    final peak = isEvent ? '—' : c.timeToPeak.toStringAsFixed(1);
-    final yield_ = (c.ratio * 100).round().toString();
+    // formatDose keeps short values readable: t½ 0.05 d was shown as "0.1"
+    // and tmax 0.02 d as "0.0".
+    final hl = isEvent ? '—' : formatDose(c.halfLife);
+    final peak = isEvent ? '—' : formatDose(c.timeToPeak);
+    final yield_ = formatDose(c.ratio * 100);
     return LibrarySection(
       title: 'Pharmacokinetics',
       child: Row(
@@ -331,27 +378,39 @@ class _HistorySection extends StatelessWidget {
     );
   }
 
+  /// Date · site · dose. Date and dose take their natural single-line width
+  /// ("1250 mcg" no longer wraps in a fixed 56 px column); the site fills
+  /// what's left and ellipsizes, so a long site can't squeeze the date (B30).
   Widget _historyRow(Injection inj) {
     final date = _fmtDate(inj.date);
     final site = inj.site ?? '';
-    final dose = '${_fmtDose(inj.dosage)} ${inj.snapshot.unit.name}';
+    final dose = '${formatDose(inj.dosage)} ${inj.snapshot.unit.name}';
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
-          Expanded(
-            child: Text(date, style: AppTheme.sans(size: 12.5, color: AppTheme.fg)),
+          Text(
+            date,
+            maxLines: 1,
+            softWrap: false,
+            style: AppTheme.sans(size: 12.5, color: AppTheme.fg),
           ),
           const SizedBox(width: 14),
-          Text(site, style: AppTheme.sans(size: 11, color: AppTheme.fgMute)),
-          const SizedBox(width: 14),
-          SizedBox(
-            width: 56,
+          Expanded(
             child: Text(
-              dose,
+              site,
               textAlign: TextAlign.right,
-              style: AppTheme.mono(size: 12, weight: FontWeight.w500, color: AppTheme.fg),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTheme.sans(size: 11, color: AppTheme.fgMute),
             ),
+          ),
+          const SizedBox(width: 14),
+          Text(
+            dose,
+            maxLines: 1,
+            softWrap: false,
+            style: AppTheme.mono(size: 12, weight: FontWeight.w500, color: AppTheme.fg),
           ),
         ],
       ),
@@ -382,7 +441,7 @@ class _HistorySection extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 18),
-          GestureDetector(
+          LabTap(
             onTap: onLogFirst,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
@@ -401,16 +460,10 @@ class _HistorySection extends StatelessWidget {
     );
   }
 
+  /// "Sep 02 · Wed".
   String _fmtDate(DateTime d) {
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const dows = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
     final day = d.day.toString().padLeft(2, '0');
-    return '${months[d.month - 1]} $day · ${dows[d.weekday - 1]}';
-  }
-
-  String _fmtDose(double dose) {
-    if (dose == dose.roundToDouble()) return dose.toInt().toString();
-    return dose.toStringAsFixed(1);
+    return '${monthsShort[d.month - 1]} $day · ${weekdaysShort[d.weekday - 1]}';
   }
 }
 
@@ -427,7 +480,7 @@ class _StickyFooter extends StatelessWidget {
         color: AppTheme.surface,
         border: Border(top: BorderSide(color: AppTheme.border, width: 1)),
       ),
-      child: GestureDetector(
+      child: LabTap(
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 12),

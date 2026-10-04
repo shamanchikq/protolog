@@ -1,7 +1,13 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import '../../models.dart';
+import '../../engine/compute_engine.dart';
 import '../../engine/dashboard_stats.dart';
+import '../format.dart';
 import '../theme.dart';
+import 'lab_tap.dart';
+import 'pk_chart_card.dart' show rangeSpanLabel;
 
 class SwimlaneCardLane {
   final CompoundDefinition compound;
@@ -14,7 +20,10 @@ class SwimlaneCardLane {
       (compound.graphType == GraphType.activeWindow || compound.type == CompoundType.ancillary);
 }
 
-/// Range key + (daysBack, daysFwd). Today cursor sits at daysBack/(daysBack+daysFwd).
+/// Range key + (daysBack, daysFwd, pill label). Today cursor sits at
+/// daysBack/(daysBack+daysFwd). The labels name the whole span; each pill's
+/// tooltip and spoken label give the split, since the PK chart's pills of
+/// the same name cover other spans.
 const _ranges = <String, (int, int, String)>{
   'zoom': (5, 2, '7d'),
   'standard': (21, 7, '28d'),
@@ -55,7 +64,8 @@ class _SwimlaneCardState extends State<SwimlaneCard> {
     final relevant = widget.injections
         .where((i) => i.snapshot.type == CompoundType.peptide || i.snapshot.type == CompoundType.ancillary)
         .where((i) {
-          final earliestRelevant = windowStart.subtract(Duration(days: (i.snapshot.halfLife * 8).round()));
+          // The shared relevance rule (blend-aware; 0 for an unusable t½).
+          final earliestRelevant = windowStart.subtract(_days(relevanceWindowDays(i.snapshot)));
           return i.date.isAfter(earliestRelevant) && i.date.isBefore(windowEnd);
         })
         .toList()
@@ -89,7 +99,25 @@ class _SwimlaneCardState extends State<SwimlaneCard> {
             daysBack: daysBack,
             daysFwd: daysFwd,
           ),
-          _AxisRow(daysBack: daysBack, daysFwd: daysFwd),
+          // Spoken once, instead of the axis ticks: span and lanes.
+          Semantics(
+            container: true,
+            label: swimlaneSemanticsLabel(
+              daysBack: daysBack,
+              daysAhead: daysFwd,
+              peptides: [for (final l in peptides) _laneName(l.compound)],
+              ancillaries: [for (final l in ancillaries) _laneName(l.compound)],
+            ),
+            child: ExcludeSemantics(
+              child: _AxisRow(
+                daysBack: daysBack,
+                daysFwd: daysFwd,
+                windowStart: windowStart,
+                windowEnd: windowEnd,
+                now: widget.now,
+              ),
+            ),
+          ),
           if (peptides.isNotEmpty)
             _Group(
               label: 'Peptides',
@@ -120,7 +148,7 @@ class _SwimlaneCardState extends State<SwimlaneCard> {
                 style: AppTheme.sans(size: 11, color: AppTheme.fgMute),
               ),
             ),
-          const _Legend(),
+          const ExcludeSemantics(child: _Legend()),
         ],
       ),
     );
@@ -149,18 +177,26 @@ class _Header extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.center,
+          // Wrap, not Row: at large text sizes the range pills drop under
+          // the title instead of overflowing (C1).
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            runSpacing: 6,
             children: [
-              Text('Peptides & ancillaries', style: AppTheme.sans(size: 13, weight: FontWeight.w600)),
+              Semantics(
+                header: true,
+                child: Text('Peptides & ancillaries', style: AppTheme.sans(size: 13, weight: FontWeight.w600)),
+              ),
               _RangePills(active: range, onChange: onRangeChanged),
             ],
           ),
           const SizedBox(height: 4),
-          Text(
-            '${daysBack}d back · ${daysFwd}d ahead',
-            style: AppTheme.mono(size: 10, color: AppTheme.fgMute, letterSpacing: 0.6),
+          ExcludeSemantics(
+            child: Text(
+              '${daysBack}d back · ${daysFwd}d ahead',
+              style: AppTheme.mono(size: 10, color: AppTheme.fgMute, letterSpacing: 0.6),
+            ),
           ),
         ],
       ),
@@ -179,8 +215,11 @@ class _RangePills extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         for (final entry in _ranges.entries) ...[
-          GestureDetector(
+          LabTap(
             onTap: () => onChange(entry.key),
+            selected: active == entry.key,
+            inMutuallyExclusiveGroup: true,
+            tooltip: rangeSpanLabel(entry.value.$1, entry.value.$2),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
@@ -207,17 +246,29 @@ class _RangePills extends StatelessWidget {
 class _AxisRow extends StatelessWidget {
   final int daysBack;
   final int daysFwd;
-  const _AxisRow({required this.daysBack, required this.daysFwd});
+  final DateTime windowStart;
+  final DateTime windowEnd;
+  final DateTime now;
+  const _AxisRow({
+    required this.daysBack,
+    required this.daysFwd,
+    required this.windowStart,
+    required this.windowEnd,
+    required this.now,
+  });
 
   List<({double posPct, String label, bool now})> _computeTicks() {
-    final total = daysBack + daysFwd;
-    final todayFrac = daysBack / total;
-    final pastMid = todayFrac / 2;
+    // NOW sits at the current time, exactly like each lane's today line
+    // (the window starts at midnight, so daysBack/total was up to a day early).
+    final todayFrac = _fracOf(now, windowStart, windowEnd).clamp(0.0, 1.0);
+    final midDays = (daysBack / 2).round();
+    final today = DateTime(now.year, now.month, now.day);
+    final pastMid = _fracOf(today.subtract(Duration(days: midDays)), windowStart, windowEnd);
     // Skip the future-mid tick — the future window is short and the end-tick
     // is close enough that two labels would overlap on long ranges.
     return [
       (posPct: 0.0, label: '−${daysBack}d', now: false),
-      (posPct: pastMid, label: '−${(daysBack / 2).round()}d', now: false),
+      (posPct: pastMid, label: '−${midDays}d', now: false),
       (posPct: todayFrac, label: 'NOW', now: true),
       (posPct: 1.0, label: '+${daysFwd}d', now: false),
     ];
@@ -319,20 +370,23 @@ class _Group extends StatelessWidget {
               label.toUpperCase(),
               style: AppTheme.sans(
                 size: 9.5,
-                color: AppTheme.fgDim,
+                color: AppTheme.fgDimText,
                 weight: FontWeight.w600,
                 letterSpacing: 1.2,
               ),
             ),
           ),
+          // One spoken node per lane: "BPC-157, 250 mcg · every 2d, 2d ago".
           for (final lane in lanes)
-            _LaneRow(
-              lane: lane,
-              windowStart: windowStart,
-              windowEnd: windowEnd,
-              totalDays: totalDays,
-              now: now,
-              colorResolver: colorResolver,
+            MergeSemantics(
+              child: _LaneRow(
+                lane: lane,
+                windowStart: windowStart,
+                windowEnd: windowEnd,
+                totalDays: totalDays,
+                now: now,
+                colorResolver: colorResolver,
+              ),
             ),
           const SizedBox(height: 6),
         ],
@@ -365,7 +419,7 @@ class _LaneRow extends StatelessWidget {
     if (lane.injections.isEmpty) return '';
     final last = lane.injections.first;
     final unit = last.snapshot.unit.toString().split('.').last;
-    final dose = last.dosage.toStringAsFixed(last.dosage == last.dosage.truncate() ? 0 : 2);
+    final dose = formatDose(last.dosage);
     if (lane.injections.length >= 2) {
       final sortedAsc = [...lane.injections]..sort((a, b) => a.date.compareTo(b.date));
       double sum = 0;
@@ -373,10 +427,11 @@ class _LaneRow extends StatelessWidget {
         sum += sortedAsc[i].date.difference(sortedAsc[i - 1].date).inHours / 24.0;
       }
       final avg = sum / (sortedAsc.length - 1);
-      if (avg < 1.5) return '$dose $unit · daily';
-      if ((avg - 3.5).abs() < 1.0) return '$dose $unit · every 3.5d';
-      if ((avg - 7.0).abs() < 1.5) return '$dose $unit · weekly';
-      return '$dose $unit · every ${avg.toStringAsFixed(1)}d';
+      // Snap only near-exact rhythms, so every 3 d / 4 d / 6 d / 8 d read as
+      // themselves rather than "every 3.5d" / "weekly".
+      if ((avg - 1.0).abs() < 0.15) return '$dose $unit · daily';
+      if ((avg - 7.0).abs() < 0.3) return '$dose $unit · weekly';
+      return '$dose $unit · every ${stripTrailingZeros(avg.toStringAsFixed(1))}d';
     }
     return '$dose $unit';
   }
@@ -387,8 +442,7 @@ class _LaneRow extends StatelessWidget {
         AppTheme.compoundColor(lane.compound.base) ??
         Color(lane.compound.colorValue);
     final isWindow = lane.isWindow;
-    final todayFrac = now.difference(windowStart).inMilliseconds /
-        windowEnd.difference(windowStart).inMilliseconds;
+    final todayFrac = _fracOf(now, windowStart, windowEnd);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -421,11 +475,10 @@ class _LaneRow extends StatelessWidget {
                           child: CustomPaint(
                             painter: _GradientStripPainter(
                               color: c,
-                              samples: sampleLaneIntensity(
+                              intensities: laneIntensities(
                                 injections: lane.injections,
                                 windowStart: windowStart,
                                 windowEnd: windowEnd,
-                                sampleCount: 80,
                               ),
                             ),
                           ),
@@ -454,7 +507,11 @@ class _LaneRow extends StatelessWidget {
                         left: constraints.maxWidth * todayFrac.clamp(0.0, 1.0),
                         top: -3,
                         bottom: -3,
-                        child: Container(width: 1, color: AppTheme.fg.withValues(alpha: 0.55)),
+                        child: Container(
+                          key: const Key('swimlane-today-line'),
+                          width: 1,
+                          color: AppTheme.fg.withValues(alpha: 0.55),
+                        ),
                       ),
                     ],
                   );
@@ -481,10 +538,7 @@ class _Label extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ester = lane.compound.ester;
-    final name = (ester.isEmpty || ester.toLowerCase() == 'none')
-        ? lane.compound.base
-        : '${lane.compound.base} $ester';
+    final name = _laneName(lane.compound);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -519,7 +573,7 @@ class _Label extends StatelessWidget {
             sub,
             overflow: TextOverflow.ellipsis,
             maxLines: 1,
-            style: AppTheme.sans(size: 9.5, color: AppTheme.fgDim, height: 1.1),
+            style: AppTheme.sans(size: 9.5, color: AppTheme.fgDimText, height: 1.1),
           ),
         ),
       ],
@@ -568,7 +622,7 @@ class _ValueColumn extends StatelessWidget {
       children: [
         Text(value, style: AppTheme.mono(size: 11, weight: FontWeight.w500)),
         const SizedBox(height: 2),
-        Text(unit, style: AppTheme.sans(size: 8.5, color: AppTheme.fgDim, letterSpacing: 0.3)),
+        Text(unit, style: AppTheme.sans(size: 8.5, color: AppTheme.fgDimText, letterSpacing: 0.3)),
       ],
     );
   }
@@ -634,22 +688,22 @@ class _DoseMarker extends StatelessWidget {
 
 class _GradientStripPainter extends CustomPainter {
   final Color color;
-  final List<double> samples;
 
-  _GradientStripPainter({required this.color, required this.samples});
+  /// Already normalized to 0..1 (see [laneIntensities]).
+  final List<double> intensities;
+
+  _GradientStripPainter({required this.color, required this.intensities});
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (samples.isEmpty) return;
-    final maxV = samples.reduce((a, b) => a > b ? a : b);
-    if (maxV <= 0) return;
+    if (intensities.length < 2) return;
+    if (!intensities.any((v) => v > 0)) return;
     final stops = <double>[];
     final colors = <Color>[];
-    final n = samples.length;
+    final n = intensities.length;
     for (int i = 0; i < n; i++) {
       stops.add(i / (n - 1));
-      final intensity = (samples[i] / maxV).clamp(0.0, 1.0);
-      colors.add(color.withValues(alpha: intensity));
+      colors.add(color.withValues(alpha: intensities[i].clamp(0.0, 1.0)));
     }
     final rect = Offset.zero & size;
     final paint = Paint()
@@ -659,7 +713,7 @@ class _GradientStripPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _GradientStripPainter oldDelegate) =>
-      oldDelegate.color != color || oldDelegate.samples != samples;
+      oldDelegate.color != color || oldDelegate.intensities != intensities;
 }
 
 class _Legend extends StatelessWidget {
@@ -709,4 +763,81 @@ class _Legend extends StatelessWidget {
       ),
     );
   }
+}
+
+/// "BPC-157" / "Testosterone Enanthate".
+String _laneName(CompoundDefinition c) =>
+    (c.ester.isEmpty || c.ester.toLowerCase() == 'none') ? c.base : '${c.base} ${c.ester}';
+
+/// What a screen reader says for the swimlanes: span and lanes, e.g.
+/// "21 days back, 7 ahead. Peptides: BPC-157. Ancillaries: Anastrozole."
+String swimlaneSemanticsLabel({
+  required int daysBack,
+  required int daysAhead,
+  required List<String> peptides,
+  required List<String> ancillaries,
+}) {
+  final b = StringBuffer('${rangeSpanLabel(daysBack, daysAhead)}.');
+  if (peptides.isEmpty && ancillaries.isEmpty) return b.toString();
+  if (peptides.isNotEmpty) b.write(' Peptides: ${peptides.join(', ')}.');
+  if (ancillaries.isNotEmpty) b.write(' Ancillaries: ${ancillaries.join(', ')}.');
+  return b.toString();
+}
+
+Duration _days(double days) => Duration(milliseconds: (days * Duration.millisecondsPerDay).round());
+
+/// Position of [t] within [start]..[end] as a 0..1 fraction (unclamped).
+double _fracOf(DateTime t, DateTime start, DateTime end) =>
+    t.difference(start).inMilliseconds / end.difference(start).inMilliseconds;
+
+/// Gradient-strip intensities (0..1) for one lane across
+/// [windowStart]..[windowEnd], [sampleCount] + 1 points.
+///
+/// Normalized against the lane's peak over the window **plus a lookback**
+/// covering every dose still active at the window start (its relevance
+/// window), sampled at the same spacing. Normalizing to the in-window max
+/// alone made a nearly-cleared compound — only its tail visible — render
+/// fully saturated.
+@visibleForTesting
+List<double> laneIntensities({
+  required List<Injection> injections,
+  required DateTime windowStart,
+  required DateTime windowEnd,
+  int sampleCount = 80,
+}) {
+  final samples = sampleLaneIntensity(
+    injections: injections,
+    windowStart: windowStart,
+    windowEnd: windowEnd,
+    sampleCount: sampleCount,
+  );
+  var reference = 0.0;
+  for (final v in samples) {
+    reference = math.max(reference, v);
+  }
+
+  var lookbackDays = 0.0;
+  for (final inj in injections) {
+    if (inj.date.isBefore(windowStart)) {
+      lookbackDays = math.max(lookbackDays, relevanceWindowDays(inj.snapshot));
+    }
+  }
+  if (lookbackDays > 0) {
+    final spacingDays = windowEnd.difference(windowStart).inMinutes / (24 * 60) / sampleCount;
+    final n = (lookbackDays / spacingDays).ceil().clamp(1, 400);
+    final lookback = sampleLaneIntensity(
+      injections: injections,
+      windowStart: windowStart.subtract(_days(lookbackDays)),
+      windowEnd: windowStart,
+      sampleCount: n,
+    );
+    for (final v in lookback) {
+      reference = math.max(reference, v);
+    }
+  }
+
+  if (!(reference > 0) || !reference.isFinite) {
+    return List<double>.filled(samples.length, 0.0);
+  }
+  return [for (final v in samples) (v / reference).clamp(0.0, 1.0)];
 }

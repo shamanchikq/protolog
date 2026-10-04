@@ -2,21 +2,49 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../models.dart';
 import '../../utils.dart';
+import '../format.dart';
 import '../theme.dart';
 
+/// Largest system text scale the chart's tick labels follow: past it the
+/// labels would crowd the fixed plot insets (and the chart's summary is
+/// spoken anyway).
+const double maxChartTextScale = 1.3;
+
+/// The user's text scale for painted chart labels, capped at
+/// [maxChartTextScale].
+TextScaler chartTextScaler(BuildContext context) =>
+    MediaQuery.textScalerOf(context).clamp(maxScaleFactor: maxChartTextScale);
+
+/// [max] rounded up so the axis splits into [ticks] even, readable steps
+/// (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8 × 10ⁿ): 11 → 12 (0 3 6 9 12),
+/// 330 → 400. 1 for a non-positive or non-finite max.
+double niceAxisMax(double max, {int ticks = 4}) {
+  if (!max.isFinite || max <= 0) return 1;
+  final raw = max / ticks;
+  final magnitude = math.pow(10, (math.log(raw) / math.ln10).floor()).toDouble();
+  const steps = [1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0];
+  final f = raw / magnitude;
+  final step = steps.firstWhere((s) => f <= s * (1 + 1e-9), orElse: () => 10.0);
+  return step * magnitude * ticks;
+}
+
+/// Paints a [ComputedGraphData] using the settings it was computed with
+/// (`graphData.settings`: range, "% of peak", Σ total) — deliberately not
+/// the live selection, which may be newer than the data while a recompute
+/// is pending (B40).
 class PKGraphPainter extends CustomPainter {
   final ComputedGraphData graphData;
-  final GraphSettings settings;
-  final bool skipPeptides;
   final Color? Function(String baseName)? colorResolver;
-  final double peptideLaneHeight = 24.0;
-  final double leftLabelAreaWidth = 60.0;
+
+  /// Scales the tick labels with the system text size (see
+  /// [chartTextScaler]). At 1.0× the plot insets are unchanged; taller
+  /// labels only deepen the bottom inset.
+  final TextScaler textScaler;
 
   PKGraphPainter({
     required this.graphData,
-    required this.settings,
-    this.skipPeptides = false,
     this.colorResolver,
+    this.textScaler = TextScaler.noScaling,
   });
 
   Color _curveColor(CurveData curve) {
@@ -26,53 +54,44 @@ class PKGraphPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final laneCount = skipPeptides ? 0 : graphData.laneLabels.length;
-    final topAreaHeight = skipPeptides ? 0.0 : math.max(40.0, (laneCount * peptideLaneHeight) + 20.0);
-    final graphHeight = size.height - topAreaHeight;
+    final settings = graphData.settings;
+    final textPainter = TextPainter(textDirection: TextDirection.ltr, textScaler: textScaler);
+    final tickStyle = AppTheme.mono(
+      color: AppTheme.fgDimText,
+      size: 9,
+      weight: FontWeight.w400,
+    );
+    final oralTickStyle = tickStyle.copyWith(color: AppTheme.warm);
+
     final paddingLeft = 45.0;
     final paddingRight = 20.0;
-    final paddingBottom = 20.0;
+    // Room for the date labels (6 px gap + label): 20 px until large text
+    // makes them taller.
+    textPainter.text = TextSpan(text: '0', style: tickStyle);
+    textPainter.layout();
+    final paddingBottom = math.max(20.0, 6 + textPainter.height + 2);
     final chartWidth = size.width - paddingLeft - paddingRight;
-    final chartHeight = graphHeight - paddingBottom;
+    final chartHeight = size.height - paddingBottom;
 
-    final textPainter = TextPainter(textDirection: TextDirection.ltr);
-
-    if (!skipPeptides) {
-      final laneBgPaint = Paint()..color = const Color(0xFF0F172A).withValues(alpha: 0.5);
-      final RRect laneRect = RRect.fromRectAndRadius(Rect.fromLTWH(paddingLeft, 0, chartWidth, topAreaHeight), const Radius.circular(4));
-      canvas.drawRRect(laneRect, laneBgPaint);
-
-      for (int i = 0; i < graphData.laneLabels.length; i++) {
-        final name = graphData.laneLabels[i];
-        final colorValue = graphData.peptideLanes.firstWhere((l) => l.baseName == name, orElse: () => PeptideLaneData(name, 0xFF999999, 0, 0, 0, GraphType.event)).colorValue;
-        textPainter.text = TextSpan(text: name, style: TextStyle(color: Color(colorValue), fontSize: 9, fontWeight: FontWeight.bold));
-        textPainter.layout();
-        textPainter.paint(canvas, Offset(paddingLeft + 5, 5.0 + (i * peptideLaneHeight) + 2));
-      }
-
-      canvas.save();
-      canvas.clipRRect(laneRect);
-
-      for (var lane in graphData.peptideLanes) {
-        final x = paddingLeft + (lane.startPct * chartWidth);
-        final y = 5.0 + (lane.laneIndex * peptideLaneHeight);
-        final w = lane.durationPct * chartWidth;
-
-        if (x + w < paddingLeft || x > size.width) continue;
-
-        if (lane.type == GraphType.activeWindow) {
-          final rect = Rect.fromLTWH(x, y + 14, w, 6);
-          final paint = Paint()..shader = LinearGradient(colors: [lane.color.withValues(alpha: 0.95), lane.color.withValues(alpha: 0.45), lane.color.withValues(alpha: 0.12), lane.color.withValues(alpha: 0.0)], stops: const [0.0, 0.25, 0.5, 1.0]).createShader(rect);
-          canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(2)), paint);
-        } else {
-          canvas.drawCircle(Offset(x, y + 17), 3, Paint()..color = lane.color);
+    // Dose curves (the Σ total fill only exists on top of them). No curves
+    // → nothing to put on a y axis.
+    final hasCurves = graphData.hasDoseCurves;
+    // maxOralMg is floored even without orals, so the right axis keys off
+    // an actual oral curve rather than that value (B36).
+    final hasOral = graphData.hasOralCurve;
+    final leftMax = niceAxisMax(graphData.maxMg);
+    final oralMax = niceAxisMax(graphData.maxOralMg);
+    // "% of peak": every curve (and its markers) scales to its own max.
+    final normMax = <String, double>{};
+    if (settings.normalized) {
+      for (final curve in graphData.curves) {
+        var m = 0.0;
+        for (final p in curve.points) {
+          m = math.max(m, p.dy);
         }
+        normMax[curve.baseName] = m > 0 ? m : 1.0;
       }
-      canvas.restore();
     }
-
-    canvas.save();
-    canvas.translate(0, topAreaHeight);
 
     // Horizontal grid: solid baseline at y=chartHeight, dashed elsewhere.
     final gridPaintSolid = Paint()..color = AppTheme.border..strokeWidth = 1..style = PaintingStyle.stroke;
@@ -108,14 +127,10 @@ class PKGraphPainter extends CustomPainter {
 
 
     for (var curve in graphData.curves) {
-      if (curve.baseName == 'Total Androgens' && !settings.cumulative) continue;
+      if (curve.isTotal && !settings.cumulative) continue;
       final path = Path();
       if (curve.points.isNotEmpty) {
-        double normalizationMax = 0;
-        if (settings.normalized) { for (var p in curve.points) {
-          normalizationMax = math.max(normalizationMax, p.dy);
-        } if (normalizationMax == 0) normalizationMax = 1; }
-        final double maxY = settings.normalized ? normalizationMax : (curve.isOral ? graphData.maxOralMg : graphData.maxMg);
+        final double maxY = settings.normalized ? normMax[curve.baseName]! : (curve.isOral ? oralMax : leftMax);
         final startX = paddingLeft + (curve.points[0].dx * chartWidth);
         final startY = chartHeight - ((curve.points[0].dy / maxY) * chartHeight);
         path.moveTo(startX, startY);
@@ -125,7 +140,7 @@ class PKGraphPainter extends CustomPainter {
           path.lineTo(x, y);
         }
       }
-      if (curve.baseName == 'Total Androgens') {
+      if (curve.isTotal) {
         path.lineTo(paddingLeft + chartWidth, chartHeight);
         path.lineTo(paddingLeft, chartHeight);
         path.close();
@@ -135,25 +150,21 @@ class PKGraphPainter extends CustomPainter {
       }
     }
 
-    final tickStyle = AppTheme.mono(
-      color: AppTheme.fgDim,
-      size: 9,
-      weight: FontWeight.w400,
-    );
-    final oralTickStyle = tickStyle.copyWith(color: AppTheme.warm);
-    if (!settings.normalized) {
+    if (!hasCurves) {
+      // Empty chart: no y scale to label (PKChartCard shows the message).
+    } else if (!settings.normalized) {
       for (int i = 0; i <= 4; i++) {
-        final val = (graphData.maxMg * (i / 4)).round();
+        final val = formatDose(leftMax * (i / 4));
         final y = chartHeight - (chartHeight * (i / 4));
-        textPainter.text = TextSpan(text: '$val', style: tickStyle);
+        textPainter.text = TextSpan(text: val, style: tickStyle);
         textPainter.layout();
         textPainter.paint(canvas, Offset(paddingLeft - textPainter.width - 6, y - textPainter.height / 2));
       }
-      if (graphData.maxOralMg > 5) {
+      if (hasOral) {
         for (int i = 0; i <= 4; i++) {
-          final val = (graphData.maxOralMg * (i / 4)).round();
+          final val = formatDose(oralMax * (i / 4));
           final y = chartHeight - (chartHeight * (i / 4));
-          textPainter.text = TextSpan(text: '$val', style: oralTickStyle);
+          textPainter.text = TextSpan(text: val, style: oralTickStyle);
           textPainter.layout();
           textPainter.paint(canvas, Offset(size.width - paddingRight + 6, y - textPainter.height / 2));
         }
@@ -171,9 +182,11 @@ class PKGraphPainter extends CustomPainter {
     // Injection Markers
     for (var marker in graphData.injectionMarkers) {
       final x = paddingLeft + (marker.xPct * chartWidth);
-      final maxY = settings.normalized ? 1.0 : (marker.isOral ? graphData.maxOralMg : graphData.maxMg);
-      final yVal = settings.normalized ? 0.0 : marker.yLevel;
-      final y = chartHeight - ((yVal / maxY) * chartHeight);
+      // "% of peak": the marker's level over its own curve's max (B35).
+      final maxY = settings.normalized
+          ? (normMax[marker.baseName] ?? 1.0)
+          : (marker.isOral ? oralMax : leftMax);
+      final y = chartHeight - ((marker.yLevel / maxY) * chartHeight);
       final markerColor = colorResolver?.call(marker.baseName) ?? Color(marker.colorValue);
       canvas.drawCircle(Offset(x, y), 3.5, Paint()..color = markerColor);
     }
@@ -197,7 +210,7 @@ class PKGraphPainter extends CustomPainter {
       textPainter.paint(canvas, Offset(x - textPainter.width / 2, chartHeight + 6));
     }
 
-    canvas.restore();
+    textPainter.dispose();
   }
 
   void _drawDashedLine(Canvas canvas, Offset a, Offset b, Paint paint,
@@ -221,7 +234,6 @@ class PKGraphPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant PKGraphPainter oldDelegate) =>
       oldDelegate.graphData != graphData ||
-      oldDelegate.settings != settings ||
-      oldDelegate.skipPeptides != skipPeptides ||
-      oldDelegate.colorResolver != colorResolver;
+      oldDelegate.colorResolver != colorResolver ||
+      oldDelegate.textScaler != textScaler;
 }

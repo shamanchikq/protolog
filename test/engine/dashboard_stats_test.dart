@@ -51,6 +51,28 @@ void main() {
       );
       expect(avg, greaterThan(0));
     });
+
+    test('daily samples over one dosing period match the true mean (no endpoint bias)', () {
+      // Weekly dosing at steady state, window = exactly one period whose
+      // edges sit on dose times (the trough). Sampling both inclusive edges
+      // counted the trough twice and read ~6 % low.
+      final cyp = _testCyp();
+      final now = DateTime(2026, 5, 19, 12);
+      final injections = [
+        for (int w = 0; w < 20; w++) _inj(cyp, now.subtract(Duration(days: 7 * w)), 250),
+      ];
+      final start = now.subtract(const Duration(days: 14));
+      final end = now.subtract(const Duration(days: 7));
+      final daily = averageActiveMgOverRange(
+        type: CompoundType.steroid, injections: injections,
+        windowStart: start, windowEnd: end,
+      );
+      final fine = averageActiveMgOverRange(
+        type: CompoundType.steroid, injections: injections,
+        windowStart: start, windowEnd: end, samplesPerDay: 96,
+      );
+      expect((daily - fine).abs() / fine, lessThan(0.01));
+    });
   });
 
   group('currentActiveMg', () {
@@ -183,18 +205,6 @@ void main() {
         _inj(cyp, now.subtract(const Duration(days: 60)), 250),
       ], now: now);
       expect(entries, isEmpty);
-    });
-  });
-
-  group('statRelevanceWindowDays', () {
-    test('floors at 30 days for short half-lives and event compounds', () {
-      expect(statRelevanceWindowDays(0.1), 30.0);
-      expect(statRelevanceWindowDays(3.0), 30.0); // 3*8=24 < 30
-    });
-
-    test('uses halfLife*8 for long esters', () {
-      expect(statRelevanceWindowDays(5.0), 40.0);
-      expect(statRelevanceWindowDays(21.0), 168.0); // Test Undecanoate
     });
   });
 }

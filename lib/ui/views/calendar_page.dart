@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
+import '../../engine/calendar.dart';
 import '../../models.dart';
+import '../format.dart';
 import '../theme.dart';
+import '../widgets/fixed_grid.dart';
+import '../widgets/lab_tap.dart';
+import '../widgets/tap_target.dart';
 
 class CalendarPage extends StatefulWidget {
   final List<Injection> injections;
@@ -16,6 +22,10 @@ class CalendarPage extends StatefulWidget {
   /// color when not supplied (e.g. in widget tests).
   final Color Function(String baseName)? colorResolver;
 
+  /// "Now" for today's highlight and the initial selection; the real clock
+  /// when null (tests pin it).
+  final DateTime? now;
+
   const CalendarPage({
     super.key,
     required this.injections,
@@ -24,61 +34,32 @@ class CalendarPage extends StatefulWidget {
     this.onEditInjection,
     this.onDaySelected,
     this.colorResolver,
+    this.now,
   });
 
   @override
   State<CalendarPage> createState() => _CalendarPageState();
 }
 
-class _CalendarPageState extends State<CalendarPage> {
-  static const _monthNames = [
-    'January',
-    'February',
-    'March',
-    'April',
-    'May',
-    'June',
-    'July',
-    'August',
-    'September',
-    'October',
-    'November',
-    'December',
-  ];
-  static const _weekdayInitials = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-  static const _weekdayFull = [
-    'MONDAY',
-    'TUESDAY',
-    'WEDNESDAY',
-    'THURSDAY',
-    'FRIDAY',
-    'SATURDAY',
-    'SUNDAY',
-  ];
-  static const _monthNamesShort = [
-    'JAN',
-    'FEB',
-    'MAR',
-    'APR',
-    'MAY',
-    'JUN',
-    'JUL',
-    'AUG',
-    'SEP',
-    'OCT',
-    'NOV',
-    'DEC',
-  ];
+/// "0.25 mg": amount without float noise or truncation + unit name.
+String _doseText(Injection inj) =>
+    '${formatDose(inj.dosage)} ${inj.snapshot.unit.name}';
 
+class _CalendarPageState extends State<CalendarPage> {
+  // All date logic below works on calendar fields (DateTime(y, m, d),
+  // isSameCalendarDay) — never Duration(days:) — so the grid and day
+  // grouping stay right across DST switches (B27).
   late DateTime _month;
   late DateTime _selectedDay;
+
+  DateTime get _now => widget.now ?? DateTime.now();
 
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
+    final now = _now;
     _month = DateTime(now.year, now.month);
-    _selectedDay = DateTime(now.year, now.month, now.day);
+    _selectedDay = dateOnly(now);
     // Report the initial (today) selection so the host can pre-fill the
     // "Log dose" FAB with the calendar's current day.
     WidgetsBinding.instance.addPostFrameCallback(
@@ -107,22 +88,25 @@ class _CalendarPageState extends State<CalendarPage> {
 
   List<Injection> _entriesForSelectedDay() {
     final d = _selectedDay;
-    final list = widget.injections
-        .where(
-          (i) =>
-              i.date.year == d.year &&
-              i.date.month == d.month &&
-              i.date.day == d.day,
-        )
-        .toList();
+    final list =
+        widget.injections.where((i) => isSameCalendarDay(i.date, d)).toList();
     list.sort((a, b) => a.date.compareTo(b.date));
     return list;
   }
 
+  /// Moves the grid by [delta] months and moves the selection with it —
+  /// today when it falls in the new month, else the 1st — so the day list
+  /// and the "Log dose" FAB pre-fill never point at a day off-screen (B31).
   void _changeMonth(int delta) {
+    final month = DateTime(_month.year, _month.month + delta);
+    final today = dateOnly(_now);
+    final selected =
+        (today.year == month.year && today.month == month.month) ? today : month;
     setState(() {
-      _month = DateTime(_month.year, _month.month + delta);
+      _month = month;
+      _selectedDay = selected;
     });
+    widget.onDaySelected?.call(selected);
   }
 
   void _selectDay(int day) {
@@ -135,70 +119,68 @@ class _CalendarPageState extends State<CalendarPage> {
   Future<bool> _confirmDelete(Injection inj) async {
     final esterRaw = inj.snapshot.ester;
     final hasEster = esterRaw.isNotEmpty && esterRaw.toLowerCase() != 'none';
-    final unit = inj.snapshot.unit.toString().split('.').last;
-    final dosageStr = inj.dosage == inj.dosage.truncateToDouble()
-        ? inj.dosage.toStringAsFixed(0)
-        : inj.dosage.toString();
     final description =
-        "${inj.snapshot.base}${hasEster ? ' $esterRaw' : ''} — $dosageStr $unit";
+        "${inj.snapshot.base}${hasEster ? ' $esterRaw' : ''} — ${_doseText(inj)}";
 
     final result = await showDialog<bool>(
       context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: AppTheme.surface,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-        shape: const RoundedRectangleBorder(
-          side: BorderSide(color: AppTheme.border, width: 1),
-          borderRadius: BorderRadius.zero,
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Delete entry?',
-                style: AppTheme.serif(
-                  size: 18,
-                  weight: FontWeight.w500,
-                  color: AppTheme.fg,
+      builder: (ctx) => TapTargetScope(
+        child: Dialog(
+          backgroundColor: AppTheme.surface,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+          shape: const RoundedRectangleBorder(
+            side: BorderSide(color: AppTheme.border, width: 1),
+            borderRadius: BorderRadius.zero,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Delete entry?',
+                  style: AppTheme.serif(
+                    size: 18,
+                    weight: FontWeight.w500,
+                    color: AppTheme.fg,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                description,
-                style: AppTheme.sans(size: 13, color: AppTheme.fgMute),
-              ),
-              const SizedBox(height: 18),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(false),
-                    child: Text(
-                      'Cancel',
-                      style: AppTheme.sans(
-                        size: 13,
-                        weight: FontWeight.w500,
-                        color: AppTheme.fgMute,
+                const SizedBox(height: 10),
+                Text(
+                  description,
+                  style: AppTheme.sans(size: 13, color: AppTheme.fgMute),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      child: Text(
+                        'Cancel',
+                        style: AppTheme.sans(
+                          size: 13,
+                          weight: FontWeight.w500,
+                          color: AppTheme.fgMute,
+                        ),
                       ),
                     ),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(true),
-                    child: Text(
-                      'Delete',
-                      style: AppTheme.sans(
-                        size: 13,
-                        weight: FontWeight.w500,
-                        color: AppTheme.warn,
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      child: Text(
+                        'Delete',
+                        style: AppTheme.sans(
+                          size: 13,
+                          weight: FontWeight.w500,
+                          color: AppTheme.warn,
+                        ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -217,16 +199,16 @@ class _CalendarPageState extends State<CalendarPage> {
         const SizedBox(height: 18),
         _MonthHeader(
           month: _month,
-          monthNames: _monthNames,
           onPrev: () => _changeMonth(-1),
           onNext: () => _changeMonth(1),
         ),
         const SizedBox(height: 18),
-        const _WeekdayStrip(initials: _weekdayInitials),
+        // Each day cell speaks its full date; the letters are only visual.
+        const ExcludeSemantics(child: _WeekdayStrip()),
         const SizedBox(height: 8),
         _MonthGrid(
           month: _month,
-          today: DateTime.now(),
+          today: _now,
           selectedDay: _selectedDay,
           dayBars: dayBars,
           onDayTap: _selectDay,
@@ -238,8 +220,6 @@ class _CalendarPageState extends State<CalendarPage> {
           child: _SelectedDaySection(
             selectedDay: _selectedDay,
             entries: entries,
-            weekdayFull: _weekdayFull,
-            monthShort: _monthNamesShort,
             onDeleteConfirm: _confirmDelete,
             onDelete: widget.onDeleteInjection,
             onEditNotes: widget.onUpdateNotes,
@@ -254,13 +234,11 @@ class _CalendarPageState extends State<CalendarPage> {
 
 class _MonthHeader extends StatelessWidget {
   final DateTime month;
-  final List<String> monthNames;
   final VoidCallback onPrev;
   final VoidCallback onNext;
 
   const _MonthHeader({
     required this.month,
-    required this.monthNames,
     required this.onPrev,
     required this.onNext,
   });
@@ -274,32 +252,35 @@ class _MonthHeader extends StatelessWidget {
         textBaseline: TextBaseline.alphabetic,
         children: [
           Expanded(
-            child: RichText(
-              text: TextSpan(
-                style: AppTheme.serif(
-                  size: 26,
-                  weight: FontWeight.w500,
-                  color: AppTheme.fg,
-                  letterSpacing: -0.5,
-                ),
-                children: [
-                  TextSpan(text: '${monthNames[month.month - 1]} '),
-                  TextSpan(
-                    text: '${month.year}',
-                    style: AppTheme.serif(
-                      size: 26,
-                      weight: FontWeight.w300,
-                      color: AppTheme.fgMute,
-                      letterSpacing: -0.5,
-                    ),
+            child: Semantics(
+              header: true,
+              child: RichText(
+                text: TextSpan(
+                  style: AppTheme.serif(
+                    size: 26,
+                    weight: FontWeight.w500,
+                    color: AppTheme.fg,
+                    letterSpacing: -0.5,
                   ),
-                ],
+                  children: [
+                    TextSpan(text: '${monthsLong[month.month - 1]} '),
+                    TextSpan(
+                      text: '${month.year}',
+                      style: AppTheme.serif(
+                        size: 26,
+                        weight: FontWeight.w300,
+                        color: AppTheme.fgMute,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
-          _ChevronButton(glyph: '‹', onTap: onPrev),
+          _ChevronButton(glyph: '‹', label: 'Previous month', onTap: onPrev),
           const SizedBox(width: 4),
-          _ChevronButton(glyph: '›', onTap: onNext),
+          _ChevronButton(glyph: '›', label: 'Next month', onTap: onNext),
         ],
       ),
     );
@@ -308,24 +289,33 @@ class _MonthHeader extends StatelessWidget {
 
 class _ChevronButton extends StatelessWidget {
   final String glyph;
+  final String label;
   final VoidCallback onTap;
 
-  const _ChevronButton({required this.glyph, required this.onTap});
+  const _ChevronButton({required this.glyph, required this.label, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        width: 28,
-        height: 28,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          border: Border.all(color: AppTheme.border, width: 1),
-        ),
-        child: Text(
-          glyph,
-          style: AppTheme.sans(size: 14, color: AppTheme.fgMute),
+    return TapTarget(
+      child: Semantics(
+        button: true,
+        label: label,
+        child: InkWell(
+          onTap: onTap,
+          child: Container(
+            width: 28,
+            height: 28,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              border: Border.all(color: AppTheme.border, width: 1),
+            ),
+            child: ExcludeSemantics(
+              child: Text(
+                glyph,
+                style: AppTheme.sans(size: 14, color: AppTheme.fgMute),
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -333,15 +323,16 @@ class _ChevronButton extends StatelessWidget {
 }
 
 class _WeekdayStrip extends StatelessWidget {
-  final List<String> initials;
-  const _WeekdayStrip({required this.initials});
+  const _WeekdayStrip();
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14),
       child: Row(
-        children: initials
+        // M T W T F S S
+        children: weekdaysShort
+            .map((d) => d[0])
             .map(
               (d) => Expanded(
                 child: Center(
@@ -350,7 +341,7 @@ class _WeekdayStrip extends StatelessWidget {
                     style: AppTheme.sans(
                       size: 10,
                       weight: FontWeight.w500,
-                      color: AppTheme.fgDim,
+                      color: AppTheme.fgDimText,
                       letterSpacing: 0.5,
                     ),
                   ),
@@ -386,6 +377,7 @@ class _MonthGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final year = month.year;
     final m = month.month;
+    // Day 0 of next month = last day of this one (calendar fields, DST-safe).
     final daysInMonth = DateTime(year, m + 1, 0).day;
     final firstWeekday = DateTime(year, m, 1).weekday; // 1=Mon
     final leading = firstWeekday - 1;
@@ -400,30 +392,23 @@ class _MonthGrid extends StatelessWidget {
           if (v < -200) onSwipeLeft();
           if (v > 200) onSwipeRight();
         },
-        child: GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 7,
-            mainAxisSpacing: 4,
-            crossAxisSpacing: 4,
-            mainAxisExtent: 50,
-          ),
+        child: FixedGrid(
+          crossAxisCount: 7,
+          mainAxisSpacing: 4,
+          crossAxisSpacing: 4,
+          mainAxisExtent: 50,
           itemCount: totalCells,
           itemBuilder: (context, index) {
             if (index < leading || index >= leading + daysInMonth) {
               return const SizedBox.shrink();
             }
             final day = index - leading + 1;
-            final isToday =
-                today.year == year && today.month == m && today.day == day;
-            final isSelected =
-                selectedDay.year == year &&
-                selectedDay.month == m &&
-                selectedDay.day == day;
+            final date = DateTime(year, m, day);
+            final isToday = isSameCalendarDay(today, date);
+            final isSelected = isSameCalendarDay(selectedDay, date);
             final bars = dayBars[day] ?? const <Color>[];
             return _DayCell(
-              day: day,
+              date: date,
               isToday: isToday,
               isSelected: isSelected,
               bars: bars,
@@ -437,14 +422,14 @@ class _MonthGrid extends StatelessWidget {
 }
 
 class _DayCell extends StatelessWidget {
-  final int day;
+  final DateTime date;
   final bool isToday;
   final bool isSelected;
   final List<Color> bars;
   final VoidCallback onTap;
 
   const _DayCell({
-    required this.day,
+    required this.date,
     required this.isToday,
     required this.isSelected,
     required this.bars,
@@ -458,10 +443,18 @@ class _DayCell extends StatelessWidget {
         : (isSelected ? AppTheme.fg : Colors.transparent);
     final Color bg = isToday ? AppTheme.paper : Colors.transparent;
     final Color textColor = isToday ? AppTheme.paperInk : AppTheme.fg;
+    final day = date.day;
+    final compounds = bars.length;
+    // "Saturday, October 3, today, 2 compounds logged".
+    final label = '${weekdaysLong[date.weekday - 1]}, ${monthsLong[date.month - 1]} $day'
+        '${isToday ? ', today' : ''}'
+        '${compounds == 0 ? '' : ', $compounds ${compounds == 1 ? 'compound' : 'compounds'} logged'}';
 
-    return GestureDetector(
+    return LabTap(
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
+      label: label,
+      selected: isSelected,
+      inMutuallyExclusiveGroup: true,
       child: Container(
         padding: const EdgeInsets.all(6),
         decoration: BoxDecoration(
@@ -505,8 +498,6 @@ class _DayCell extends StatelessWidget {
 class _SelectedDaySection extends StatelessWidget {
   final DateTime selectedDay;
   final List<Injection> entries;
-  final List<String> weekdayFull;
-  final List<String> monthShort;
   final Future<bool> Function(Injection inj) onDeleteConfirm;
   final void Function(String injectionId) onDelete;
   final void Function(String injectionId, String? notes) onEditNotes;
@@ -516,8 +507,6 @@ class _SelectedDaySection extends StatelessWidget {
   const _SelectedDaySection({
     required this.selectedDay,
     required this.entries,
-    required this.weekdayFull,
-    required this.monthShort,
     required this.onDeleteConfirm,
     required this.onDelete,
     required this.onEditNotes,
@@ -529,8 +518,9 @@ class _SelectedDaySection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final header =
-        '${weekdayFull[selectedDay.weekday - 1]}, ${monthShort[selectedDay.month - 1]} ${selectedDay.day}';
+    // "SUNDAY, OCT 4"
+    final header = '${weekdaysLong[selectedDay.weekday - 1].toUpperCase()}, '
+        '${monthsShort[selectedDay.month - 1].toUpperCase()} ${selectedDay.day}';
     final count = entries.length;
     final countStr = '$count ${count == 1 ? 'entry' : 'entries'}';
 
@@ -544,13 +534,16 @@ class _SelectedDaySection extends StatelessWidget {
             textBaseline: TextBaseline.alphabetic,
             children: [
               Expanded(
-                child: Text(
-                  header,
-                  style: AppTheme.sans(
-                    size: 11,
-                    weight: FontWeight.w500,
-                    color: AppTheme.fgDim,
-                    letterSpacing: 0.5,
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    header,
+                    style: AppTheme.sans(
+                      size: 11,
+                      weight: FontWeight.w500,
+                      color: AppTheme.fgDimText,
+                      letterSpacing: 0.5,
+                    ),
                   ),
                 ),
               ),
@@ -566,7 +559,7 @@ class _SelectedDaySection extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 12),
               child: Text(
                 'No entries on this day',
-                style: AppTheme.sans(size: 12, color: AppTheme.fgDim),
+                style: AppTheme.sans(size: 12, color: AppTheme.fgDimText),
               ),
             )
           else
@@ -590,7 +583,8 @@ class _SelectedDaySection extends StatelessWidget {
                           style: AppTheme.sans(
                             size: 13,
                             weight: FontWeight.w500,
-                            color: AppTheme.paper,
+                            // Dark ink: paper on warn is 2.5:1 (C3).
+                            color: AppTheme.paperInk,
                           ),
                         ),
                       ),
@@ -598,6 +592,9 @@ class _SelectedDaySection extends StatelessWidget {
                       onDismissed: (_) => onDelete(entries[i].id),
                       child: _EntryRow(
                         injection: entries[i],
+                        onDeleteRequested: () async {
+                          if (await onDeleteConfirm(entries[i])) onDelete(entries[i].id);
+                        },
                         showTopBorder: i > 0,
                         twoDigits: _twoDigits,
                         onEditNotes: onEditNotes,
@@ -616,6 +613,10 @@ class _SelectedDaySection extends StatelessWidget {
 
 class _EntryRow extends StatelessWidget {
   final Injection injection;
+
+  /// Confirm, then delete — the row's spoken "Delete" action (the swipe's
+  /// equivalent for screen readers).
+  final VoidCallback onDeleteRequested;
   final bool showTopBorder;
   final String Function(int) twoDigits;
   final void Function(String injectionId, String? notes) onEditNotes;
@@ -624,6 +625,7 @@ class _EntryRow extends StatelessWidget {
 
   const _EntryRow({
     required this.injection,
+    required this.onDeleteRequested,
     required this.showTopBorder,
     required this.twoDigits,
     required this.onEditNotes,
@@ -651,16 +653,93 @@ class _EntryRow extends StatelessWidget {
         : injection.snapshot.base;
     final time =
         '${twoDigits(injection.date.hour)}:${twoDigits(injection.date.minute)}';
-    final unit = injection.snapshot.unit.toString().split('.').last;
-    final dosageStr = injection.dosage == injection.dosage.truncateToDouble()
-        ? injection.dosage.toStringAsFixed(0)
-        : injection.dosage.toString();
     final color =
         colorResolver?.call(injection.snapshot.base) ??
         AppTheme.compoundColor(injection.snapshot.base) ??
         Color(injection.snapshot.colorValue);
     final hasNotes =
         injection.notes != null && injection.notes!.trim().isNotEmpty;
+
+    // The row and its notes line are separate 48 dp targets (not one
+    // enclosing target), so a tap on either stays with it; the notes icon
+    // inside the row takes near misses from the row.
+    final rowContent = Semantics(
+      customSemanticsActions: {
+        const CustomSemanticsAction(label: 'Delete entry'): onDeleteRequested,
+      },
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 48,
+              child: Text(
+                time,
+                style: AppTheme.mono(size: 11, color: AppTheme.fgMute),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Container(width: 3, height: 18, color: color),
+            const SizedBox(width: 12),
+            Expanded(
+              // Site sits outside the name's ellipsis scope so a long
+              // compound name truncates instead of hiding the site.
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.sans(size: 13, color: AppTheme.fg),
+                    ),
+                  ),
+                  if (injection.site != null &&
+                      injection.site!.isNotEmpty)
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 110),
+                      child: Text(
+                        ' · ${injection.site}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.sans(
+                          size: 11,
+                          color: AppTheme.fgDimText,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            LabTap(
+              onTap: () => _editNotes(context),
+              label: hasNotes ? 'Edit notes' : 'Add a note',
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 4,
+                  vertical: 2,
+                ),
+                child: Icon(
+                  hasNotes
+                      ? Icons.sticky_note_2_outlined
+                      : Icons.add_comment_outlined,
+                  size: 14,
+                  color: hasNotes ? AppTheme.accent : AppTheme.fgDimText,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              _doseText(injection),
+              style: AppTheme.mono(size: 12, color: AppTheme.fg),
+            ),
+          ],
+        ),
+      ),
+    );
+    final edit = onEditInjection;
 
     return Container(
       decoration: BoxDecoration(
@@ -674,89 +753,19 @@ class _EntryRow extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            // Row tap opens the full edit flow; the notes icon inside keeps
-            // its own handler and wins hit-testing over this one.
-            onTap: onEditInjection != null
-                ? () => onEditInjection!(injection)
-                : null,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  SizedBox(
-                    width: 48,
-                    child: Text(
-                      time,
-                      style: AppTheme.mono(size: 11, color: AppTheme.fgMute),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Container(width: 3, height: 18, color: color),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    // Site sits outside the name's ellipsis scope so a long
-                    // compound name truncates instead of hiding the site.
-                    child: Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: AppTheme.sans(size: 13, color: AppTheme.fg),
-                          ),
-                        ),
-                        if (injection.site != null &&
-                            injection.site!.isNotEmpty)
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 110),
-                            child: Text(
-                              ' · ${injection.site}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: AppTheme.sans(
-                                size: 11,
-                                color: AppTheme.fgDim,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => _editNotes(context),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 2,
-                      ),
-                      child: Icon(
-                        hasNotes
-                            ? Icons.sticky_note_2_outlined
-                            : Icons.add_comment_outlined,
-                        size: 14,
-                        color: hasNotes ? AppTheme.accent : AppTheme.fgDim,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '$dosageStr $unit',
-                    style: AppTheme.mono(size: 12, color: AppTheme.fg),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          // Row tap opens the full edit flow.
+          edit == null
+              ? Semantics(container: true, child: rowContent)
+              : LabTap(
+                  mergeSemantics: false,
+                  onTap: () => edit(injection),
+                  hint: 'Edit dose',
+                  child: rowContent,
+                ),
           if (hasNotes)
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
+            LabTap(
               onTap: () => _editNotes(context),
+              hint: 'Edit notes',
               child: Container(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                 child: Row(
@@ -816,93 +825,93 @@ class _EditNotesDialogState extends State<_EditNotesDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
-      child: Container(
-        decoration: BoxDecoration(
-          color: AppTheme.surface,
-          border: Border.all(color: AppTheme.border, width: 1),
-        ),
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'Notes',
-              style: AppTheme.serif(
-                size: 18,
-                weight: FontWeight.w500,
-                color: AppTheme.fg,
-                letterSpacing: -0.3,
-              ),
-            ),
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: AppTheme.bg,
-                border: Border.all(color: AppTheme.border, width: 1),
-              ),
-              child: TextField(
-                controller: _ctl,
-                focusNode: _focus,
-                minLines: 3,
-                maxLines: 6,
-                cursorColor: AppTheme.accent,
-                style: AppTheme.sans(size: 14, color: AppTheme.fg),
-                decoration: InputDecoration(
-                  isDense: true,
-                  contentPadding: EdgeInsets.zero,
-                  border: InputBorder.none,
-                  hintText: 'Add a note…',
-                  hintStyle: AppTheme.sans(size: 14, color: AppTheme.fgDim),
+    return TapTargetScope(
+      child: Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppTheme.surface,
+            border: Border.all(color: AppTheme.border, width: 1),
+          ),
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Notes',
+                style: AppTheme.serif(
+                  size: 18,
+                  weight: FontWeight.w500,
+                  color: AppTheme.fg,
+                  letterSpacing: -0.3,
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => Navigator.of(context).pop(null),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 8,
-                    ),
-                    child: Text(
-                      'Cancel',
-                      style: AppTheme.sans(size: 13, color: AppTheme.fgMute),
-                    ),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppTheme.bg,
+                  border: Border.all(color: AppTheme.border, width: 1),
+                ),
+                child: TextField(
+                  controller: _ctl,
+                  focusNode: _focus,
+                  minLines: 3,
+                  maxLines: 6,
+                  cursorColor: AppTheme.accent,
+                  style: AppTheme.sans(size: 14, color: AppTheme.fg),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                    border: InputBorder.none,
+                    hintText: 'Add a note…',
+                    hintStyle: AppTheme.sans(size: 14, color: AppTheme.fgDimText),
                   ),
                 ),
-                const SizedBox(width: 4),
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: _save,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 8,
-                    ),
-                    color: AppTheme.accent,
-                    child: Text(
-                      'Save',
-                      style: AppTheme.sans(
-                        size: 13,
-                        weight: FontWeight.w600,
-                        color: AppTheme.bg,
-                        letterSpacing: 0.3,
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  LabTap(
+                    onTap: () => Navigator.of(context).pop(null),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 8,
+                      ),
+                      child: Text(
+                        'Cancel',
+                        style: AppTheme.sans(size: 13, color: AppTheme.fgMute),
                       ),
                     ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                  const SizedBox(width: 4),
+                  LabTap(
+                    onTap: _save,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 8,
+                      ),
+                      color: AppTheme.accent,
+                      child: Text(
+                        'Save',
+                        style: AppTheme.sans(
+                          size: 13,
+                          weight: FontWeight.w600,
+                          color: AppTheme.bg,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

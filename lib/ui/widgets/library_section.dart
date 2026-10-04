@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../theme.dart';
 
 /// Section header (title + optional meta count/label) above a child container.
-/// Title uses 13/600 sans; meta uses 11 fgDim sans, right-aligned.
+/// Title uses 13/600 sans; meta uses 11 fgDimText sans, right-aligned.
 class LibrarySection extends StatelessWidget {
   final String title;
   final String? meta;
@@ -34,7 +34,7 @@ class LibrarySection extends StatelessWidget {
               if (meta != null && meta!.isNotEmpty)
                 Text(
                   meta!,
-                  style: AppTheme.sans(size: 11, color: AppTheme.fgDim),
+                  style: AppTheme.sans(size: 11, color: AppTheme.fgDimText),
                 ),
             ],
           ),

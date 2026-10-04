@@ -3,10 +3,24 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
     <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
+    <!-- Backup policy (audit D3): the dose and bloodwork log is plaintext SharedPreferences, so it
+         must never be uploaded to Google cloud backup. Users keep their data with the app's own
+         export/import (Library -> Import/export, F1).
+         - allowBackup="false": no cloud backup and no adb backup on every API level. On Android
+           11 and lower it also blocks device-to-device (D2D) transfer.
+         - fullBackupContent (Android 11 and lower): excludes every domain, belt and braces.
+         - dataExtractionRules (Android 12+, where allowBackup no longer governs D2D): cloud backup
+           excludes every domain (belt and braces); device-to-device transfer is deliberately LEFT
+           ON. D2D only happens when the user sets up a new phone and chooses to copy data from
+           the old one over cable / local Wi-Fi - it is user-initiated, local, and never touches
+           Google's servers, and it spares the user a manual export when switching phones. -->
     <application
         android:label="ProtoLog"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules">
         <activity
             android:name=".MainActivity"
             android:exported="true"

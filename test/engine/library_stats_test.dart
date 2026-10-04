@@ -73,6 +73,36 @@ void main() {
       );
       expect(result, DateTime(2026, 5, 10));
     });
+
+    test('planned (future-dated) doses are not "last used"', () {
+      final cyp = _testCyp();
+      final now = DateTime(2026, 5, 23, 12);
+      final injections = [
+        _inj(cyp, now.subtract(const Duration(days: 5)), 125),
+        _inj(cyp, now.add(const Duration(days: 2)), 125),
+      ];
+      expect(
+        lastInjectionFor(base: 'Testosterone', ester: 'Cypionate', injections: injections, now: now),
+        now.subtract(const Duration(days: 5)),
+      );
+      expect(
+        lastInjectionFor(
+            base: 'Testosterone', ester: 'Cypionate', injections: [injections[1]], now: now),
+        isNull,
+      );
+    });
+
+    test('defaults to the real clock for "now"', () {
+      final cyp = _testCyp();
+      final real = DateTime.now();
+      final past = real.subtract(const Duration(days: 1));
+      final result = lastInjectionFor(
+        base: 'Testosterone',
+        ester: 'Cypionate',
+        injections: [_inj(cyp, past, 125), _inj(cyp, real.add(const Duration(days: 30)), 125)],
+      );
+      expect(result, past);
+    });
   });
 
   group('formatUsedAgo', () {
@@ -97,6 +127,38 @@ void main() {
     test('floors partial hours and partial days', () {
       expect(formatUsedAgo(now.subtract(const Duration(hours: 3, minutes: 45)), now: now), '3h ago');
       expect(formatUsedAgo(now.subtract(const Duration(days: 2, hours: 5)), now: now), '2d ago');
+    });
+
+    test('future dates read "in …", never negative', () {
+      expect(formatUsedAgo(now.add(const Duration(hours: 30)), now: now), 'in 1d');
+      expect(formatUsedAgo(now.add(const Duration(days: 2, hours: 5)), now: now), 'in 2d');
+      expect(formatUsedAgo(now.add(const Duration(hours: 5)), now: now), 'in 5h');
+      expect(formatUsedAgo(now.add(const Duration(minutes: 10)), now: now), 'in 1h');
+    });
+
+    // Hold in every zone; only discriminate under a DST zone such as
+    // TZ=Europe/Kyiv (spring forward Mar 29 2026, fall back Oct 25 2026),
+    // where elapsed `.inDays` was off by one.
+    group('counts days on the wall clock across DST', () {
+      test('across spring forward (a 23 h day)', () {
+        // 08:00 → 08:00 three dates later: 71 h elapsed in Kyiv.
+        expect(formatUsedAgo(DateTime(2026, 3, 28, 8), now: DateTime(2026, 3, 31, 8)), '3d ago');
+        expect(formatUsedAgo(DateTime(2026, 3, 31, 8), now: DateTime(2026, 3, 28, 8)), 'in 3d');
+      });
+
+      test('across fall back (a 25 h day)', () {
+        // 08:00 → 07:30 three dates later: 72.5 h elapsed in Kyiv, but the
+        // clock hasn't reached 08:00 on the third day yet.
+        expect(formatUsedAgo(DateTime(2026, 10, 24, 8), now: DateTime(2026, 10, 27, 7, 30)), '2d ago');
+        expect(formatUsedAgo(DateTime(2026, 10, 27, 7, 30), now: DateTime(2026, 10, 24, 8)), 'in 2d');
+      });
+
+      test('24 h+ elapsed on a 25 h day is never "0d ago"', () {
+        final when = DateTime(2026, 10, 24, 8);
+        final n = DateTime(2026, 10, 25, 7, 30); // 24.5 h later in Kyiv, 23.5 h in UTC
+        final expected = n.difference(when).inHours >= 24 ? '1d ago' : '23h ago';
+        expect(formatUsedAgo(when, now: n), expected);
+      });
     });
   });
 
@@ -142,6 +204,13 @@ void main() {
       expect(isInProtocol(compound: event, injections: within, now: now), isTrue);
       expect(isInProtocol(compound: event, injections: outside, now: now), isFalse);
     });
+
+    test('a planned (future) dose still counts as on protocol', () {
+      final cyp = _testCyp();
+      final now = DateTime(2026, 5, 23);
+      final planned = [_inj(cyp, now.add(const Duration(days: 2)), 125)];
+      expect(isInProtocol(compound: cyp, injections: planned, now: now), isTrue);
+    });
   });
 
   group('protocolCompounds', () {
@@ -160,6 +229,23 @@ void main() {
       final now = DateTime(2026, 5, 23);
       final injections = [
         _inj(cyp, now.subtract(const Duration(days: 5)), 125),
+        _inj(mast, now.subtract(const Duration(days: 2)), 100),
+      ];
+      final result = protocolCompounds(
+        userCompounds: [cyp, mast],
+        injections: injections,
+        now: now,
+      );
+      expect(result.map((c) => c.base).toList(), ['Masteron', 'Testosterone']);
+    });
+
+    test('ranks by last real use, not by planned doses', () {
+      final cyp = _testCyp();
+      final mast = _mastE();
+      final now = DateTime(2026, 5, 23);
+      final injections = [
+        _inj(cyp, now.subtract(const Duration(days: 5)), 125),
+        _inj(cyp, now.add(const Duration(days: 1)), 125), // planned
         _inj(mast, now.subtract(const Duration(days: 2)), 100),
       ];
       final result = protocolCompounds(
@@ -340,6 +426,29 @@ void main() {
     test('joins base + ester otherwise', () {
       expect(displayName(_testCyp()), 'Testosterone Cypionate');
     });
+
+    test('built-ins adopted under a timestamp id keep their library name (B8)', () {
+      // The wizard adopts a built-in into userCompounds with a timestamp id on
+      // first log; the label must not change from the catalogue's.
+      for (final key in [
+        'Sustanon 250',
+        'Tri-Tren',
+        'Drostanolone Propionate',
+        'Methenolone Enanthate',
+        'Dihydroboldenone Cypionate',
+        'MT2',
+      ]) {
+        final adopted = BASE_LIBRARY[key]!.copyWith(id: '1727000000000');
+        expect(displayName(adopted), key, reason: key);
+        expect(displayName(BASE_LIBRARY[key]!), key, reason: key);
+      }
+    });
+
+    test('a true custom keeps its own base + ester label', () {
+      final custom = BASE_LIBRARY['Drostanolone Propionate']!
+          .copyWith(id: 'c1', isCustom: true);
+      expect(displayName(custom), 'Masteron Propionate');
+    });
   });
 
   group('metaLineFor', () {
@@ -351,6 +460,13 @@ void main() {
       final sust = BASE_LIBRARY['Sustanon 250']!.copyWith(id: 'Sustanon 250');
       expect(metaLineFor(sust), 'Steroid · 4-ester');
       final tri = BASE_LIBRARY['Tri-Tren']!.copyWith(id: 'Tri-Tren');
+      expect(metaLineFor(tri), 'Steroid · 3-ester');
+    });
+
+    test('blend meta survives adoption under a timestamp id (B8)', () {
+      final sust = BASE_LIBRARY['Sustanon 250']!.copyWith(id: '1727000000000');
+      expect(metaLineFor(sust), 'Steroid · 4-ester');
+      final tri = BASE_LIBRARY['Tri-Tren']!.copyWith(id: '1727000000001');
       expect(metaLineFor(tri), 'Steroid · 3-ester');
     });
 
@@ -372,17 +488,6 @@ void main() {
         colorValue: 0xFF000000,
       );
       expect(metaLineFor(c), 'Peptide · window');
-    });
-  });
-
-  group('isBuiltIn', () {
-    test('true for a non-custom compound', () {
-      expect(isBuiltIn(_testCyp()), isTrue); // isCustom defaults to false
-    });
-
-    test('false for a custom compound', () {
-      final custom = _testCyp().copyWith(isCustom: true);
-      expect(isBuiltIn(custom), isFalse);
     });
   });
 
@@ -480,6 +585,135 @@ void main() {
     test('false for custom compounds (no default to compare)', () {
       final custom = _testCyp().copyWith(isCustom: true, halfLife: 99);
       expect(isEditedFromDefault(custom), isFalse);
+    });
+  });
+
+  group('compoundKey (B6)', () {
+    test('joins base and ester exactly', () {
+      expect(compoundKey('Testosterone', 'Enanthate'), 'Testosterone|Enanthate');
+      expect(compoundKey('HCG', 'None'), 'HCG|None');
+      expect(compoundKey('Testosterone', 'Enanthate'),
+          isNot(compoundKey('Testosterone', 'Cypionate')));
+    });
+
+    test('keyOf reads a compound', () {
+      expect(keyOf(_testCyp()), 'Testosterone|Cypionate');
+    });
+  });
+
+  group('dedupeUserCompounds (B6)', () {
+    final te = BASE_LIBRARY['Testosterone Enanthate']!;
+    final adoptedHere = te.copyWith(id: '1700000000001'); // wizard, new phone
+    final fromBackup =
+        te.copyWith(id: '1600000000000', colorValue: 0xFF112233, concentration: 250);
+    final anavar = BASE_LIBRARY['Oxandrolone']!.copyWith(id: 'anavar');
+
+    test('no duplicates: same entries, empty remap, injections untouched', () {
+      final inj = _inj(adoptedHere, DateTime(2026, 5, 1), 250);
+      final r = dedupeUserCompounds([adoptedHere, anavar], injections: [inj]);
+      expect(r.compounds, [adoptedHere, anavar]);
+      expect(r.idRemap, isEmpty);
+      expect(identical(r.injections.single, inj), isTrue);
+    });
+
+    test('keeps one entry per base+ester — the later one — at the first slot', () {
+      final r = dedupeUserCompounds([adoptedHere, anavar, fromBackup]);
+      expect(r.compounds.map((c) => c.id), ['1600000000000', 'anavar']);
+      expect(r.compounds.first.colorValue, 0xFF112233);
+      expect(r.idRemap, {'1700000000001': '1600000000000'});
+    });
+
+    test('order of the input decides, not which one has more logs', () {
+      final r = dedupeUserCompounds([fromBackup, adoptedHere]);
+      expect(r.compounds.single.id, '1700000000001');
+    });
+
+    test('remaps Injection.compoundId of dropped duplicates, snapshot untouched', () {
+      final mine = _inj(adoptedHere, DateTime(2026, 5, 1), 250);
+      final theirs = _inj(fromBackup, DateTime(2026, 4, 1), 250);
+      final other = _inj(anavar, DateTime(2026, 5, 2), 20);
+      final r = dedupeUserCompounds([adoptedHere, anavar, fromBackup],
+          injections: [mine, theirs, other]);
+      expect(r.injections.map((i) => i.compoundId),
+          ['1600000000000', '1600000000000', 'anavar']);
+      final relinked = r.injections.first;
+      expect(relinked.id, mine.id);
+      expect(relinked.date, mine.date);
+      expect(relinked.dosage, mine.dosage);
+      expect(identical(relinked.snapshot, mine.snapshot), isTrue);
+      expect(identical(r.injections[1], theirs), isTrue);
+      expect(identical(r.injections[2], other), isTrue);
+    });
+
+    test('a vial strength only the dropped duplicate knew is carried over', () {
+      final withConc = adoptedHere.copyWith(concentration: 200);
+      final noConc = te.copyWith(id: 'later');
+      final r = dedupeUserCompounds([withConc, noConc]);
+      expect(r.compounds.single.id, 'later');
+      expect(r.compounds.single.concentration, 200);
+      // The winner's own strength is never overwritten.
+      final r2 = dedupeUserCompounds([withConc, fromBackup]);
+      expect(r2.compounds.single.concentration, 250);
+    });
+
+    test('exact duplicates (same id) collapse without a remap', () {
+      final r = dedupeUserCompounds([adoptedHere, adoptedHere]);
+      expect(r.compounds, hasLength(1));
+      expect(r.idRemap, isEmpty);
+    });
+
+    test('a dropped id still used by another compound is relinked per key only', () {
+      // Legacy 'temp' ids (B7) could be shared by different compounds.
+      final tempTe = te.copyWith(id: 'temp');
+      final tempAnavar = anavar.copyWith(id: 'temp');
+      final keptTe = te.copyWith(id: 'te');
+      final teLog = _inj(tempTe, DateTime(2026, 5, 1), 250);
+      final anavarLog = _inj(tempAnavar, DateTime(2026, 5, 1), 20);
+      final r = dedupeUserCompounds([tempTe, tempAnavar, keptTe],
+          injections: [teLog, anavarLog]);
+      expect(r.compounds.map((c) => c.id), ['te', 'temp']);
+      expect(r.idRemap, isEmpty); // 'temp' is ambiguous: still Oxandrolone's id
+      expect(r.injections[0].compoundId, 'te');
+      expect(identical(r.injections[1], anavarLog), isTrue);
+    });
+  });
+
+  group('duplicates in catalogue / protocol follow the dedupe winner (B6)', () {
+    final te = BASE_LIBRARY['Testosterone Enanthate']!;
+    final first = te.copyWith(id: 'first', colorValue: 0xFF000001);
+    final second = te.copyWith(id: 'second', colorValue: 0xFF000002);
+
+    test('cataloguedCompounds lists one row: the later duplicate', () {
+      final rows = cataloguedCompounds(userCompounds: [first, second])
+          .where((c) => keyOf(c) == keyOf(te))
+          .toList();
+      expect(rows.map((c) => c.id), ['second']);
+    });
+
+    test('protocolCompounds lists one row: the later duplicate', () {
+      final now = DateTime(2026, 5, 23);
+      final rows = protocolCompounds(
+        userCompounds: [first, second],
+        injections: [_inj(first, now.subtract(const Duration(days: 2)), 250)],
+        now: now,
+      );
+      expect(rows.map((c) => c.id), ['second']);
+    });
+
+    test('cataloguedCompounds order does not depend on input order', () {
+      CompoundDefinition custom(String id, String ester) => CompoundDefinition(
+            id: id, base: 'Zeta', ester: ester,
+            type: CompoundType.steroid, graphType: GraphType.curve,
+            halfLife: 5, timeToPeak: 1, ratio: 1, unit: Unit.mg,
+            colorValue: 0xFF000000, isCustom: true,
+          );
+      final a = custom('a', 'Alpha');
+      final b = custom('b', 'Beta');
+      final c = custom('c', 'Gamma');
+      List<String> ids(List<CompoundDefinition> u) =>
+          cataloguedCompounds(userCompounds: u).map((x) => x.id).toList();
+      expect(ids([c, a, b]), ids([a, b, c]));
+      expect(ids([b, c, a]), ids([a, b, c]));
     });
   });
 }

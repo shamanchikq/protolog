@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:protolog_tracker/models.dart';
 import 'package:protolog_tracker/engine/backup.dart';
@@ -111,6 +112,116 @@ void main() {
       expect(res.changedReminders, 1);
     });
 
+    test('counts new and replaced records apart and reports changed reminder ids (B23, B16)',
+        () {
+      final bw = BloodworkEntry(
+          id: 'b1', date: DateTime(2026, 6, 2), marker: 'E2', value: 90, unit: 'pmol/L');
+      final incoming = decodeBackup(encodeBackup(
+        injections: [],
+        compounds: [_testE.copyWith(halfLife: 6), _testE.copyWith(id: 'c2', base: 'Custom')],
+        reminders: [_rem('same'), _rem('edited', interval: 7), _rem('new')],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        bloodwork: [bw.copyWith(value: 95)],
+      ))!;
+      final res = mergeBackup(
+        injections: [],
+        compounds: [_testE],
+        reminders: [_rem('same'), _rem('edited')],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        bloodwork: [bw],
+        incoming: incoming,
+      );
+      expect((res.newCompounds, res.replacedCompounds), (1, 1));
+      expect((res.newReminders, res.replacedReminders), (1, 1));
+      expect((res.newBloodwork, res.replacedBloodwork), (0, 1));
+      expect(res.changedReminderIds, {'edited', 'new'});
+      expect(res.totalChanges, 5);
+    });
+
+    test("a replaced reminder keeps this device's notification seed (N6)", () {
+      Reminder seeded(int seed, {bool enabled = true}) => Reminder(
+            id: 'r1',
+            compoundBase: 'Testosterone',
+            compoundEster: 'Enanthate',
+            intervalDays: 3.5,
+            hour: 8,
+            minute: 0,
+            enabled: enabled,
+            anchorDate: DateTime(2026, 7, 14, 8, 0),
+            notificationSeed: seed,
+          );
+      BackupMergeResult merge(Reminder theirs) => mergeBackup(
+            injections: [],
+            compounds: [],
+            reminders: [seeded(500)],
+            customSitesIM: [],
+            customSitesSubQ: [],
+            incoming: decodeBackup(encodeBackup(
+                injections: [],
+                compounds: [],
+                reminders: [theirs],
+                customSitesIM: [],
+                customSitesSubQ: []))!,
+          );
+
+      final onlySeed = merge(seeded(777));
+      expect(onlySeed.totalChanges, 0, reason: 'a different seed alone is no change');
+      expect(onlySeed.reminders.single.notificationSeed, 500);
+
+      final disabled = merge(seeded(777, enabled: false));
+      expect(disabled.reminders.single.enabled, isFalse);
+      expect(disabled.reminders.single.notificationSeed, 500);
+      expect(disabled.changedReminderIds, {'r1'});
+    });
+
+    test("a restored duplicate of a compound collapses into the backup's copy (B6)", () {
+      final adopted = _testE.copyWith(id: '1700000000'); // the new phone's wizard
+      final incoming = decodeBackup(encodeBackup(
+        injections: [_inj('old')],
+        compounds: [_testE.copyWith(halfLife: 6)],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+      ))!;
+      final res = mergeBackup(
+        injections: [
+          Injection(
+              id: 'new', compoundId: adopted.id, date: DateTime(2026, 9, 1), dosage: 150,
+              snapshot: adopted),
+        ],
+        compounds: [adopted],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        incoming: incoming,
+      );
+      expect(res.compounds.map((c) => (c.id, c.halfLife)), [('test_e', 6.0)]);
+      expect(res.injections.map((i) => i.compoundId), ['test_e', 'test_e']);
+    });
+
+    test('an old backup gets the Anastrozole spelling before it is compared (G7)', () {
+      final local = _rem('r1').copyWith(compoundBase: 'Anastrozole', compoundEster: 'None');
+      final incoming = decodeBackup(encodeBackup(
+        injections: [],
+        compounds: [],
+        reminders: [local.copyWith(compoundBase: 'Anastrazole')],
+        customSitesIM: [],
+        customSitesSubQ: [],
+      ))!;
+      final res = mergeBackup(
+        injections: [],
+        compounds: [],
+        reminders: [local],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        incoming: incoming,
+      );
+      expect(res.totalChanges, 0);
+      expect(res.reminders.single.compoundBase, 'Anastrozole');
+    });
+
     test('identical incoming state is a no-op with zero counts', () {
       final incoming = decodeBackup(encodeBackup(
         injections: [_inj('i1')],
@@ -191,6 +302,175 @@ void main() {
       );
       expect(res.customSitesIM, ['Quad sweep L', 'Pec R']);
       expect(res.customSitesSubQ, ['Navel L']);
+      expect(res.newSites, 2);
+      expect(res.totalChanges, 2);
+    });
+
+    test('totalChanges sums every kind of change', () {
+      final incoming = decodeBackup(encodeBackup(
+        injections: [_inj('i1'), _inj('i2')],
+        compounds: [_testE],
+        reminders: [_rem('r1')],
+        customSitesIM: ['Pec R'],
+        customSitesSubQ: [],
+        bloodwork: [
+          BloodworkEntry(id: 'b1', date: DateTime(2026, 6, 2), marker: 'E2', value: 90, unit: 'pmol/L'),
+        ],
+      ))!;
+      final res = mergeBackup(
+        injections: [_inj('i1')],
+        compounds: [],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        incoming: incoming,
+      );
+      expect((res.newInjections, res.changedCompounds, res.changedReminders,
+          res.newBloodwork, res.newSites), (1, 1, 1, 1, 1));
+      expect(res.totalChanges, 5);
+    });
+  });
+
+  test('backupFileName is protolog_backup_YYYY-MM-DD.json', () {
+    expect(backupFileName(DateTime(2026, 3, 7, 23, 59)), 'protolog_backup_2026-03-07.json');
+    expect(backupFileName(DateTime(2026, 11, 21)), 'protolog_backup_2026-11-21.json');
+  });
+
+  group('decodeBackup drops invalid records (A7)', () {
+    String envelope(Map<String, Object?> sections) => jsonEncode({
+          'app': 'protolog',
+          'schemaVersion': 1,
+          'injections': [],
+          'compounds': [],
+          'reminders': [],
+          'customSitesIM': [],
+          'customSitesSubQ': [],
+          ...sections,
+        });
+    Map<String, dynamic> json(Reminder r) => jsonDecode(jsonEncode(r.toJson()));
+
+    test('a clean file skips nothing', () {
+      final data = decodeBackup(encodeBackup(
+        injections: [_inj('i1')],
+        compounds: [_testE],
+        reminders: [_rem('r1')],
+        customSitesIM: ['Delt L'],
+        customSitesSubQ: [],
+      ))!;
+      expect(data.skipped, 0);
+    });
+
+    test('a weekday-0 reminder is dropped (its slot loop hung every launch)', () {
+      final bad = json(_rem('bad'))
+        ..['scheduleMode'] = 'custom'
+        ..['customSlots'] = [
+          {'weekday': 0, 'hour': 8, 'minute': 0},
+        ];
+      final data = decodeBackup(envelope({
+        'reminders': [_rem('ok').toJson(), bad],
+      }))!;
+      expect(data.reminders.map((r) => r.id), ['ok']);
+      expect(data.skipped, 1);
+    });
+
+    test('interval reminders with a zero, negative or absurd interval are dropped', () {
+      final data = decodeBackup(envelope({
+        'reminders': [
+          json(_rem('zero'))..['intervalDays'] = 0,
+          json(_rem('neg'))..['intervalDays'] = -3.5,
+          json(_rem('huge'))..['intervalDays'] = 1e6,
+          json(_rem('hour'))..['hour'] = 24,
+          _rem('ok').toJson(),
+        ],
+      }))!;
+      expect(data.reminders.map((r) => r.id), ['ok']);
+      expect(data.skipped, 4);
+    });
+
+    test('records with non-finite numbers are dropped, so later saves keep working', () {
+      // jsonEncode can't write Infinity, so splice 1e999 into the text.
+      final text = encodeBackup(
+        injections: [_inj('inf', mg: 123.25), _inj('ok')],
+        compounds: [_testE.copyWith(id: 'hl', halfLife: 7.25)],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        bloodwork: [
+          BloodworkEntry(
+            id: 'bw', date: DateTime(2026, 7, 1), marker: 'E2',
+            value: 42.125, unit: 'pmol/L',
+          ),
+        ],
+        exportedAt: DateTime(2026, 7, 1), // keep the spliced numbers unique
+      )
+          .replaceFirst('123.25', '1e999')
+          .replaceFirst('7.25', '-1e999')
+          .replaceFirst('42.125', '1e999');
+      final data = decodeBackup(text)!;
+      expect(data.injections.map((i) => i.id), ['ok']);
+      expect(data.compounds, isEmpty);
+      expect(data.bloodwork, isEmpty);
+      expect(data.skipped, 3);
+
+      final res = mergeBackup(
+        injections: [],
+        compounds: [],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        incoming: data,
+      );
+      expect(() => jsonEncode(res.injections.map((e) => e.toJson()).toList()),
+          returnsNormally);
+    });
+
+    test('a malformed record costs only itself, not the whole file', () {
+      final data = decodeBackup(envelope({
+        'injections': [_inj('ok').toJson(), {'id': 'no-date'}, 'junk', null],
+      }))!;
+      expect(data.injections.map((i) => i.id), ['ok']);
+      expect(data.skipped, 3);
+    });
+
+    test('non-string custom sites are dropped', () {
+      final data = decodeBackup(envelope({
+        'customSitesIM': ['Delt L', 3, null],
+      }))!;
+      expect(data.customSitesIM, ['Delt L']);
+      expect(data.skipped, 2);
+    });
+
+    test('a section that is not a list still rejects the file', () {
+      expect(decodeBackup(envelope({'reminders': {'id': 'x'}})), isNull);
+      expect(decodeBackup(envelope({'customSitesIM': 'Delt L'})), isNull);
+    });
+  });
+
+  group('set-aside unreadable data', () {
+    test('rides along in the backup file; restore ignores it', () {
+      final text = encodeBackup(
+        injections: [],
+        compounds: [],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        unreadable: {'reminders_unreadable_1': '[{"id":'},
+      );
+      expect((jsonDecode(text) as Map)['unreadable'], {'reminders_unreadable_1': '[{"id":'});
+      final data = decodeBackup(text)!;
+      expect(data.reminders, isEmpty);
+      expect(data.skipped, 0);
+    });
+
+    test('is omitted when there is none', () {
+      final text = encodeBackup(
+        injections: [],
+        compounds: [],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+      );
+      expect((jsonDecode(text) as Map).containsKey('unreadable'), isFalse);
     });
   });
 }

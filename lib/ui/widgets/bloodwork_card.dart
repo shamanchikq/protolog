@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../engine/bloodwork_stats.dart';
 import '../../models.dart';
+import '../format.dart';
 import '../theme.dart';
 import 'lab_primitives.dart';
+import 'lab_tap.dart';
 
 /// Dashboard card (F6): the latest draw of each marker, most recently drawn
 /// first, with its change vs the previous draw. Older draws live on the
@@ -23,31 +25,14 @@ class BloodworkCard extends StatelessWidget {
     this.maxRows = 6,
   });
 
-  static const _monthsShort = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-
-  String _fmtValue(double v) =>
-      v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
-
   Widget _delta(BloodworkEntry e) {
-    final d = deltaVsPrevious(e, entries);
-    if (d == null || d == 0) return const SizedBox.shrink();
+    final prev = previousDraw(e, entries);
+    final text = prev == null ? '' : formatLabDelta(e.value, prev.value);
+    if (text.isEmpty) return const SizedBox.shrink();
     // Neutral color on purpose: "up" is good for some markers (Total T)
     // and bad for others (LDL, E2) — the app shouldn't editorialize.
     return Text(
-      '${d > 0 ? '↑' : '↓'} ${_fmtValue(d.abs())}',
+      text,
       textAlign: TextAlign.right,
       style: AppTheme.mono(size: 10, color: AppTheme.fgMute),
     );
@@ -56,9 +41,11 @@ class BloodworkCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // One row per marker — its latest draw — ordered by draw recency.
+    final markers = distinctMarkers(entries);
     final visible = [
-      for (final m in distinctMarkers(entries)) historyFor(m, entries).last,
-    ].take(maxRows).toList();
+      for (final m in markers.take(maxRows)) historyFor(m, entries).last,
+    ];
+    final hiddenMarkers = markers.length - visible.length;
 
     return Container(
       decoration: BoxDecoration(
@@ -78,12 +65,12 @@ class BloodworkCard extends StatelessWidget {
                     style: AppTheme.sans(size: 13, weight: FontWeight.w600),
                   ),
                 ),
-                if (entries.length > maxRows)
+                if (hiddenMarkers > 0)
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: Text(
-                      '${entries.length} total',
-                      style: AppTheme.mono(size: 10, color: AppTheme.fgDim),
+                      '+$hiddenMarkers more',
+                      style: AppTheme.mono(size: 10, color: AppTheme.fgDimText),
                     ),
                   ),
                 LabPill(label: '+ Add', onTap: onCreate),
@@ -95,13 +82,12 @@ class BloodworkCard extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
               child: Text(
                 'No lab results yet — log draws to track trends per marker.',
-                style: AppTheme.sans(size: 12, color: AppTheme.fgDim),
+                style: AppTheme.sans(size: 12, color: AppTheme.fgDimText),
               ),
             )
           else
             for (int i = 0; i < visible.length; i++)
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
+              LabTap(
                 onTap: () => onTap(visible[i]),
                 child: Container(
                   decoration: BoxDecoration(
@@ -123,7 +109,7 @@ class BloodworkCard extends StatelessWidget {
                       SizedBox(
                         width: 56,
                         child: Text(
-                          '${_monthsShort[visible[i].date.month - 1]} ${visible[i].date.day}',
+                          formatMonthDay(visible[i].date),
                           style: AppTheme.mono(
                             size: 11,
                             color: AppTheme.fgMute,
@@ -141,7 +127,7 @@ class BloodworkCard extends StatelessWidget {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        '${_fmtValue(visible[i].value)} ${visible[i].unit}'
+                        '${formatLabValue(visible[i].value)} ${visible[i].unit}'
                             .trim(),
                         style: AppTheme.mono(size: 12, color: AppTheme.warm),
                       ),

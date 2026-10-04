@@ -67,27 +67,72 @@ class _PaperPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final whole = total.floor();
-    final frac = ((total - whole) * 10).round().clamp(0, 9);
+    // Non-finite values (legacy bad data) render as "—" rather than throwing
+    // in floor()/round() during build. total * 10 must be finite too.
+    final showTotal = total.isFinite && (total * 10).isFinite;
+    // Round once to tenths, then split, so 12.96 reads 13.0 (not 12.9).
+    final totalTenths = showTotal ? (total * 10).round() : 0;
+    final whole = totalTenths ~/ 10;
+    final frac = totalTenths.remainder(10).abs();
+    final showDelta = delta.isFinite && (delta * 10).isFinite;
+    // Arrow and sign follow the displayed (rounded) delta, so a value in
+    // (−0.05, 0) reads "→ +0.0" rather than "−0.0".
+    final deltaTenths = showDelta ? (delta * 10).round() : 0;
 
     String arrow;
     Color arrowColor;
-    if (delta >= 0.05) {
+    if (deltaTenths > 0) {
       arrow = '↗';
       arrowColor = AppTheme.accentDeep;
-    } else if (delta <= -0.05) {
+    } else if (deltaTenths < 0) {
       arrow = '↘';
-      arrowColor = AppTheme.warn;
+      arrowColor = AppTheme.warnOnPaper;
     } else {
       arrow = '→';
-      arrowColor = AppTheme.paperInk.withValues(alpha: 0.55);
+      arrowColor = AppTheme.paperInkMute;
     }
-    final deltaStr = '${delta >= 0 ? '+' : '−'}${delta.abs().toStringAsFixed(1)}';
+    final deltaStr = showDelta
+        ? '${deltaTenths < 0 ? '−' : '+'}${(deltaTenths.abs() / 10).toStringAsFixed(1)}'
+        : '—';
 
     // Padding grows a little with scale so the content breathes inside a taller card.
     final padV = 16.0 + (scale - 1.0) * 10.0;
     final padH = 18.0 + (scale - 1.0) * 6.0;
 
+    // One spoken sentence instead of number fragments and an arrow glyph.
+    final trend = !showDelta
+        ? 'unknown'
+        : deltaTenths > 0
+            ? 'up ${deltaStr.substring(1)} mg'
+            : deltaTenths < 0
+                ? 'down ${deltaStr.substring(1)} mg'
+                : 'flat';
+    final label = showTotal
+        ? 'Total load $whole.$frac mg. Injectables 7 day trend: $trend.'
+        : 'Total load unavailable.';
+
+    return Semantics(
+      container: true,
+      label: label,
+      child: ExcludeSemantics(
+        child: _paper(
+          padH: padH, padV: padV, showTotal: showTotal, whole: whole, frac: frac,
+          arrow: arrow, arrowColor: arrowColor, deltaStr: deltaStr,
+        ),
+      ),
+    );
+  }
+
+  Widget _paper({
+    required double padH,
+    required double padV,
+    required bool showTotal,
+    required int whole,
+    required int frac,
+    required String arrow,
+    required Color arrowColor,
+    required String deltaStr,
+  }) {
     return Stack(
       children: [
         Container(color: AppTheme.paper),
@@ -101,45 +146,55 @@ class _PaperPanel extends StatelessWidget {
                 'Total load',
                 style: AppTheme.sans(
                   size: 11 * scale,
-                  color: AppTheme.paperInk.withValues(alpha: 0.6),
+                  color: AppTheme.paperInkMute,
                 ),
               ),
               SizedBox(height: 6 * scale),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Text(
-                    '$whole',
-                    style: AppTheme.serif(
-                      size: 48 * scale,
-                      weight: FontWeight.w500,
-                      color: AppTheme.paperInk,
-                      letterSpacing: -1.5,
-                      height: 1,
+              // Scales down (never up) when a 4-digit total, a tall card's
+              // typography scale or large system text would overflow (C1).
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    Text(
+                      showTotal ? '$whole' : '—',
+                      style: AppTheme.serif(
+                        size: 48 * scale,
+                        weight: FontWeight.w500,
+                        color: AppTheme.paperInk,
+                        letterSpacing: -1.5,
+                        height: 1,
+                      ),
                     ),
-                  ),
-                  Text(
-                    '.$frac',
-                    style: AppTheme.serif(
-                      size: 28 * scale,
-                      weight: FontWeight.w400,
-                      color: AppTheme.paperInk.withValues(alpha: 0.5),
-                      height: 1,
+                    if (showTotal)
+                      Text(
+                        '.$frac',
+                        style: AppTheme.serif(
+                          size: 28 * scale,
+                          weight: FontWeight.w400,
+                          color: AppTheme.paperInk.withValues(alpha: 0.5),
+                          height: 1,
+                        ),
+                      ),
+                    SizedBox(width: 4 * scale),
+                    Text(
+                      'mg',
+                      style: AppTheme.sans(
+                        size: 12 * scale,
+                        color: AppTheme.paperInkMute,
+                      ),
                     ),
-                  ),
-                  SizedBox(width: 4 * scale),
-                  Text(
-                    'mg',
-                    style: AppTheme.sans(
-                      size: 12 * scale,
-                      color: AppTheme.paperInk.withValues(alpha: 0.55),
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               SizedBox(height: 12 * scale),
-              Row(
+              // Wraps onto a second line rather than overflowing.
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   Text('Injectables 7d · ',
                       style: AppTheme.sans(size: 11 * scale, color: AppTheme.paperInk.withValues(alpha: 0.7))),
@@ -208,7 +263,8 @@ class _BreakdownPanel extends StatelessWidget {
               : [
                   for (int i = 0; i < rows.length; i++) ...[
                     if (i > 0) SizedBox(height: gap),
-                    _BreakdownRow(row: rows[i]),
+                    // "Testosterone 167" as one node.
+                    MergeSemantics(child: _BreakdownRow(row: rows[i])),
                   ],
                 ],
         ),
@@ -238,7 +294,8 @@ class _BreakdownRow extends StatelessWidget {
                 style: AppTheme.sans(size: 11),
               ),
             ),
-            Text(row.valueMg.toStringAsFixed(0), style: AppTheme.mono(size: 11)),
+            Text(row.valueMg.isFinite ? row.valueMg.toStringAsFixed(0) : '—',
+                style: AppTheme.mono(size: 11)),
           ],
         ),
         const SizedBox(height: 4),
@@ -248,7 +305,8 @@ class _BreakdownRow extends StatelessWidget {
             children: [
               Container(color: AppTheme.surface2),
               FractionallySizedBox(
-                widthFactor: row.shareOfTotal.clamp(0.0, 1.0),
+                // NaN.clamp() yields 1.0 — a non-finite share draws no bar.
+                widthFactor: row.shareOfTotal.isFinite ? row.shareOfTotal.clamp(0.0, 1.0) : 0.0,
                 child: Container(color: row.color),
               ),
             ],
