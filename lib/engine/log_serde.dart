@@ -30,20 +30,27 @@ String injectionsToMarkdown(List<Injection> injections) {
 }
 
 /// Parses a markdown log table (legacy 5-column or current 7-column format)
-/// into injections. Rows already present in [existing] (same base+ester,
-/// date within 1 minute, same dosage) are skipped, as are rows whose compound
-/// can't be resolved from [userCompounds] or the built-in library.
+/// into injections. Rows already present in [existing] or earlier in the
+/// same paste (same base+ester, date within 1 minute, same dosage) are
+/// skipped, as are rows whose compound can't be resolved from [userCompounds]
+/// or the built-in library. The header row (and any other row whose date or
+/// dosage doesn't parse) is skipped by validation, so a paste without the
+/// header keeps its first row.
 List<Injection> parseMarkdownLog(
   String text, {
   required List<CompoundDefinition> userCompounds,
   required List<Injection> existing,
 }) {
-  final lines = text
+  // Only a real delimiter row (every cell `---`, `:--`, `--:`, `:-:`) is
+  // dropped — not any row that merely contains "---", like a note (B22).
+  final dataLines = text
       .split('\n')
-      .where((l) => l.trim().startsWith('|') && !l.contains('---'))
+      .where((l) => l.trim().startsWith('|') && !_isDelimiterRow(l))
       .toList();
-  // Skip header row.
-  final dataLines = lines.length > 1 ? lines.sublist(1) : <String>[];
+
+  // Ids already in the log: an import must never reuse one, or deleting the
+  // new entry would delete the old one too (B21).
+  final takenIds = {for (final i in existing) i.id};
 
   final parsed = <Injection>[];
   for (final line in dataLines) {
@@ -79,14 +86,6 @@ List<Injection> parseMarkdownLog(
     }
     final date = DateTime(year, month, day, hour, minute);
 
-    // Skip if this injection already exists (same compound+date+dosage).
-    final alreadyExists = existing.any((i) =>
-        i.snapshot.base == base &&
-        i.snapshot.ester == ester &&
-        i.date.difference(date).inMinutes.abs() < 1 &&
-        i.dosage == dosage);
-    if (alreadyExists) continue;
-
     // Look up compound definition: user compounds first, then built-ins.
     CompoundDefinition? def;
     for (final c in userCompounds) {
@@ -98,16 +97,24 @@ List<Injection> parseMarkdownLog(
     def ??= lookupLibraryDef(base, ester);
     if (def == null) continue;
 
+    // Skip if this injection already exists — in the log or earlier in this
+    // paste (same compound+date+dosage). Compared against the resolved
+    // compound, which is what the new snapshot will carry.
+    final resolved = def;
+    bool isSame(Injection i) =>
+        i.snapshot.base == resolved.base &&
+        i.snapshot.ester == resolved.ester &&
+        i.date.difference(date).inMinutes.abs() < 1 &&
+        i.dosage == dosage;
+    if (existing.any(isSame) || parsed.any(isSame)) continue;
+
     final unit = unitStr == 'mcg'
         ? Unit.mcg
         : unitStr == 'iu'
             ? Unit.iu
             : Unit.mg;
     parsed.add(Injection(
-      // Suffix with the running count: minute-resolution dates alone would
-      // give two same-compound rows in one minute identical ids, and
-      // deleting one would then remove both.
-      id: '${date.millisecondsSinceEpoch}_${base}_${parsed.length}',
+      id: _freshImportId('${date.millisecondsSinceEpoch}_$base', takenIds),
       compoundId: def.id,
       date: date,
       dosage: dosage,
@@ -128,4 +135,28 @@ List<Injection> parseMarkdownLog(
     ));
   }
   return parsed;
+}
+
+final _delimiterCell = RegExp(r'^:?-+:?$');
+
+/// True for a markdown table delimiter row: every cell is dashes with
+/// optional alignment colons.
+bool _isDelimiterRow(String line) {
+  var body = line.trim();
+  if (body.startsWith('|')) body = body.substring(1);
+  if (body.endsWith('|')) body = body.substring(0, body.length - 1);
+  final cells = body.split('|').map((c) => c.trim()).toList();
+  return cells.isNotEmpty && cells.every(_delimiterCell.hasMatch);
+}
+
+/// `<stem>_<n>` with the smallest n ≥ 0 not in [taken]; the id is added to
+/// [taken]. Minute-resolution dates alone would give two same-compound rows
+/// in one minute identical ids, and the per-paste row count alone repeats
+/// across imports (B21) — deleting either entry would then remove both.
+String _freshImportId(String stem, Set<String> taken) {
+  var n = 0;
+  while (!taken.add('${stem}_$n')) {
+    n++;
+  }
+  return '${stem}_$n';
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models.dart';
 import '../../utils.dart';
+import '../format.dart';
 import '../theme.dart';
 import 'lab_primitives.dart';
 
@@ -36,15 +37,12 @@ class _BloodworkEditorDialogState extends State<BloodworkEditorDialog> {
     text: widget.editing?.marker ?? '',
   );
   late final TextEditingController _value = TextEditingController(
-    text: widget.editing != null ? _fmt(widget.editing!.value) : '',
+    text: widget.editing != null ? formatLabValue(widget.editing!.value) : '',
   );
   late final TextEditingController _unit = TextEditingController(
     text: widget.editing?.unit ?? '',
   );
   late DateTime _date = widget.editing?.date ?? DateTime.now();
-
-  static String _fmt(double v) =>
-      v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
 
   @override
   void dispose() {
@@ -54,9 +52,11 @@ class _BloodworkEditorDialogState extends State<BloodworkEditorDialog> {
     super.dispose();
   }
 
+  // 0 is a valid result ("undetectable"); negatives aren't lab values.
+  // parseFlexibleDouble already rejects non-finite input.
   bool get _canSave =>
       _marker.text.trim().isNotEmpty &&
-      (parseFlexibleDouble(_value.text) ?? 0) > 0;
+      (parseFlexibleDouble(_value.text) ?? -1) >= 0;
 
   static const _fieldDecoration = InputDecoration(
     isDense: true,
@@ -64,14 +64,28 @@ class _BloodworkEditorDialogState extends State<BloodworkEditorDialog> {
     contentPadding: EdgeInsets.zero,
   );
 
+  /// Picker bounds: back to 1990 for old labs, up to today — widened to
+  /// include [date] so an imported pre-1990 or future-dated entry still
+  /// opens (showDatePicker asserts first ≤ initial ≤ last).
+  static (DateTime, DateTime) pickerRange(DateTime date, DateTime now) {
+    final day = DateTime(date.year, date.month, date.day);
+    final today = DateTime(now.year, now.month, now.day);
+    final floor = DateTime(1990);
+    return (
+      day.isBefore(floor) ? day : floor,
+      day.isAfter(today) ? day : today,
+    );
+  }
+
   Future<void> _pickDate() async {
+    final (first, last) = pickerRange(_date, DateTime.now());
     final picked = await showDatePicker(
       context: context,
       initialDate: _date,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 1)),
+      firstDate: first,
+      lastDate: last,
     );
-    if (picked != null) setState(() => _date = picked);
+    if (picked != null && mounted) setState(() => _date = picked);
   }
 
   void _save() {
@@ -157,8 +171,15 @@ class _BloodworkEditorDialogState extends State<BloodworkEditorDialog> {
                       label: e.key,
                       active: _marker.text == e.key,
                       onTap: () => setState(() {
+                        // Replace the unit while it's still the previous
+                        // marker's suggestion (or empty); keep a typed one.
+                        final prevSuggestion =
+                            widget.markerSuggestions[_marker.text.trim()];
+                        final unit = _unit.text.trim();
+                        if (unit.isEmpty || unit == prevSuggestion) {
+                          _unit.text = e.value;
+                        }
                         _marker.text = e.key;
-                        if (_unit.text.trim().isEmpty) _unit.text = e.value;
                       }),
                     ),
                 ],

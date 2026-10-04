@@ -2,8 +2,25 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../models.dart';
 import '../data.dart';
+import 'calendar.dart';
+
+/// Memo for [_solveKa], keyed by (ke, tmax). A plain top-level map is
+/// isolate-safe: each isolate (every `compute()` call) gets its own copy.
+/// Real data has a handful of distinct (t½, tmax) pairs, so the bisection
+/// runs a few times per chart instead of on every Bateman sample (E1). The
+/// size cap only guards against pathological inputs.
+final Map<(double, double), double> _kaCache = {};
+const int _kaCacheLimit = 4096;
 
 double _solveKa(double ke, double tmax) {
+  final key = (ke, tmax);
+  final cached = _kaCache[key];
+  if (cached != null) return cached;
+  if (_kaCache.length >= _kaCacheLimit) _kaCache.clear();
+  return _kaCache[key] = _bisectKa(ke, tmax);
+}
+
+double _bisectKa(double ke, double tmax) {
   // The ka that reproduces tmax can sit far above a fixed 100/d when the
   // half-life is short (Suspension: ke ≈ 13.9/d → ka ≈ 123/d; t½ < 0.007 d
   // puts ke itself above 100), so the upper bracket scales with ke. The
@@ -114,7 +131,13 @@ bool isModelableInjection(Injection inj) =>
 double injectionLevelAt(Injection inj, double diffDays) {
   if (!(diffDays >= 0)) return 0.0;
   if (!isModelableInjection(inj)) return 0.0;
-  if (diffDays > relevanceWindowDays(inj.snapshot)) return 0.0;
+  return _modelableLevelAt(inj, diffDays, relevanceWindowDays(inj.snapshot));
+}
+
+/// [injectionLevelAt] for a dose already known to be modelable, with its
+/// [windowDays] precomputed (the chart's hot loop). Same guards, same math.
+double _modelableLevelAt(Injection inj, double diffDays, double windowDays) {
+  if (!(diffDays >= 0) || diffDays > windowDays) return 0.0;
   return calculateActiveLevel(
     inj.dosage,
     diffDays,
@@ -125,15 +148,34 @@ double injectionLevelAt(Injection inj, double diffDays) {
   );
 }
 
+/// The BASE_LIBRARY entry for (base, ester), with its map key as `id` (e.g.
+/// "Sustanon 250", "Drostanolone Propionate"). Falls back to an entry keyed by
+/// [base] itself (orals/peptides/ancillaries). Null when nothing matches.
+/// The id is always the real key — never a shared placeholder — because
+/// callers store it as `Injection.compoundId` / snapshot id and later match
+/// compounds by it.
 CompoundDefinition? lookupLibraryDef(String base, String ester) {
-  for (var entry in BASE_LIBRARY.values) {
-    if (entry.base == base && entry.ester == ester) return entry;
+  for (final entry in BASE_LIBRARY.entries) {
+    final v = entry.value;
+    if (v.base == base && v.ester == ester) return _withKeyId(entry.key, v);
   }
-  return BASE_LIBRARY[base]; // fallback for orals/peptides/ancillaries keyed by base name
+  // Fallback for orals/peptides/ancillaries keyed by base name.
+  final byBase = BASE_LIBRARY[base];
+  return byBase == null ? null : _withKeyId(base, byBase);
 }
 
+CompoundDefinition _withKeyId(String key, CompoundDefinition c) =>
+    c.id == key ? c : c.copyWith(id: key);
+
 // --- HEAVY COMPUTATION ---
-Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
+/// Isolate entry point (`compute(calculateGraphData, input)`): the chart for
+/// the current moment.
+Future<ComputedGraphData> calculateGraphData(IsolateInput input) =>
+    computeGraphData(input, now: DateTime.now());
+
+/// The chart data for [input] as seen at [now] (testable core of
+/// [calculateGraphData]).
+Future<ComputedGraphData> computeGraphData(IsolateInput input, {required DateTime now}) async {
   final injections = input.injections;
   final settings = input.settings;
 
@@ -143,9 +185,12 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
   if (settings.timeRange == 'cycle') { daysBack = 90; daysFwd = 30; }
   if (settings.timeRange == 'year') { daysBack = 365; daysFwd = 30; }
 
-  final now = DateTime.now();
-  final startDate = DateTime(now.year, now.month, now.day).subtract(Duration(days: daysBack));
-  final endDate = DateTime(now.year, now.month, now.day).add(Duration(days: daysFwd)).add(const Duration(hours: 23, minutes: 59));
+  // Calendar-day steps, not Duration(days:): across a DST switch the latter
+  // starts the range at 23:00 / 01:00 instead of local midnight (B27).
+  final today = dateOnly(now);
+  final startDate = addCalendarDays(today, -daysBack);
+  final lastDay = addCalendarDays(today, daysFwd);
+  final endDate = DateTime(lastDay.year, lastDay.month, lastDay.day, 23, 59);
   final totalDurationMs = endDate.difference(startDate).inMilliseconds;
   final startMs = startDate.millisecondsSinceEpoch;
 
@@ -197,72 +242,90 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
 
   final stepsPerDay = settings.timeRange == 'zoom' ? 12 : (settings.timeRange == 'standard' ? 4 : 2);
   final stepSizeMs = 86400000 ~/ stepsPerDay;
+  final endMs = endDate.millisecondsSinceEpoch;
+  final sampleTimes = <int>[
+    for (int t = startMs; t <= endMs; t += stepSizeMs) t,
+  ];
 
-  final Map<String, List<Injection>> injectionsByBase = {};
-  for(var base in uniqueCurveBases) {
-    injectionsByBase[base] = curveInjections.where((i) => i.snapshot.base == base).toList();
+  // Per base, in input order (the first dose decides oral vs injectable
+  // axis and the curve color, as before).
+  final Map<String, List<_SweepDose>> dosesByBase = {};
+  for (var i = 0; i < curveInjections.length; i++) {
+    final inj = curveInjections[i];
+    dosesByBase.putIfAbsent(inj.snapshot.base, () => []).add(_SweepDose(inj, i));
   }
 
-  final Map<String, List<Offset>> tempPoints = {for (var base in uniqueCurveBases) base: []};
+  // Marker levels by position in curveInjections (markers keep input order).
+  final markerLevels = List<double>.filled(curveInjections.length, 0.0);
+  // Σ of steroid-type doses per sample, accumulated during the per-base pass
+  // instead of re-summing every dose (E1).
+  final totalSteroid = List<double>.filled(sampleTimes.length, 0.0);
 
-  for (int currentTime = startMs; currentTime <= endDate.millisecondsSinceEpoch; currentTime += stepSizeMs) {
-    final timePct = (currentTime - startMs) / totalDurationMs;
+  final Map<String, List<Offset>> tempPoints = {};
+  for (final base in uniqueCurveBases) {
+    final inputOrder = dosesByBase[base]!;
+    final isOral = inputOrder.first.inj.snapshot.type == CompoundType.oral;
+    final doses = List<_SweepDose>.of(inputOrder)..sort((a, b) => a.ms.compareTo(b.ms));
 
-    for (var base in uniqueCurveBases) {
+    final points = <Offset>[];
+    final sweep = _DoseSweep(doses);
+    for (var s = 0; s < sampleTimes.length; s++) {
+      final t = sampleTimes[s];
+      sweep.advanceTo(t);
       double level = 0.0;
-      final baseInjections = injectionsByBase[base] ?? [];
-
-      for (var inj in baseInjections) {
-        final diffMs = currentTime - inj.date.millisecondsSinceEpoch;
-        level += injectionLevelAt(inj, diffMs / 86400000.0);
+      for (var k = sweep.lo; k < sweep.hi; k++) {
+        final d = doses[k];
+        final v = _modelableLevelAt(d.inj, (t - d.ms) / 86400000.0, d.windowDays);
+        level += v;
+        if (d.isSteroid) totalSteroid[s] += v;
       }
-      tempPoints[base]!.add(Offset(timePct, level));
-
-      final isOral = baseInjections.isNotEmpty && baseInjections.first.snapshot.type == CompoundType.oral;
+      points.add(Offset((t - startMs) / totalDurationMs, level));
       if (isOral) {
         maxOralMg = math.max(maxOralMg, level);
       } else {
         maxMg = math.max(maxMg, level);
       }
     }
+    tempPoints[base] = points;
+
+    // Marker y = the base's level at each dose's own timestamp; doses are in
+    // time order, so the same window sweep applies.
+    final markerSweep = _DoseSweep(doses);
+    for (final m in doses) {
+      final pct = (m.ms - startMs) / totalDurationMs;
+      if (pct < 0 || pct > 1.0) continue;
+      markerSweep.advanceTo(m.ms);
+      double level = 0.0;
+      for (var k = markerSweep.lo; k < markerSweep.hi; k++) {
+        final d = doses[k];
+        level += _modelableLevelAt(d.inj, (m.ms - d.ms) / 86400000.0, d.windowDays);
+      }
+      markerLevels[m.index] = level;
+    }
   }
 
   final injectionMarkers = <InjectionMarkerData>[];
-  for (var inj in curveInjections) {
-    final ms = inj.date.millisecondsSinceEpoch - startMs;
-    final pct = ms / totalDurationMs;
+  for (var i = 0; i < curveInjections.length; i++) {
+    final inj = curveInjections[i];
+    final pct = (inj.date.millisecondsSinceEpoch - startMs) / totalDurationMs;
     if (pct >= 0 && pct <= 1.0) {
-      final baseInjs = injectionsByBase[inj.snapshot.base] ?? [];
-      double level = 0;
-      for (var other in baseInjs) {
-        final diffMs = inj.date.millisecondsSinceEpoch - other.date.millisecondsSinceEpoch;
-        level += injectionLevelAt(other, diffMs / 86400000.0);
-      }
-      injectionMarkers.add(InjectionMarkerData(pct, level, inj.snapshot.type == CompoundType.oral, inj.snapshot.colorValue, inj.snapshot.base));
+      injectionMarkers.add(InjectionMarkerData(pct, markerLevels[i], inj.snapshot.type == CompoundType.oral, inj.snapshot.colorValue, inj.snapshot.base));
     }
   }
 
   if (settings.cumulative) {
     final List<Offset> totalPoints = [];
     double dailyMaxTotal = 0;
-    for (int currentTime = startMs; currentTime <= endDate.millisecondsSinceEpoch; currentTime += stepSizeMs) {
-      double totalLevel = 0.0;
-      final timePct = (currentTime - startMs) / totalDurationMs;
-      for(var inj in curveInjections.where((i) => i.snapshot.type == CompoundType.steroid)) {
-        final diffMs = currentTime - inj.date.millisecondsSinceEpoch;
-        totalLevel += injectionLevelAt(inj, diffMs / 86400000.0);
-      }
-      totalPoints.add(Offset(timePct, totalLevel));
-      dailyMaxTotal = math.max(dailyMaxTotal, totalLevel);
+    for (var s = 0; s < sampleTimes.length; s++) {
+      totalPoints.add(Offset((sampleTimes[s] - startMs) / totalDurationMs, totalSteroid[s]));
+      dailyMaxTotal = math.max(dailyMaxTotal, totalSteroid[s]);
     }
     curves.add(CurveData('Total Androgens', 0xFFFFFFFF, false, totalPoints));
     maxMg = math.max(maxMg, dailyMaxTotal);
   }
 
   for (var base in uniqueCurveBases) {
-    final baseInjections = injectionsByBase[base];
-    if (baseInjections == null || baseInjections.isEmpty) continue;
-    final sample = baseInjections.first.snapshot;
+    final sample = dosesByBase[base]!.first.inj.snapshot;
     curves.add(CurveData(base, sample.colorValue, sample.type == CompoundType.oral, tempPoints[base]!));
   }
 
@@ -278,4 +341,46 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
     laneCount: uniquePeptideBases.length,
     injectionMarkers: injectionMarkers,
   );
+}
+
+/// A modelable dose prepared for the chart's sweep: timestamp and relevance
+/// window computed once instead of on every sample.
+class _SweepDose {
+  final Injection inj;
+  final int index; // position in the chart's curve-dose list
+  final int ms;
+  final double windowDays;
+  final bool isSteroid;
+  _SweepDose(this.inj, this.index)
+      : ms = inj.date.millisecondsSinceEpoch,
+        windowDays = relevanceWindowDays(inj.snapshot),
+        isSteroid = inj.snapshot.type == CompoundType.steroid;
+}
+
+/// Two-pointer window over time-sorted doses for non-decreasing query times
+/// t: `[lo, hi)` holds every dose taken at or before t that can still
+/// contribute — doses after t (level 0 before the dose) and doses older
+/// than the longest relevance window (level 0 past their window) are
+/// skipped. Each sample then touches only the active doses instead of the
+/// whole history (E1); per-dose windows are still checked exactly by
+/// [_modelableLevelAt].
+class _DoseSweep {
+  final List<_SweepDose> doses;
+  final double maxWindowDays;
+  int lo = 0;
+  int hi = 0;
+
+  _DoseSweep(this.doses)
+      : maxWindowDays = doses.fold(0.0, (m, d) => math.max(m, d.windowDays));
+
+  void advanceTo(int t) {
+    while (hi < doses.length && doses[hi].ms <= t) {
+      hi++;
+    }
+    // Same day arithmetic as _modelableLevelAt, so a skipped dose is exactly
+    // one whose level would be 0 (its window ≤ the longest window).
+    while (lo < hi && (t - doses[lo].ms) / 86400000.0 > maxWindowDays) {
+      lo++;
+    }
+  }
 }

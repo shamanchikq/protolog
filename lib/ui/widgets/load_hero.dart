@@ -116,42 +116,51 @@ class _PaperPanel extends StatelessWidget {
                 ),
               ),
               SizedBox(height: 6 * scale),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Text(
-                    showTotal ? '$whole' : '—',
-                    style: AppTheme.serif(
-                      size: 48 * scale,
-                      weight: FontWeight.w500,
-                      color: AppTheme.paperInk,
-                      letterSpacing: -1.5,
-                      height: 1,
-                    ),
-                  ),
-                  if (showTotal)
+              // Scales down (never up) when a 4-digit total, a tall card's
+              // typography scale or large system text would overflow (C1).
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
                     Text(
-                      '.$frac',
+                      showTotal ? '$whole' : '—',
                       style: AppTheme.serif(
-                        size: 28 * scale,
-                        weight: FontWeight.w400,
-                        color: AppTheme.paperInk.withValues(alpha: 0.5),
+                        size: 48 * scale,
+                        weight: FontWeight.w500,
+                        color: AppTheme.paperInk,
+                        letterSpacing: -1.5,
                         height: 1,
                       ),
                     ),
-                  SizedBox(width: 4 * scale),
-                  Text(
-                    'mg',
-                    style: AppTheme.sans(
-                      size: 12 * scale,
-                      color: AppTheme.paperInk.withValues(alpha: 0.55),
+                    if (showTotal)
+                      Text(
+                        '.$frac',
+                        style: AppTheme.serif(
+                          size: 28 * scale,
+                          weight: FontWeight.w400,
+                          color: AppTheme.paperInk.withValues(alpha: 0.5),
+                          height: 1,
+                        ),
+                      ),
+                    SizedBox(width: 4 * scale),
+                    Text(
+                      'mg',
+                      style: AppTheme.sans(
+                        size: 12 * scale,
+                        color: AppTheme.paperInk.withValues(alpha: 0.55),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               SizedBox(height: 12 * scale),
-              Row(
+              // Wraps onto a second line rather than overflowing.
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   Text('Injectables 7d · ',
                       style: AppTheme.sans(size: 11 * scale, color: AppTheme.paperInk.withValues(alpha: 0.7))),

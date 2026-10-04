@@ -43,7 +43,10 @@ class CompoundDefinition {
   final Unit unit;
   final int colorValue;
   final bool isCustom;
-  final double? concentration; // NEW — mg/mL (or mcg/mL for mcg compounds). Null = unknown.
+  /// Vial concentration. IU/mL for IU-native compounds (`unit == Unit.iu`,
+  /// e.g. HCG, HGH); mg/mL for everything else — including mcg-dosed
+  /// peptides (never mcg/mL). See `engine/dose_math.dart`. Null = unknown.
+  final double? concentration;
 
   const CompoundDefinition({
     required this.id,

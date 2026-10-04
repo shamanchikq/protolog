@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models.dart';
 import '../../engine/bloodwork_stats.dart';
-import '../../engine/dashboard_stats.dart';
+import '../format.dart';
 import '../theme.dart';
 import '../widgets/lab_primitives.dart';
 import '../widgets/bloodwork_editor_dialog.dart';
@@ -38,22 +38,11 @@ class BloodworkPage extends StatefulWidget {
 class _BloodworkPageState extends State<BloodworkPage> {
   late final List<BloodworkEntry> _entries = List.of(widget.initialEntries);
   String? _selected;
-  bool _showPk = false;
 
-  static const _monthsShort = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
+  /// Unit the trend chart plots when the selected marker was recorded in
+  /// several units; null = the most recently used one.
+  String? _unit;
+  bool _showPk = false;
 
   @override
   void initState() {
@@ -65,11 +54,6 @@ class _BloodworkPageState extends State<BloodworkPage> {
         : (markers.isNotEmpty ? markers.first : null);
   }
 
-  static String _fmt(double v) =>
-      v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
-
-  String _fmtDate(DateTime d) => '${_monthsShort[d.month - 1]} ${d.day}';
-
   Future<void> _openEditor({BloodworkEntry? editing}) async {
     final result = await showDialog<BloodworkDialogResult>(
       context: context,
@@ -78,7 +62,7 @@ class _BloodworkPageState extends State<BloodworkPage> {
         markerSuggestions: widget.markerSuggestions,
       ),
     );
-    if (result == null) return;
+    if (result == null || !mounted) return;
     setState(() {
       if (result.delete) {
         _entries.removeWhere((b) => b.id == editing!.id);
@@ -102,10 +86,24 @@ class _BloodworkPageState extends State<BloodworkPage> {
   @override
   Widget build(BuildContext context) {
     final markers = distinctMarkers(_entries);
-    final history = _selected != null
+    // Draws in different units can't share an axis or be subtracted: chart
+    // one unit at a time (the most recent by default) and flag the rest.
+    // The list below still shows every draw so a wrong unit can be fixed.
+    final units = _selected != null
+        ? unitsFor(_selected!, _entries)
+        : const <String>[];
+    final unit = units.isEmpty
+        ? ''
+        : units.firstWhere(
+            (u) => _unit != null && unitKey(u) == unitKey(_unit!),
+            orElse: () => units.first,
+          );
+    final allHistory = _selected != null
         ? historyFor(_selected!, _entries)
         : <BloodworkEntry>[];
-    final unit = history.isNotEmpty ? history.last.unit : '';
+    final history = _selected != null
+        ? historyFor(_selected!, _entries, unit: unit)
+        : <BloodworkEntry>[];
 
     // Optional PK overlay: per-compound modeled curves like the main PK
     // chart, normalized to the tallest curve's peak (shared scale — no unit
@@ -141,7 +139,7 @@ class _BloodworkPageState extends State<BloodworkPage> {
       final rawByBase = <String, List<double>>{};
       var globalMax = 0.0;
       for (final e in injByBase.entries) {
-        final raw = sampleLaneIntensity(
+        final raw = sampleOverlay(
           injections: e.value,
           windowStart: winStart,
           windowEnd: winEnd,
@@ -174,7 +172,7 @@ class _BloodworkPageState extends State<BloodworkPage> {
       final lanesTmp = <(Color, List<double>)>[];
       for (final base in paBases.take(3)) {
         final s = normalized(
-          sampleLaneIntensity(
+          sampleOverlay(
             injections: paByBase[base]!,
             windowStart: winStart,
             windowEnd: winEnd,
@@ -247,7 +245,10 @@ class _BloodworkPageState extends State<BloodworkPage> {
                     LabPill(
                       label: m,
                       active: m == _selected,
-                      onTap: () => setState(() => _selected = m),
+                      onTap: () => setState(() {
+                        _selected = m;
+                        _unit = null;
+                      }),
                     ),
                     const SizedBox(width: 6),
                   ],
@@ -299,6 +300,29 @@ class _BloodworkPageState extends State<BloodworkPage> {
                                     ),
                                 ],
                               ),
+                              if (units.length > 1) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Mixed units — plotting one at a time',
+                                  style: AppTheme.sans(
+                                    size: 10,
+                                    color: AppTheme.fgDim,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 6,
+                                  children: [
+                                    for (final u in units)
+                                      LabPill(
+                                        label: u,
+                                        active: unitKey(u) == unitKey(unit),
+                                        onTap: () => setState(() => _unit = u),
+                                      ),
+                                  ],
+                                ),
+                              ],
                               const SizedBox(height: 8),
                               SizedBox(
                                 height: 160,
@@ -307,7 +331,7 @@ class _BloodworkPageState extends State<BloodworkPage> {
                                     ? Center(
                                         child: Text(
                                           history.length == 1
-                                              ? '${_fmt(history.first.value)} $unit — one draw so far; trends appear with the next one.'
+                                              ? '${formatLabValue(history.first.value)} $unit — one draw so far; trends appear with the next one.'
                                               : 'No draws for this marker.',
                                           style: AppTheme.sans(
                                             size: 11,
@@ -338,10 +362,10 @@ class _BloodworkPageState extends State<BloodworkPage> {
                           ),
                           child: Column(
                             children: [
-                              for (int i = history.length - 1; i >= 0; i--)
+                              for (int i = allHistory.length - 1; i >= 0; i--)
                                 _historyRow(
-                                  history[i],
-                                  first: i == history.length - 1,
+                                  allHistory[i],
+                                  first: i == allHistory.length - 1,
                                 ),
                             ],
                           ),
@@ -356,11 +380,8 @@ class _BloodworkPageState extends State<BloodworkPage> {
   }
 
   Widget _historyRow(BloodworkEntry e, {required bool first}) {
-    final delta = deltaVsPrevious(e, _entries);
-    String deltaStr = '';
-    if (delta != null && delta != 0) {
-      deltaStr = '${delta > 0 ? '↑' : '↓'} ${_fmt(delta.abs())}';
-    }
+    final prev = previousDraw(e, _entries);
+    final deltaStr = prev == null ? '' : formatLabDelta(e.value, prev.value);
     // Neutral: direction isn't universally good or bad across markers.
     const deltaColor = AppTheme.fgMute;
     return GestureDetector(
@@ -380,13 +401,13 @@ class _BloodworkPageState extends State<BloodworkPage> {
             SizedBox(
               width: 64,
               child: Text(
-                _fmtDate(e.date),
+                formatMonthDay(e.date),
                 style: AppTheme.mono(size: 11, color: AppTheme.fgMute),
               ),
             ),
             Expanded(
               child: Text(
-                '${_fmt(e.value)} ${e.unit}'.trim(),
+                '${formatLabValue(e.value)} ${e.unit}'.trim(),
                 style: AppTheme.mono(size: 13, color: AppTheme.fg),
               ),
             ),
@@ -511,13 +532,11 @@ class _TrendPainter extends CustomPainter {
 
     final dot = Paint()..color = AppTheme.warm;
     final tp = TextPainter(textDirection: TextDirection.ltr);
-    String fmt(double v) =>
-        v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
     for (final e in history) {
       final p = pos(e);
       canvas.drawCircle(p, 3, dot);
       tp.text = TextSpan(
-        text: fmt(e.value),
+        text: formatLabValue(e.value),
         style: AppTheme.mono(size: 9, color: AppTheme.fg),
       );
       tp.layout();
@@ -531,24 +550,10 @@ class _TrendPainter extends CustomPainter {
     }
 
     // First/last date labels.
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
     for (final e in [history.first, history.last]) {
       final p = pos(e);
       tp.text = TextSpan(
-        text: '${months[e.date.month - 1]} ${e.date.day}',
+        text: formatMonthDay(e.date),
         style: AppTheme.mono(size: 8, color: AppTheme.fgDim),
       );
       tp.layout();
@@ -560,6 +565,7 @@ class _TrendPainter extends CustomPainter {
         ),
       );
     }
+    tp.dispose();
   }
 
   @override

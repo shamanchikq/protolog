@@ -2,7 +2,21 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../models.dart';
 import '../../utils.dart';
+import '../format.dart';
 import '../theme.dart';
+
+/// [max] rounded up so the axis splits into [ticks] even, readable steps
+/// (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8 × 10ⁿ): 11 → 12 (0 3 6 9 12),
+/// 330 → 400. 1 for a non-positive or non-finite max.
+double niceAxisMax(double max, {int ticks = 4}) {
+  if (!max.isFinite || max <= 0) return 1;
+  final raw = max / ticks;
+  final magnitude = math.pow(10, (math.log(raw) / math.ln10).floor()).toDouble();
+  const steps = [1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0];
+  final f = raw / magnitude;
+  final step = steps.firstWhere((s) => f <= s * (1 + 1e-9), orElse: () => 10.0);
+  return step * magnitude * ticks;
+}
 
 class PKGraphPainter extends CustomPainter {
   final ComputedGraphData graphData;
@@ -36,6 +50,26 @@ class PKGraphPainter extends CustomPainter {
     final chartHeight = graphHeight - paddingBottom;
 
     final textPainter = TextPainter(textDirection: TextDirection.ltr);
+
+    // Value curves (the cumulative "Total Androgens" fill only exists on top
+    // of them). No curves → nothing to put on a y axis.
+    final hasCurves = graphData.curves.any((c) => c.baseName != 'Total Androgens');
+    // The engine floors maxOralMg to ≥ 6 even without orals, so the right
+    // axis keys off an actual oral curve rather than that value.
+    final hasOral = graphData.curves.any((c) => c.isOral);
+    final leftMax = niceAxisMax(graphData.maxMg);
+    final oralMax = niceAxisMax(graphData.maxOralMg);
+    // "% of peak": every curve (and its markers) scales to its own max.
+    final normMax = <String, double>{};
+    if (settings.normalized) {
+      for (final curve in graphData.curves) {
+        var m = 0.0;
+        for (final p in curve.points) {
+          m = math.max(m, p.dy);
+        }
+        normMax[curve.baseName] = m > 0 ? m : 1.0;
+      }
+    }
 
     if (!skipPeptides) {
       final laneBgPaint = Paint()..color = const Color(0xFF0F172A).withValues(alpha: 0.5);
@@ -111,11 +145,7 @@ class PKGraphPainter extends CustomPainter {
       if (curve.baseName == 'Total Androgens' && !settings.cumulative) continue;
       final path = Path();
       if (curve.points.isNotEmpty) {
-        double normalizationMax = 0;
-        if (settings.normalized) { for (var p in curve.points) {
-          normalizationMax = math.max(normalizationMax, p.dy);
-        } if (normalizationMax == 0) normalizationMax = 1; }
-        final double maxY = settings.normalized ? normalizationMax : (curve.isOral ? graphData.maxOralMg : graphData.maxMg);
+        final double maxY = settings.normalized ? normMax[curve.baseName]! : (curve.isOral ? oralMax : leftMax);
         final startX = paddingLeft + (curve.points[0].dx * chartWidth);
         final startY = chartHeight - ((curve.points[0].dy / maxY) * chartHeight);
         path.moveTo(startX, startY);
@@ -141,19 +171,21 @@ class PKGraphPainter extends CustomPainter {
       weight: FontWeight.w400,
     );
     final oralTickStyle = tickStyle.copyWith(color: AppTheme.warm);
-    if (!settings.normalized) {
+    if (!hasCurves) {
+      // Empty chart: no y scale to label (PKChartCard shows the message).
+    } else if (!settings.normalized) {
       for (int i = 0; i <= 4; i++) {
-        final val = (graphData.maxMg * (i / 4)).round();
+        final val = formatDose(leftMax * (i / 4));
         final y = chartHeight - (chartHeight * (i / 4));
-        textPainter.text = TextSpan(text: '$val', style: tickStyle);
+        textPainter.text = TextSpan(text: val, style: tickStyle);
         textPainter.layout();
         textPainter.paint(canvas, Offset(paddingLeft - textPainter.width - 6, y - textPainter.height / 2));
       }
-      if (graphData.maxOralMg > 5) {
+      if (hasOral) {
         for (int i = 0; i <= 4; i++) {
-          final val = (graphData.maxOralMg * (i / 4)).round();
+          final val = formatDose(oralMax * (i / 4));
           final y = chartHeight - (chartHeight * (i / 4));
-          textPainter.text = TextSpan(text: '$val', style: oralTickStyle);
+          textPainter.text = TextSpan(text: val, style: oralTickStyle);
           textPainter.layout();
           textPainter.paint(canvas, Offset(size.width - paddingRight + 6, y - textPainter.height / 2));
         }
@@ -171,9 +203,11 @@ class PKGraphPainter extends CustomPainter {
     // Injection Markers
     for (var marker in graphData.injectionMarkers) {
       final x = paddingLeft + (marker.xPct * chartWidth);
-      final maxY = settings.normalized ? 1.0 : (marker.isOral ? graphData.maxOralMg : graphData.maxMg);
-      final yVal = settings.normalized ? 0.0 : marker.yLevel;
-      final y = chartHeight - ((yVal / maxY) * chartHeight);
+      // "% of peak": the marker's level over its own curve's max (B35).
+      final maxY = settings.normalized
+          ? (normMax[marker.baseName] ?? 1.0)
+          : (marker.isOral ? oralMax : leftMax);
+      final y = chartHeight - ((marker.yLevel / maxY) * chartHeight);
       final markerColor = colorResolver?.call(marker.baseName) ?? Color(marker.colorValue);
       canvas.drawCircle(Offset(x, y), 3.5, Paint()..color = markerColor);
     }
@@ -198,6 +232,7 @@ class PKGraphPainter extends CustomPainter {
     }
 
     canvas.restore();
+    textPainter.dispose();
   }
 
   void _drawDashedLine(Canvas canvas, Offset a, Offset b, Paint paint,

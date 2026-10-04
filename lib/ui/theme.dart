@@ -54,13 +54,15 @@ class AppTheme {
     'aromasin': Color(0xFFD27A6B),
   };
 
+  static final _whitespace = RegExp(r'\s+');
+
   /// Look up the redesign color for a compound base name; returns null
   /// when no override is defined.
   static Color? compoundColor(String base) {
     final key = base.toLowerCase().trim();
     if (_baseColorOverrides.containsKey(key)) return _baseColorOverrides[key];
     // Try first word (e.g. "Sustanon 250" → "sustanon")
-    final firstWord = key.split(RegExp(r'\s+')).first;
+    final firstWord = key.split(_whitespace).first;
     return _baseColorOverrides[firstWord];
   }
 

@@ -67,6 +67,11 @@ List<ActiveLoadEntry> activeInjectableLoad({
   return out;
 }
 
+/// Mean active level of [type] doses over [windowStart]..[windowEnd],
+/// sampled ~[samplesPerDay] times a day at the midpoints of N equal slices
+/// ((i + 0.5) / N). Midpoints avoid the bias of sampling both inclusive
+/// edges, which share a time of day: over a whole dosing period that phase
+/// was counted twice (≈ −5.7 % for weekly dosing measured at the trough).
 double averageActiveMgOverRange({
   required CompoundType type,
   required List<Injection> injections,
@@ -77,21 +82,21 @@ double averageActiveMgOverRange({
   final filtered = injections.where((i) => i.snapshot.type == type).toList();
   if (filtered.isEmpty) return 0.0;
 
-  final totalDays = windowEnd.difference(windowStart).inSeconds / 86400.0;
-  if (totalDays <= 0) return 0.0;
+  final totalMs = windowEnd.difference(windowStart).inMilliseconds;
+  if (totalMs <= 0) return 0.0;
 
-  final totalSamples = (totalDays * samplesPerDay).round().clamp(1, 1000);
+  final totalSamples =
+      (totalMs / 86400000.0 * samplesPerDay).round().clamp(1, 1000);
   double sum = 0.0;
-  for (int i = 0; i <= totalSamples; i++) {
-    final t = windowStart.add(Duration(milliseconds: (i * 86400000 / samplesPerDay).round()));
-    double instant = 0.0;
+  for (int i = 0; i < totalSamples; i++) {
+    final t = windowStart.add(
+        Duration(milliseconds: (totalMs * (i + 0.5) / totalSamples).round()));
     for (final inj in filtered) {
       final diffDays = t.difference(inj.date).inSeconds / 86400.0;
-      instant += injectionLevelAt(inj, diffDays);
+      sum += injectionLevelAt(inj, diffDays);
     }
-    sum += instant;
   }
-  return sum / (totalSamples + 1);
+  return sum / totalSamples;
 }
 
 /// Current total active steroid mg (sum at exactly `now`).

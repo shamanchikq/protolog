@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:protolog_tracker/data.dart';
+import 'package:protolog_tracker/engine/calendar.dart';
 import 'package:protolog_tracker/engine/compute_engine.dart';
+import 'package:protolog_tracker/models.dart';
 
 /// Time (days) of the curve's maximum, sampled finely over [0, horizon].
 double _peakTime(double Function(double t) level, double horizon, {int steps = 4000}) {
@@ -163,6 +165,75 @@ void main() {
         expect(effectiveHalfLife(cyp.copyWith(halfLife: hl)), 0.0, reason: 'hl=$hl');
         expect(relevanceWindowDays(cyp.copyWith(halfLife: hl)), 0.0, reason: 'hl=$hl');
       }
+    });
+  });
+
+  group('library ids (B7)', () {
+    test('every BASE_LIBRARY entry carries its map key as id', () {
+      for (final e in BASE_LIBRARY.entries) {
+        expect(e.value.id, e.key);
+      }
+    });
+
+    test('lookupLibraryDef returns the entry under its real key', () {
+      final te = lookupLibraryDef('Testosterone', 'Enanthate')!;
+      expect(te.id, 'Testosterone Enanthate');
+      final sust = lookupLibraryDef('Testosterone', 'Sustanon (Mix)')!;
+      expect(sust.id, 'Sustanon 250');
+      final mast = lookupLibraryDef('Masteron', 'Propionate')!;
+      expect(mast.id, 'Drostanolone Propionate');
+      final mt2 = lookupLibraryDef('Melanotan II', 'None')!;
+      expect(mt2.id, 'MT2');
+    });
+
+    test('base-name fallback also resolves to the real key', () {
+      final anavar = lookupLibraryDef('Oxandrolone', 'Weird')!;
+      expect(anavar.id, 'Oxandrolone');
+      expect(lookupLibraryDef('Nonexistium', 'None'), isNull);
+    });
+  });
+
+  group('graph range is whole calendar days (B27)', () {
+    // Holds in every zone; catches the DST bug under TZ=Europe/Kyiv
+    // (spring forward Mar 29 2026, fall back Oct 25 2026).
+    const ranges = {
+      'zoom': (back: 7, fwd: 7),
+      'standard': (back: 28, fwd: 35),
+      'cycle': (back: 90, fwd: 30),
+      'year': (back: 365, fwd: 30),
+    };
+    final nows = [
+      DateTime(2026, 4, 2, 15), // just after spring forward
+      DateTime(2026, 10, 27, 9), // just after fall back
+      DateTime(2026, 3, 30, 0, 30),
+      DateTime(2026, 10, 3, 12),
+    ];
+
+    for (final r in ranges.entries) {
+      test('${r.key}: starts at local midnight, ends 23:59, exact day counts', () async {
+        for (final now in nows) {
+          final g = await computeGraphData(
+            IsolateInput(const [], GraphSettings(
+                normalized: false, cumulative: false, showPeptides: true, timeRange: r.key)),
+            now: now,
+          );
+          expect([g.startDate.hour, g.startDate.minute], [0, 0], reason: '$now ${g.startDate}');
+          expect(calendarDaysBetween(g.startDate, now), r.value.back, reason: '$now');
+          expect([g.endDate.hour, g.endDate.minute], [23, 59], reason: '$now ${g.endDate}');
+          expect(calendarDaysBetween(now, g.endDate), r.value.fwd, reason: '$now');
+          expect(g.totalDurationMs, g.endDate.difference(g.startDate).inMilliseconds);
+        }
+      });
+    }
+
+    test('standard range on Apr 2 2026 starts Mar 5 00:00, not Mar 4 23:00', () async {
+      final g = await computeGraphData(
+        IsolateInput(const [], const GraphSettings(
+            normalized: false, cumulative: false, showPeptides: true, timeRange: 'standard')),
+        now: DateTime(2026, 4, 2, 15),
+      );
+      expect(g.startDate, DateTime(2026, 3, 5));
+      expect(g.endDate, DateTime(2026, 5, 7, 23, 59));
     });
   });
 }

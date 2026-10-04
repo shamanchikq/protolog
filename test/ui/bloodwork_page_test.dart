@@ -39,6 +39,70 @@ void main() {
     expect(find.textContaining('↑ 8.5'), findsOneWidget); // 38.5 vs 30
   });
 
+  testWidgets('history deltas have no float noise (B32)', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: BloodworkPage(
+        initialEntries: [
+          _e('a', 'Total T', DateTime(2026, 5, 1), 37.9, 'nmol/L'),
+          _e('b', 'Total T', DateTime(2026, 6, 1), 32.1, 'nmol/L'),
+          _e('c', 'Total T', DateTime(2026, 7, 1), 32.4, 'nmol/L'),
+        ],
+        onChanged: (_) {},
+      ),
+    ));
+    expect(find.text('↓ 5.8'), findsOneWidget);
+    expect(find.text('↑ 0.3'), findsOneWidget);
+    expect(find.textContaining('9999'), findsNothing);
+    expect(find.textContaining('0000'), findsNothing);
+  });
+
+  group('mixed units (B34)', () {
+    final mixed = [
+      _e('a', 'Total T', DateTime(2026, 1, 1), 30, 'nmol/L'),
+      _e('b', 'Total T', DateTime(2026, 3, 1), 900, 'ng/dL'),
+      _e('c', 'Total T', DateTime(2026, 5, 1), 35, 'nmol/L'),
+      _e('e1', 'E2', DateTime(2026, 4, 1), 120, 'pmol/L'),
+    ];
+
+    Future<void> pumpMixed(WidgetTester tester) => tester.pumpWidget(
+          MaterialApp(
+            home: BloodworkPage(initialEntries: mixed, onChanged: (_) {}),
+          ),
+        );
+
+    testWidgets('charts the most recent unit and flags the mismatch', (tester) async {
+      await pumpMixed(tester);
+      expect(find.text('Total T  ·  nmol/L'), findsOneWidget);
+      expect(find.textContaining('Mixed units'), findsOneWidget);
+      // Delta only against the same-unit draw (35 vs 30), none for ng/dL.
+      expect(find.text('↑ 5'), findsOneWidget);
+      expect(find.text('↑ 865'), findsNothing);
+      expect(find.text('↓ 865'), findsNothing);
+      // Full history still lists every draw so it can be fixed.
+      expect(find.text('900 ng/dL'), findsOneWidget);
+    });
+
+    testWidgets('unit pills switch the charted unit; marker switch resets it',
+        (tester) async {
+      await pumpMixed(tester);
+      await tester.tap(find.text('ng/dL'));
+      await tester.pump();
+      expect(find.text('Total T  ·  ng/dL'), findsOneWidget);
+      await tester.tap(find.text('E2'));
+      await tester.pump();
+      expect(find.text('E2  ·  pmol/L'), findsOneWidget);
+      expect(find.textContaining('Mixed units'), findsNothing);
+      await tester.tap(find.text('Total T'));
+      await tester.pump();
+      expect(find.text('Total T  ·  nmol/L'), findsOneWidget);
+    });
+
+    testWidgets('a single unit shows no mismatch flag', (tester) async {
+      await pump(tester);
+      expect(find.textContaining('Mixed units'), findsNothing);
+    });
+  });
+
   testWidgets('tapping another marker chip switches the history', (tester) async {
     await pump(tester);
     await tester.tap(find.text('E2'));

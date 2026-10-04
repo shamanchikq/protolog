@@ -35,6 +35,64 @@ void main() {
     expect(find.text('↑ 8.5'), findsOneWidget);
   });
 
+  testWidgets('delta has no float noise (B32)', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: BloodworkCard(
+          entries: [
+            BloodworkEntry(
+              id: 'a', date: DateTime(2026, 5, 1), marker: 'Total T',
+              value: 37.9, unit: 'nmol/L',
+            ),
+            BloodworkEntry(
+              id: 'b', date: DateTime(2026, 6, 1), marker: 'Total T',
+              value: 32.1, unit: 'nmol/L',
+            ),
+          ],
+          onCreate: () {},
+          onTap: (_) {},
+        ),
+      ),
+    ));
+    expect(find.text('↓ 5.8'), findsOneWidget);
+    expect(find.textContaining('5.79999'), findsNothing);
+  });
+
+  group('hidden-marker badge', () {
+    Future<void> pumpCard(WidgetTester tester, List<BloodworkEntry> e) =>
+        tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: BloodworkCard(entries: e, onCreate: () {}, onTap: (_) {}),
+            ),
+          ),
+        ));
+
+    testWidgets('counts markers that did not fit, not draws', (tester) async {
+      await pumpCard(tester, [
+        for (var m = 0; m < 8; m++)
+          BloodworkEntry(
+            id: 'm$m', date: DateTime(2026, 6, 1 + m), marker: 'M$m',
+            value: 1, unit: 'u',
+          ),
+      ]);
+      expect(find.text('+2 more'), findsOneWidget);
+      expect(find.textContaining('total'), findsNothing);
+    });
+
+    testWidgets('many draws of few markers show no badge', (tester) async {
+      await pumpCard(tester, [
+        for (var d = 0; d < 10; d++)
+          BloodworkEntry(
+            id: 'd$d', date: DateTime(2026, 1, 1 + d), marker: 'E2',
+            value: 100.0 + d, unit: 'pmol/L',
+          ),
+      ]);
+      expect(find.textContaining('more'), findsNothing);
+      expect(find.textContaining('total'), findsNothing);
+    });
+  });
+
   testWidgets('empty state invites the first entry', (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(

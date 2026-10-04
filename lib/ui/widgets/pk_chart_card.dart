@@ -34,8 +34,12 @@ class PKChartCard extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            // Wrap, not Row: at large text sizes the range pills drop under
+            // the title instead of overflowing (C1).
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              runSpacing: 6,
               children: [
                 Text('Pharmacokinetics', style: AppTheme.sans(size: 13, weight: FontWeight.w600)),
                 _RangePills(active: settings.timeRange, onChange: onRangeChanged),
@@ -77,15 +81,38 @@ class PKChartCard extends StatelessWidget {
                 : SizedBox(
                     height: 240,
                     width: double.infinity,
-                    child: RepaintBoundary(
-                      child: CustomPaint(
-                        painter: PKGraphPainter(
-                          graphData: graphData!,
-                          settings: settings,
-                          skipPeptides: true,
-                          colorResolver: colorResolver ?? AppTheme.compoundColor,
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: RepaintBoundary(
+                            child: CustomPaint(
+                              painter: PKGraphPainter(
+                                graphData: graphData!,
+                                settings: settings,
+                                skipPeptides: true,
+                                colorResolver: colorResolver ?? AppTheme.compoundColor,
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
+                        if (!graphData!.curves.any((c) => c.baseName != 'Total Androgens'))
+                          Positioned.fill(
+                            // Inset to the plot area (painter pads 45 left, 20 right/bottom).
+                            left: 45,
+                            right: 20,
+                            bottom: 20,
+                            child: Center(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 12),
+                                child: Text(
+                                  'No injectable or oral doses in this range',
+                                  textAlign: TextAlign.center,
+                                  style: AppTheme.sans(size: 11, color: AppTheme.fgMute),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
           ),
@@ -143,6 +170,7 @@ class _RangePills extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         for (final (id, label) in _ranges) ...[
           GestureDetector(

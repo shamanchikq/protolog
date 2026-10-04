@@ -90,12 +90,24 @@ class _TopBar extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              for (final (tab, label) in _tabs)
-                _Tab(label: label, active: active == tab, onTap: () => onChange(tab)),
-            ],
+          // Full width with spaceBetween when the tabs fit; when large text
+          // makes them wider than the bar, the row scales down uniformly
+          // instead of overflowing (C1).
+          LayoutBuilder(
+            builder: (context, constraints) => FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    for (final (tab, label) in _tabs)
+                      _Tab(label: label, active: active == tab, onTap: () => onChange(tab)),
+                  ],
+                ),
+              ),
+            ),
           ),
         ],
       ),

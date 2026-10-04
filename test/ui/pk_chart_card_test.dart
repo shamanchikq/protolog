@@ -42,4 +42,47 @@ void main() {
     expect(s!.cumulative, isTrue);
     expect(s.normalized, isFalse);
   });
+
+  group('empty state (B36)', () {
+    ComputedGraphData data(List<CurveData> curves) {
+      final start = DateTime(2026, 9, 5);
+      final end = DateTime(2026, 11, 7);
+      return ComputedGraphData(
+        curves: curves,
+        peptideLanes: const [],
+        laneLabels: const [],
+        maxMg: 11,
+        maxOralMg: 6,
+        startDate: start,
+        endDate: end,
+        totalDurationMs: end.difference(start).inMilliseconds,
+        laneCount: 0,
+        injectionMarkers: const [],
+      );
+    }
+
+    Future<void> pumpCard(WidgetTester tester, ComputedGraphData d) =>
+        tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+            body: PKChartCard(
+              graphData: d,
+              settings: base,
+              onRangeChanged: (_) {},
+              onSettingsChanged: (_) {},
+            ),
+          ),
+        ));
+
+    testWidgets('no curves shows a message instead of a bare grid', (tester) async {
+      await pumpCard(tester, data(const []));
+      expect(find.textContaining('No injectable or oral doses'), findsOneWidget);
+    });
+
+    testWidgets('with a curve there is no message', (tester) async {
+      await pumpCard(tester, data([
+        CurveData('Testosterone', 0xFF5DC59C, false, const [Offset(0, 0), Offset(1, 5)]),
+      ]));
+      expect(find.textContaining('No injectable or oral doses'), findsNothing);
+    });
+  });
 }

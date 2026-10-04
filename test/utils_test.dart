@@ -35,5 +35,36 @@ void main() {
       expect(parseFlexibleDouble(' 3,5 '), 3.5);
       expect(parseFlexibleDouble('1e3'), 1000.0);
     });
+
+    test('EU decimal commas keep working (B13)', () {
+      expect(parseFlexibleDouble('3,5'), 3.5);
+      expect(parseFlexibleDouble('0,250'), 0.25);
+      expect(parseFlexibleDouble('12,5'), 12.5);
+      expect(parseFlexibleDouble('-0,250'), -0.25);
+      expect(parseFlexibleDouble('1,50'), 1.5);
+      expect(parseFlexibleDouble('1,5000'), 1.5);
+      expect(parseFlexibleDouble(',5'), 0.5);
+    });
+
+    test('a comma that reads as a thousands separator is rejected (B13)', () {
+      // "5,000" IU HCG must not be logged as 5 IU.
+      expect(parseFlexibleDouble('5,000'), isNull);
+      expect(parseFlexibleDouble('1,500'), isNull);
+      expect(parseFlexibleDouble('12,345'), isNull);
+      expect(parseFlexibleDouble('100,250'), isNull);
+      expect(parseFlexibleDouble('1,000,000'), isNull);
+      expect(parseFlexibleDouble('1,5,0'), isNull);
+    });
+
+    test('mixed separators are rejected (B13)', () {
+      expect(parseFlexibleDouble('1.000,5'), isNull);
+      expect(parseFlexibleDouble('1,000.5'), isNull);
+    });
+
+    test('a dot is always the decimal point', () {
+      // Prefills and Dart's own toString use '.', so "1.500" means 1.5.
+      expect(parseFlexibleDouble('1.500'), 1.5);
+      expect(parseFlexibleDouble('0.125'), 0.125);
+    });
   });
 }
