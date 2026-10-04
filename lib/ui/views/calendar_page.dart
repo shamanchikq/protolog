@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../engine/calendar.dart';
 import '../../models.dart';
+import '../format.dart';
 import '../theme.dart';
 
 class CalendarPage extends StatefulWidget {
@@ -16,6 +18,10 @@ class CalendarPage extends StatefulWidget {
   /// color when not supplied (e.g. in widget tests).
   final Color Function(String baseName)? colorResolver;
 
+  /// "Now" for today's highlight and the initial selection; the real clock
+  /// when null (tests pin it).
+  final DateTime? now;
+
   const CalendarPage({
     super.key,
     required this.injections,
@@ -24,61 +30,32 @@ class CalendarPage extends StatefulWidget {
     this.onEditInjection,
     this.onDaySelected,
     this.colorResolver,
+    this.now,
   });
 
   @override
   State<CalendarPage> createState() => _CalendarPageState();
 }
 
-class _CalendarPageState extends State<CalendarPage> {
-  static const _monthNames = [
-    'January',
-    'February',
-    'March',
-    'April',
-    'May',
-    'June',
-    'July',
-    'August',
-    'September',
-    'October',
-    'November',
-    'December',
-  ];
-  static const _weekdayInitials = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-  static const _weekdayFull = [
-    'MONDAY',
-    'TUESDAY',
-    'WEDNESDAY',
-    'THURSDAY',
-    'FRIDAY',
-    'SATURDAY',
-    'SUNDAY',
-  ];
-  static const _monthNamesShort = [
-    'JAN',
-    'FEB',
-    'MAR',
-    'APR',
-    'MAY',
-    'JUN',
-    'JUL',
-    'AUG',
-    'SEP',
-    'OCT',
-    'NOV',
-    'DEC',
-  ];
+/// "0.25 mg": amount without float noise or truncation + unit name.
+String _doseText(Injection inj) =>
+    '${formatDose(inj.dosage)} ${inj.snapshot.unit.name}';
 
+class _CalendarPageState extends State<CalendarPage> {
+  // All date logic below works on calendar fields (DateTime(y, m, d),
+  // isSameCalendarDay) — never Duration(days:) — so the grid and day
+  // grouping stay right across DST switches (B27).
   late DateTime _month;
   late DateTime _selectedDay;
+
+  DateTime get _now => widget.now ?? DateTime.now();
 
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
+    final now = _now;
     _month = DateTime(now.year, now.month);
-    _selectedDay = DateTime(now.year, now.month, now.day);
+    _selectedDay = dateOnly(now);
     // Report the initial (today) selection so the host can pre-fill the
     // "Log dose" FAB with the calendar's current day.
     WidgetsBinding.instance.addPostFrameCallback(
@@ -107,22 +84,25 @@ class _CalendarPageState extends State<CalendarPage> {
 
   List<Injection> _entriesForSelectedDay() {
     final d = _selectedDay;
-    final list = widget.injections
-        .where(
-          (i) =>
-              i.date.year == d.year &&
-              i.date.month == d.month &&
-              i.date.day == d.day,
-        )
-        .toList();
+    final list =
+        widget.injections.where((i) => isSameCalendarDay(i.date, d)).toList();
     list.sort((a, b) => a.date.compareTo(b.date));
     return list;
   }
 
+  /// Moves the grid by [delta] months and moves the selection with it —
+  /// today when it falls in the new month, else the 1st — so the day list
+  /// and the "Log dose" FAB pre-fill never point at a day off-screen (B31).
   void _changeMonth(int delta) {
+    final month = DateTime(_month.year, _month.month + delta);
+    final today = dateOnly(_now);
+    final selected =
+        (today.year == month.year && today.month == month.month) ? today : month;
     setState(() {
-      _month = DateTime(_month.year, _month.month + delta);
+      _month = month;
+      _selectedDay = selected;
     });
+    widget.onDaySelected?.call(selected);
   }
 
   void _selectDay(int day) {
@@ -135,12 +115,8 @@ class _CalendarPageState extends State<CalendarPage> {
   Future<bool> _confirmDelete(Injection inj) async {
     final esterRaw = inj.snapshot.ester;
     final hasEster = esterRaw.isNotEmpty && esterRaw.toLowerCase() != 'none';
-    final unit = inj.snapshot.unit.toString().split('.').last;
-    final dosageStr = inj.dosage == inj.dosage.truncateToDouble()
-        ? inj.dosage.toStringAsFixed(0)
-        : inj.dosage.toString();
     final description =
-        "${inj.snapshot.base}${hasEster ? ' $esterRaw' : ''} — $dosageStr $unit";
+        "${inj.snapshot.base}${hasEster ? ' $esterRaw' : ''} — ${_doseText(inj)}";
 
     final result = await showDialog<bool>(
       context: context,
@@ -217,16 +193,15 @@ class _CalendarPageState extends State<CalendarPage> {
         const SizedBox(height: 18),
         _MonthHeader(
           month: _month,
-          monthNames: _monthNames,
           onPrev: () => _changeMonth(-1),
           onNext: () => _changeMonth(1),
         ),
         const SizedBox(height: 18),
-        const _WeekdayStrip(initials: _weekdayInitials),
+        const _WeekdayStrip(),
         const SizedBox(height: 8),
         _MonthGrid(
           month: _month,
-          today: DateTime.now(),
+          today: _now,
           selectedDay: _selectedDay,
           dayBars: dayBars,
           onDayTap: _selectDay,
@@ -238,8 +213,6 @@ class _CalendarPageState extends State<CalendarPage> {
           child: _SelectedDaySection(
             selectedDay: _selectedDay,
             entries: entries,
-            weekdayFull: _weekdayFull,
-            monthShort: _monthNamesShort,
             onDeleteConfirm: _confirmDelete,
             onDelete: widget.onDeleteInjection,
             onEditNotes: widget.onUpdateNotes,
@@ -254,13 +227,11 @@ class _CalendarPageState extends State<CalendarPage> {
 
 class _MonthHeader extends StatelessWidget {
   final DateTime month;
-  final List<String> monthNames;
   final VoidCallback onPrev;
   final VoidCallback onNext;
 
   const _MonthHeader({
     required this.month,
-    required this.monthNames,
     required this.onPrev,
     required this.onNext,
   });
@@ -283,7 +254,7 @@ class _MonthHeader extends StatelessWidget {
                   letterSpacing: -0.5,
                 ),
                 children: [
-                  TextSpan(text: '${monthNames[month.month - 1]} '),
+                  TextSpan(text: '${monthsLong[month.month - 1]} '),
                   TextSpan(
                     text: '${month.year}',
                     style: AppTheme.serif(
@@ -333,15 +304,16 @@ class _ChevronButton extends StatelessWidget {
 }
 
 class _WeekdayStrip extends StatelessWidget {
-  final List<String> initials;
-  const _WeekdayStrip({required this.initials});
+  const _WeekdayStrip();
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14),
       child: Row(
-        children: initials
+        // M T W T F S S
+        children: weekdaysShort
+            .map((d) => d[0])
             .map(
               (d) => Expanded(
                 child: Center(
@@ -386,6 +358,7 @@ class _MonthGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final year = month.year;
     final m = month.month;
+    // Day 0 of next month = last day of this one (calendar fields, DST-safe).
     final daysInMonth = DateTime(year, m + 1, 0).day;
     final firstWeekday = DateTime(year, m, 1).weekday; // 1=Mon
     final leading = firstWeekday - 1;
@@ -415,12 +388,9 @@ class _MonthGrid extends StatelessWidget {
               return const SizedBox.shrink();
             }
             final day = index - leading + 1;
-            final isToday =
-                today.year == year && today.month == m && today.day == day;
-            final isSelected =
-                selectedDay.year == year &&
-                selectedDay.month == m &&
-                selectedDay.day == day;
+            final date = DateTime(year, m, day);
+            final isToday = isSameCalendarDay(today, date);
+            final isSelected = isSameCalendarDay(selectedDay, date);
             final bars = dayBars[day] ?? const <Color>[];
             return _DayCell(
               day: day,
@@ -505,8 +475,6 @@ class _DayCell extends StatelessWidget {
 class _SelectedDaySection extends StatelessWidget {
   final DateTime selectedDay;
   final List<Injection> entries;
-  final List<String> weekdayFull;
-  final List<String> monthShort;
   final Future<bool> Function(Injection inj) onDeleteConfirm;
   final void Function(String injectionId) onDelete;
   final void Function(String injectionId, String? notes) onEditNotes;
@@ -516,8 +484,6 @@ class _SelectedDaySection extends StatelessWidget {
   const _SelectedDaySection({
     required this.selectedDay,
     required this.entries,
-    required this.weekdayFull,
-    required this.monthShort,
     required this.onDeleteConfirm,
     required this.onDelete,
     required this.onEditNotes,
@@ -529,8 +495,9 @@ class _SelectedDaySection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final header =
-        '${weekdayFull[selectedDay.weekday - 1]}, ${monthShort[selectedDay.month - 1]} ${selectedDay.day}';
+    // "SUNDAY, OCT 4"
+    final header = '${weekdaysLong[selectedDay.weekday - 1].toUpperCase()}, '
+        '${monthsShort[selectedDay.month - 1].toUpperCase()} ${selectedDay.day}';
     final count = entries.length;
     final countStr = '$count ${count == 1 ? 'entry' : 'entries'}';
 
@@ -651,10 +618,6 @@ class _EntryRow extends StatelessWidget {
         : injection.snapshot.base;
     final time =
         '${twoDigits(injection.date.hour)}:${twoDigits(injection.date.minute)}';
-    final unit = injection.snapshot.unit.toString().split('.').last;
-    final dosageStr = injection.dosage == injection.dosage.truncateToDouble()
-        ? injection.dosage.toStringAsFixed(0)
-        : injection.dosage.toString();
     final color =
         colorResolver?.call(injection.snapshot.base) ??
         AppTheme.compoundColor(injection.snapshot.base) ??
@@ -746,7 +709,7 @@ class _EntryRow extends StatelessWidget {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    '$dosageStr $unit',
+                    _doseText(injection),
                     style: AppTheme.mono(size: 12, color: AppTheme.fg),
                   ),
                 ],

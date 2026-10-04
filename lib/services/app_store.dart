@@ -1,11 +1,14 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show compute;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data.dart';
+import '../engine/migrations.dart';
 import '../engine/record_validation.dart';
 import '../engine/stored_data.dart';
 import '../models.dart';
+import 'custom_sites_store.dart';
 
 /// What [AppStore.load] read. The lists are growable — the caller adopts
 /// them as live state. On a failed load every list is empty and nothing
@@ -59,9 +62,6 @@ class LoadResult {
   }
 }
 
-/// The wizard's custom injection-site lists (JSON string lists in prefs).
-typedef CustomSites = ({List<String> im, List<String> subQ});
-
 /// SharedPreferences persistence for the app's collections (A7 semantics):
 ///
 /// * [load] decodes each collection record by record; whatever couldn't be
@@ -74,11 +74,17 @@ class AppStore {
   AppStore({
     Future<SharedPreferences> Function()? prefs,
     DateTime Function()? clock,
+    CustomSitesStore sites = const CustomSitesStore(),
   })  : _prefs = prefs ?? SharedPreferences.getInstance,
-        _clock = clock ?? DateTime.now;
+        _clock = clock ?? DateTime.now,
+        _sites = sites;
 
   final Future<SharedPreferences> Function() _prefs;
   final DateTime Function() _clock;
+
+  /// The wizard's custom-site storage; backups read and write it through
+  /// here so there is one owner of those keys.
+  final CustomSitesStore _sites;
 
   static const kInjections = 'injections';
   static const kCompounds = 'compounds';
@@ -87,9 +93,6 @@ class AppStore {
 
   /// Collections persisted as JSON lists, loaded through decodeStoredList.
   static const dataKeys = [kInjections, kCompounds, kReminders, kBloodwork];
-
-  static const kCustomSitesIM = 'customSitesIM';
-  static const kCustomSitesSubQ = 'customSitesSubQ';
 
   // Keys whose stored contents this session hasn't accounted for yet —
   // neither loaded nor set aside verbatim. Saves skip them, so a failed or
@@ -143,16 +146,25 @@ class AppStore {
       _unsafeKeys.remove(key);
     }
 
-    // Freeze notification-id seeds for reminders saved before the seed
+    // Fix-ups for older data — G7 spelling, B6 duplicate compounds, legacy
+    // 'temp' links — saved once; the next load finds nothing to do.
+    final m = migrateRecords(
+      injections: inj.items,
+      compounds: raw[kCompounds] == null ? List.of(INITIAL_COMPOUNDS) : comp.items,
+      reminders: rem.items,
+    );
+    if (m.injectionsChanged) await saveInjections(m.injections);
+    if (m.compoundsChanged) await saveCompounds(m.compounds);
+    // Also freezes notification-id seeds for reminders saved before the seed
     // existed, while id.hashCode still matches what was scheduled.
-    if (rem.items.any((r) => r.notificationSeed == null)) {
-      await saveReminders(rem.items);
+    if (m.remindersChanged || m.reminders.any((r) => r.notificationSeed == null)) {
+      await saveReminders(m.reminders);
     }
 
     return LoadResult(
-      injections: inj.items,
-      compounds: raw[kCompounds] == null ? List.from(INITIAL_COMPOUNDS) : comp.items,
-      reminders: rem.items,
+      injections: m.injections,
+      compounds: m.compounds,
+      reminders: m.reminders,
       bloodwork: bw.items,
       skipped: skipped,
       unreadable: unreadable,
@@ -174,56 +186,66 @@ class AppStore {
     }
   }
 
-  Future<bool> saveInjections(List<Injection> items) =>
-      _save(kInjections, () => [for (final e in items) e.toJson()]);
+  Future<bool> saveInjections(List<Injection> items) => _save(kInjections, items);
 
-  Future<bool> saveCompounds(List<CompoundDefinition> items) =>
-      _save(kCompounds, () => [for (final e in items) e.toJson()]);
+  Future<bool> saveCompounds(List<CompoundDefinition> items) => _save(kCompounds, items);
 
-  Future<bool> saveReminders(List<Reminder> items) =>
-      _save(kReminders, () => [for (final e in items) e.toJson()]);
+  Future<bool> saveReminders(List<Reminder> items) => _save(kReminders, items);
 
-  Future<bool> saveBloodwork(List<BloodworkEntry> items) =>
-      _save(kBloodwork, () => [for (final e in items) e.toJson()]);
+  Future<bool> saveBloodwork(List<BloodworkEntry> items) => _save(kBloodwork, items);
 
-  /// Writes one collection, encoded synchronously (the state at call time).
-  /// False if encoding or the write failed. A key held back by [unsafeKeys]
-  /// is skipped and counts as success — the load banner already said its
-  /// changes won't be kept.
-  Future<bool> _save(String key, List<Object?> Function() toJson) async {
-    if (_unsafeKeys.contains(key)) return true;
+  /// A collection longer than this is JSON-encoded on a background isolate
+  /// (E4: a long injection history re-encoded on every change janked the
+  /// UI); a shorter one inline, where the isolate hop would cost more.
+  static const kIsolateEncodeThreshold = 300;
+
+  // Per key, the last write queued: writes land in call order even when a
+  // big background encode finishes after a later, smaller one.
+  final Map<String, Future<bool>> _lastWrite = {};
+
+  /// Writes one collection as it is at call time (the records are
+  /// immutable, so a shallow copy is a snapshot). False if encoding or the
+  /// write failed. A key held back by [unsafeKeys] is skipped and counts as
+  /// success — the load banner already said its changes won't be kept.
+  Future<bool> _save(String key, List<Object> items) {
+    if (_unsafeKeys.contains(key)) return Future.value(true);
+    final snapshot = List<Object>.of(items);
+    final Future<String?> text = snapshot.length > kIsolateEncodeThreshold
+        ? compute(_encode, snapshot).then<String?>((t) => t, onError: (Object _) => null)
+        : Future.value(_tryEncode(snapshot));
+    final previous = _lastWrite[key] ?? Future.value(true);
+    final write = previous.then((_) async {
+      try {
+        final t = await text;
+        return t != null && await (await _prefs()).setString(key, t);
+      } catch (_) {
+        return false;
+      }
+    });
+    _lastWrite[key] = write;
+    return write;
+  }
+
+  /// jsonEncode calls each record's toJson. Top-level-safe for [compute].
+  static String _encode(List<Object> items) => jsonEncode(items);
+
+  static String? _tryEncode(List<Object> items) {
     try {
-      final text = jsonEncode(toJson());
-      return await (await _prefs()).setString(key, text);
+      return _encode(items);
     } catch (_) {
-      return false;
+      return null; // e.g. a non-finite double
     }
   }
 
-  /// The wizard-owned custom site lists. An entry that isn't valid JSON
-  /// reads as empty.
-  Future<CustomSites> readCustomSites() async {
-    final prefs = await _prefs();
-    return (im: _readSites(prefs, kCustomSitesIM), subQ: _readSites(prefs, kCustomSitesSubQ));
-  }
+  /// The wizard's custom site lists ([CustomSitesStore.load]: unreadable
+  /// data reads as empty).
+  Future<CustomSites> readCustomSites() => _sites.load();
 
-  static List<String> _readSites(SharedPreferences prefs, String key) {
-    final raw = prefs.getString(key);
-    if (raw == null) return const [];
-    try {
-      return (jsonDecode(raw) as List).whereType<String>().toList();
-    } catch (_) {
-      return const [];
-    }
-  }
-
-  /// False if either write failed.
+  /// Writes both lists through [CustomSitesStore]; false if that threw.
   Future<bool> writeCustomSites(CustomSites sites) async {
     try {
-      final prefs = await _prefs();
-      final im = await prefs.setString(kCustomSitesIM, jsonEncode(sites.im));
-      final subQ = await prefs.setString(kCustomSitesSubQ, jsonEncode(sites.subQ));
-      return im && subQ;
+      await _sites.save(sites);
+      return true;
     } catch (_) {
       return false;
     }

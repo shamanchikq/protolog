@@ -112,6 +112,116 @@ void main() {
       expect(res.changedReminders, 1);
     });
 
+    test('counts new and replaced records apart and reports changed reminder ids (B23, B16)',
+        () {
+      final bw = BloodworkEntry(
+          id: 'b1', date: DateTime(2026, 6, 2), marker: 'E2', value: 90, unit: 'pmol/L');
+      final incoming = decodeBackup(encodeBackup(
+        injections: [],
+        compounds: [_testE.copyWith(halfLife: 6), _testE.copyWith(id: 'c2', base: 'Custom')],
+        reminders: [_rem('same'), _rem('edited', interval: 7), _rem('new')],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        bloodwork: [bw.copyWith(value: 95)],
+      ))!;
+      final res = mergeBackup(
+        injections: [],
+        compounds: [_testE],
+        reminders: [_rem('same'), _rem('edited')],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        bloodwork: [bw],
+        incoming: incoming,
+      );
+      expect((res.newCompounds, res.replacedCompounds), (1, 1));
+      expect((res.newReminders, res.replacedReminders), (1, 1));
+      expect((res.newBloodwork, res.replacedBloodwork), (0, 1));
+      expect(res.changedReminderIds, {'edited', 'new'});
+      expect(res.totalChanges, 5);
+    });
+
+    test("a replaced reminder keeps this device's notification seed (N6)", () {
+      Reminder seeded(int seed, {bool enabled = true}) => Reminder(
+            id: 'r1',
+            compoundBase: 'Testosterone',
+            compoundEster: 'Enanthate',
+            intervalDays: 3.5,
+            hour: 8,
+            minute: 0,
+            enabled: enabled,
+            anchorDate: DateTime(2026, 7, 14, 8, 0),
+            notificationSeed: seed,
+          );
+      BackupMergeResult merge(Reminder theirs) => mergeBackup(
+            injections: [],
+            compounds: [],
+            reminders: [seeded(500)],
+            customSitesIM: [],
+            customSitesSubQ: [],
+            incoming: decodeBackup(encodeBackup(
+                injections: [],
+                compounds: [],
+                reminders: [theirs],
+                customSitesIM: [],
+                customSitesSubQ: []))!,
+          );
+
+      final onlySeed = merge(seeded(777));
+      expect(onlySeed.totalChanges, 0, reason: 'a different seed alone is no change');
+      expect(onlySeed.reminders.single.notificationSeed, 500);
+
+      final disabled = merge(seeded(777, enabled: false));
+      expect(disabled.reminders.single.enabled, isFalse);
+      expect(disabled.reminders.single.notificationSeed, 500);
+      expect(disabled.changedReminderIds, {'r1'});
+    });
+
+    test("a restored duplicate of a compound collapses into the backup's copy (B6)", () {
+      final adopted = _testE.copyWith(id: '1700000000'); // the new phone's wizard
+      final incoming = decodeBackup(encodeBackup(
+        injections: [_inj('old')],
+        compounds: [_testE.copyWith(halfLife: 6)],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+      ))!;
+      final res = mergeBackup(
+        injections: [
+          Injection(
+              id: 'new', compoundId: adopted.id, date: DateTime(2026, 9, 1), dosage: 150,
+              snapshot: adopted),
+        ],
+        compounds: [adopted],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        incoming: incoming,
+      );
+      expect(res.compounds.map((c) => (c.id, c.halfLife)), [('test_e', 6.0)]);
+      expect(res.injections.map((i) => i.compoundId), ['test_e', 'test_e']);
+    });
+
+    test('an old backup gets the Anastrozole spelling before it is compared (G7)', () {
+      final local = _rem('r1').copyWith(compoundBase: 'Anastrozole', compoundEster: 'None');
+      final incoming = decodeBackup(encodeBackup(
+        injections: [],
+        compounds: [],
+        reminders: [local.copyWith(compoundBase: 'Anastrazole')],
+        customSitesIM: [],
+        customSitesSubQ: [],
+      ))!;
+      final res = mergeBackup(
+        injections: [],
+        compounds: [],
+        reminders: [local],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        incoming: incoming,
+      );
+      expect(res.totalChanges, 0);
+      expect(res.reminders.single.compoundBase, 'Anastrozole');
+    });
+
     test('identical incoming state is a no-op with zero counts', () {
       final incoming = decodeBackup(encodeBackup(
         injections: [_inj('i1')],

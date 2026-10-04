@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:protolog_tracker/engine/reminder_notification_plan.dart';
+import 'package:protolog_tracker/services/custom_sites_store.dart';
 import 'package:protolog_tracker/services/reminder_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -24,6 +25,21 @@ class FakeNotificationBackend implements NotificationBackend {
   int permissionRequests = 0;
   NotificationTapHandler? onTap;
 
+  /// Delivered notifications still showing in the shade.
+  final displayed = <int>{};
+
+  /// Makes pendingIds throw.
+  bool failPending = false;
+
+  /// The platform delivers [id]: it shows in the shade, and a one-shot stops
+  /// being pending (a weekly repeat stays pending).
+  void deliver(int id) {
+    final n = pending[id];
+    if (n == null) return;
+    displayed.add(id);
+    if (!n.repeatsWeekly) pending.remove(id);
+  }
+
   @override
   Future<void> initialize(NotificationTapHandler onTap) async {
     calls.add('init');
@@ -35,8 +51,21 @@ class FakeNotificationBackend implements NotificationBackend {
   @override
   Future<({String? payload, String? actionId})?> launchTap() async => launch;
 
+  /// What areNotificationsEnabled reports (null: the platform can't tell).
+  bool? enabled = true;
+
+  /// When set, a permission request changes [enabled] to this.
+  bool? grantOnRequest;
+
   @override
-  Future<void> requestPermission() async => permissionRequests++;
+  Future<bool?> requestPermission() async {
+    permissionRequests++;
+    if (grantOnRequest != null) enabled = grantOnRequest;
+    return enabled;
+  }
+
+  @override
+  Future<bool?> areNotificationsEnabled() async => enabled;
 
   @override
   Future<bool> canScheduleExact() async {
@@ -53,15 +82,31 @@ class FakeNotificationBackend implements NotificationBackend {
   }
 
   @override
+  Future<Set<int>> pendingIds() async {
+    calls.add('pending');
+    if (failPending) throw StateError('no pending list');
+    return pending.keys.toSet();
+  }
+
+  @override
   Future<void> cancel(int id) async {
     if (slowCancel) await Future<void>.delayed(Duration.zero);
     calls.add('cancel:$id');
     if (failCancelIds.contains(id)) throw StateError('cancel $id');
     pending.remove(id);
+    displayed.remove(id);
   }
 
   Iterable<String> get scheduleCalls => calls.where((c) => c.startsWith('schedule:'));
   Iterable<String> get cancelCalls => calls.where((c) => c.startsWith('cancel:'));
+}
+
+/// A [CustomSitesStore] whose writes fail.
+class ThrowingSitesStore extends CustomSitesStore {
+  const ThrowingSitesStore();
+
+  @override
+  Future<void> save(CustomSites sites) async => throw StateError('disk full');
 }
 
 /// Real mock prefs whose writes can be made to fail per key prefix.

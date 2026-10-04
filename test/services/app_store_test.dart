@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:protolog_tracker/data.dart';
 import 'package:protolog_tracker/models.dart';
 import 'package:protolog_tracker/services/app_store.dart';
+import 'package:protolog_tracker/services/custom_sites_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../support/fakes.dart';
@@ -76,6 +77,29 @@ void main() {
       expect(res.bloodwork.single.marker, 'E2');
       expect(store.unsafeKeys, isEmpty);
       expect(prefs.writes, isEmpty);
+    });
+
+    test('old data is fixed up and saved once (G7, B6)', () async {
+      final adopted = _testE.copyWith(id: 'adopted');
+      final aiReminder = _rem('r1').copyWith(compoundBase: 'Anastrazole', compoundEster: 'None');
+      final prefs = await _flaky({
+        'injections': _list([_inj('i1').toJson()..['compoundId'] = 'adopted']),
+        'compounds': _list([adopted.toJson(), _testE.toJson()]),
+        'reminders': _list([aiReminder.toJson()]),
+      });
+
+      final res = await _store(() async => prefs).load();
+
+      expect(res.compounds.map((c) => c.id), ['test_e']);
+      expect(res.injections.single.compoundId, 'test_e');
+      expect(res.reminders.single.compoundBase, 'Anastrozole');
+      expect(prefs.writes, ['injections', 'compounds', 'reminders']);
+      expect(res.problem, isNull);
+
+      prefs.writes.clear();
+      final again = await _store(() async => prefs).load();
+      expect(prefs.writes, isEmpty);
+      expect(again.reminders.single.compoundBase, 'Anastrozole');
     });
 
     test('a fresh install starts from the initial compounds', () async {
@@ -215,6 +239,47 @@ void main() {
     });
   });
 
+  group('large collections (E4)', () {
+    List<Injection> big([String prefix = 'i']) =>
+        [for (var i = 0; i < AppStore.kIsolateEncodeThreshold + 50; i++) _inj('$prefix$i')];
+
+    test('are encoded on a background isolate to the same text', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = _store();
+      await store.load();
+      final list = big();
+
+      final saved = store.saveInjections(list);
+      list.add(_inj('later')); // the save is a snapshot of the call
+      expect(await saved, isTrue);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('injections'),
+          jsonEncode([for (final e in list.take(list.length - 1)) e.toJson()]));
+    });
+
+    test('writes land in call order even when the big encode finishes last', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = _store();
+      await store.load();
+
+      final first = store.saveInjections(big());
+      final second = store.saveInjections([_inj('only')]);
+      expect(await second, isTrue);
+      expect(await first, isTrue);
+
+      expect((await _store().load()).injections.map((i) => i.id), ['only']);
+    });
+
+    test('an unencodable big collection reports failure and writes nothing', () async {
+      final prefs = await _flaky({});
+      final store = _store(() async => prefs);
+      await store.load();
+      expect(await store.saveInjections([...big(), _inj('nan', mg: double.nan)]), isFalse);
+      expect(prefs.writes, isEmpty);
+    });
+  });
+
   group('save', () {
     test('round-trips every collection through a fresh load', () async {
       SharedPreferences.setMockInitialValues({});
@@ -268,14 +333,16 @@ void main() {
     });
   });
 
-  group('custom sites', () {
-    test('round-trip', () async {
+  group('custom sites (through the wizard\'s CustomSitesStore)', () {
+    test('round-trip, readable by the wizard', () async {
       SharedPreferences.setMockInitialValues({});
       final store = _store();
-      expect(await store.writeCustomSites((im: ['Quad L'], subQ: ['Flank R'])), isTrue);
+      expect(await store.writeCustomSites(const CustomSites(im: ['Quad L'], subQ: ['Flank R'])),
+          isTrue);
       final sites = await store.readCustomSites();
       expect(sites.im, ['Quad L']);
       expect(sites.subQ, ['Flank R']);
+      expect((await const CustomSitesStore().load()).subQ, ['Flank R']);
     });
 
     test('garbage or non-string entries read as empty / are dropped', () async {
@@ -289,8 +356,8 @@ void main() {
     });
 
     test('a failed write reports failure', () async {
-      final prefs = await _flaky({}, refuse: {'customSitesSubQ'});
-      expect(await _store(() async => prefs).writeCustomSites((im: [], subQ: ['x'])), isFalse);
+      final store = AppStore(sites: const ThrowingSitesStore());
+      expect(await store.writeCustomSites(const CustomSites(subQ: ['x'])), isFalse);
     });
   });
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models.dart';
 import '../../engine/library_stats.dart';
+import '../format.dart';
 import '../theme.dart';
 import '../widgets/lab_primitives.dart';
 import '../widgets/library_section.dart';
@@ -15,8 +16,15 @@ class CompoundDetailPage extends StatefulWidget {
   /// updates its local state when this resolves non-null so the user sees
   /// the new values without leaving the screen.
   final Future<CompoundDefinition?> Function(CompoundDefinition compound) openEditor;
+  /// Called after the user confirms deleting the (custom) compound. The host
+  /// removes it — and its linked reminders, which the confirmation says go
+  /// too — then pops this page.
   final VoidCallback onDelete;
   final void Function(CompoundDefinition compound) onLogInjection;
+
+  /// Reminders for this compound's base+ester, named in the delete
+  /// confirmation.
+  final int linkedReminderCount;
 
   const CompoundDetailPage({
     super.key,
@@ -26,6 +34,7 @@ class CompoundDetailPage extends StatefulWidget {
     required this.openEditor,
     required this.onDelete,
     required this.onLogInjection,
+    this.linkedReminderCount = 0,
   });
 
   @override
@@ -111,40 +120,65 @@ class _CompoundDetailPageState extends State<CompoundDetailPage> {
 
   Future<void> _confirmDelete(BuildContext context) async {
     final c = _compound;
-    final count = injectionCountFor(
-      base: c.base, ester: c.ester, injections: widget.injections,
-    );
-    final msg = count == 0
-        ? 'Delete ${displayName(c)}?'
-        : 'Delete ${displayName(c)}? $count injection${count == 1 ? "" : "s"} '
-            'of this compound will keep their logged data but will no longer '
-            'link to a saved definition.';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppTheme.surface2,
-        title: Text('Delete compound',
-            style: AppTheme.sans(size: 14, weight: FontWeight.w600, color: AppTheme.fg)),
-        content: Text(msg,
-            style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text('Cancel',
-                style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text('Delete',
-                style: AppTheme.sans(
-                  size: 12, weight: FontWeight.w600, color: AppTheme.warn,
-                )),
-          ),
-        ],
+    final ok = await confirmDeleteCompound(
+      context,
+      compound: c,
+      logCount: injectionCountFor(
+        base: c.base, ester: c.ester, injections: widget.injections,
       ),
+      linkedReminderCount: widget.linkedReminderCount,
     );
-    if (ok == true) widget.onDelete();
+    if (ok) widget.onDelete();
   }
+}
+
+/// "Delete compound" confirmation shared by the detail page and the Compound
+/// Editor. Says what happens to the compound's [logCount] logs (kept, but
+/// unlinked) and [linkedReminderCount] reminders (removed with it — the host's
+/// delete handler cancels and deletes them). True when the user confirms.
+Future<bool> confirmDeleteCompound(
+  BuildContext context, {
+  required CompoundDefinition compound,
+  required int logCount,
+  int linkedReminderCount = 0,
+}) async {
+  final noun = doseActionNoun(compound.type);
+  final msg = StringBuffer('Delete ${displayName(compound)}?');
+  if (logCount > 0) {
+    msg.write(' $logCount $noun${logCount == 1 ? '' : 's'} of this compound '
+        'will keep their logged data but will no longer link to a saved '
+        'definition.');
+  }
+  if (linkedReminderCount > 0) {
+    msg.write(linkedReminderCount == 1
+        ? ' Its reminder will be removed too.'
+        : ' Its $linkedReminderCount reminders will be removed too.');
+  }
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: AppTheme.surface2,
+      title: Text('Delete compound',
+          style: AppTheme.sans(size: 14, weight: FontWeight.w600, color: AppTheme.fg)),
+      content: Text(msg.toString(),
+          style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: Text('Cancel',
+              style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: Text('Delete',
+              style: AppTheme.sans(
+                size: 12, weight: FontWeight.w600, color: AppTheme.warn,
+              )),
+        ),
+      ],
+    ),
+  );
+  return ok == true;
 }
 
 class _ActionBar extends StatelessWidget {
@@ -273,9 +307,11 @@ class _PKSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = compound;
     final isEvent = c.graphType == GraphType.event;
-    final hl = isEvent ? '—' : c.halfLife.toStringAsFixed(1);
-    final peak = isEvent ? '—' : c.timeToPeak.toStringAsFixed(1);
-    final yield_ = (c.ratio * 100).round().toString();
+    // formatDose keeps short values readable: t½ 0.05 d was shown as "0.1"
+    // and tmax 0.02 d as "0.0".
+    final hl = isEvent ? '—' : formatDose(c.halfLife);
+    final peak = isEvent ? '—' : formatDose(c.timeToPeak);
+    final yield_ = formatDose(c.ratio * 100);
     return LibrarySection(
       title: 'Pharmacokinetics',
       child: Row(
@@ -331,27 +367,39 @@ class _HistorySection extends StatelessWidget {
     );
   }
 
+  /// Date · site · dose. Date and dose take their natural single-line width
+  /// ("1250 mcg" no longer wraps in a fixed 56 px column); the site fills
+  /// what's left and ellipsizes, so a long site can't squeeze the date (B30).
   Widget _historyRow(Injection inj) {
     final date = _fmtDate(inj.date);
     final site = inj.site ?? '';
-    final dose = '${_fmtDose(inj.dosage)} ${inj.snapshot.unit.name}';
+    final dose = '${formatDose(inj.dosage)} ${inj.snapshot.unit.name}';
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
-          Expanded(
-            child: Text(date, style: AppTheme.sans(size: 12.5, color: AppTheme.fg)),
+          Text(
+            date,
+            maxLines: 1,
+            softWrap: false,
+            style: AppTheme.sans(size: 12.5, color: AppTheme.fg),
           ),
           const SizedBox(width: 14),
-          Text(site, style: AppTheme.sans(size: 11, color: AppTheme.fgMute)),
-          const SizedBox(width: 14),
-          SizedBox(
-            width: 56,
+          Expanded(
             child: Text(
-              dose,
+              site,
               textAlign: TextAlign.right,
-              style: AppTheme.mono(size: 12, weight: FontWeight.w500, color: AppTheme.fg),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTheme.sans(size: 11, color: AppTheme.fgMute),
             ),
+          ),
+          const SizedBox(width: 14),
+          Text(
+            dose,
+            maxLines: 1,
+            softWrap: false,
+            style: AppTheme.mono(size: 12, weight: FontWeight.w500, color: AppTheme.fg),
           ),
         ],
       ),
@@ -401,16 +449,10 @@ class _HistorySection extends StatelessWidget {
     );
   }
 
+  /// "Sep 02 · Wed".
   String _fmtDate(DateTime d) {
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const dows = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
     final day = d.day.toString().padLeft(2, '0');
-    return '${months[d.month - 1]} $day · ${dows[d.weekday - 1]}';
-  }
-
-  String _fmtDose(double dose) {
-    if (dose == dose.roundToDouble()) return dose.toInt().toString();
-    return dose.toStringAsFixed(1);
+    return '${monthsShort[d.month - 1]} $day · ${weekdaysShort[d.weekday - 1]}';
   }
 }
 

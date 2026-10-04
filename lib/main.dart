@@ -6,14 +6,10 @@ import 'engine/compute_engine.dart';
 import 'engine/library_stats.dart';
 import 'engine/compound_edits.dart';
 import 'ui/widgets/protolog_shell.dart';
-import 'ui/widgets/load_hero.dart';
-import 'ui/widgets/pk_chart_card.dart';
-import 'ui/widgets/swimlane_card.dart';
-import 'ui/widgets/bloodwork_card.dart';
 import 'ui/widgets/bloodwork_editor_dialog.dart';
 import 'ui/views/bloodwork_page.dart';
+import 'ui/views/dashboard_view.dart';
 import 'ui/theme.dart';
-import 'engine/dashboard_stats.dart';
 import 'ui/views/add_injection_wizard.dart';
 import 'ui/views/calendar_page.dart';
 import 'ui/views/library_page.dart';
@@ -53,52 +49,7 @@ class ProtoLogApp extends StatelessWidget {
     return MaterialApp(
       title: 'ProtoLog',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: AppTheme.bg,
-        // Fill every slot pickers reach for — ColorScheme.dark() defaults
-        // secondary/containers to Material teal (#03DAC6), which leaked an
-        // "emerald" look into date/time pickers.
-        colorScheme: const ColorScheme.dark(
-          primary: AppTheme.accent,
-          onPrimary: AppTheme.bg,
-          secondary: AppTheme.accent,
-          onSecondary: AppTheme.bg,
-          primaryContainer: AppTheme.accentDeep,
-          onPrimaryContainer: AppTheme.fg,
-          secondaryContainer: AppTheme.surface2,
-          onSecondaryContainer: AppTheme.fg,
-          surface: AppTheme.surface,
-          onSurface: AppTheme.fg,
-          onSurfaceVariant: AppTheme.fgMute,
-          outline: AppTheme.border,
-        ),
-        datePickerTheme: const DatePickerThemeData(
-          backgroundColor: AppTheme.surface2,
-          headerBackgroundColor: AppTheme.surface,
-          shape: RoundedRectangleBorder(
-            side: BorderSide(color: AppTheme.border, width: 1),
-          ),
-        ),
-        timePickerTheme: const TimePickerThemeData(
-          backgroundColor: AppTheme.surface2,
-          shape: RoundedRectangleBorder(
-            side: BorderSide(color: AppTheme.border, width: 1),
-          ),
-        ),
-        dialogTheme: const DialogThemeData(
-          backgroundColor: AppTheme.surface2,
-          shape: RoundedRectangleBorder(
-            side: BorderSide(color: AppTheme.border, width: 1),
-          ),
-        ),
-        cardTheme: const CardThemeData(
-          color: AppTheme.surface,
-          shape: RoundedRectangleBorder(
-            side: BorderSide(color: AppTheme.border, width: 1),
-          ),
-          margin: EdgeInsets.zero,
-        ),
-      ),
+      theme: AppTheme.materialTheme,
       home: const MainScreen(),
     );
   }
@@ -107,11 +58,13 @@ class ProtoLogApp extends StatelessWidget {
 // --- Main Screen ---
 
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key, this.store, this.notificationBackend});
+  const MainScreen({super.key, this.store, this.notificationBackend, this.backup});
 
-  /// Test seams: default to SharedPreferences and flutter_local_notifications.
+  /// Test seams: default to SharedPreferences, flutter_local_notifications
+  /// and the platform share sheet / file picker.
   final AppStore? store;
   final NotificationBackend? notificationBackend;
+  final BackupIO? backup;
 
   @override
   State<MainScreen> createState() => _MainScreenState();
@@ -120,7 +73,7 @@ class MainScreen extends StatefulWidget {
 /// Owns all app state and routing. Persistence lives in [AppStore],
 /// notification plumbing in [ReminderNotificationService], backup file I/O
 /// in [BackupIO]; every state change goes through [_mutate].
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _currentIndex = 0;
   List<Injection> injections = [];
   List<CompoundDefinition> userCompounds = [];
@@ -132,13 +85,20 @@ class _MainScreenState extends State<MainScreen> {
   DateTime _calendarSelectedDay = DateTime.now();
 
   late final AppStore _store = widget.store ?? AppStore();
-  late final BackupIO _backup = BackupIO(_store);
+  late final BackupIO _backup = widget.backup ?? BackupIO(_store);
   late final ReminderNotificationService _notifs = ReminderNotificationService(
     backend: widget.notificationBackend ?? LocalNotificationsBackend(),
     injections: () => injections,
     onScheduleError: (e) =>
         _snack('Failed to schedule notification: $e', color: AppTheme.warn),
+    onPermissionResult: (_) => _refreshNotificationsBlocked(),
   );
+
+  /// The OS blocks this app's notifications (permission denied or switched
+  /// off, B20). Refreshed after the launch permission request, on resume and
+  /// after asking again; drives the Reminders tab's banner.
+  bool _notificationsBlocked = false;
+  bool _blockedNoticeShown = false;
 
   // Set when a notification tap arrives before _loadData has finished
   // (cold start); processed at the end of _loadData.
@@ -149,17 +109,60 @@ class _MainScreenState extends State<MainScreen> {
   void initState() {
     super.initState();
     settings = const GraphSettings(normalized: false, cumulative: false, showPeptides: true, timeRange: 'standard');
+    WidgetsBinding.instance.addObserver(this);
     _bootstrap();
   }
 
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Back from the background (N7/G4): "now" moved on, so rebuild every
+  /// now-dependent view and recompute the chart, and reconcile reminders —
+  /// re-extending interval one-shots and acked custom slots that fired
+  /// meanwhile (cheap: only missing or changed notifications go out).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed || _loading) return;
+    _refreshGraph();
+    _notifs.reconcileAll(reminders);
+    _refreshNotificationsBlocked(); // the user may have been to Settings
+  }
+
+  /// Re-reads whether notifications are blocked; the first time they are
+  /// while a reminder is on, says so once per session (B20).
+  Future<void> _refreshNotificationsBlocked() async {
+    final enabled = await _notifs.notificationsEnabled();
+    if (!mounted || enabled == null) return;
+    final blocked = !enabled;
+    if (blocked != _notificationsBlocked) setState(() => _notificationsBlocked = blocked);
+    if (!blocked || _blockedNoticeShown || !reminders.any((r) => r.enabled)) return;
+    _blockedNoticeShown = true;
+    _snack("Notifications are off for ProtoLog — reminders won't alert you.",
+        color: AppTheme.warn,
+        duration: const Duration(seconds: 8),
+        action: SnackBarAction(
+            label: 'Allow', textColor: AppTheme.fg, onPressed: _requestNotificationPermission));
+  }
+
+  /// Asks the OS again (the snackbar's and the Reminders banner's button).
+  /// Android 13+ stops showing the dialog after a second denial; then only
+  /// system settings can turn notifications back on.
+  Future<void> _requestNotificationPermission() async {
+    await _notifs.requestPermission();
+    await _refreshNotificationsBlocked();
+  }
+
   // Notification init and data load are independent, so a plugin failure
-  // (or hang) can never keep the app on the spinner (A7). Rescheduling still
-  // happens with the plugin initialized and tz.local set: the service queues
+  // (or hang) can never keep the app on the spinner (A7). The reconcile still
+  // runs with the plugin initialized and tz.local set: the service queues
   // every job behind init.
   Future<void> _bootstrap() async {
     _notifs.init(onTap: (payload, actionId) => _handleNotificationTap(payload, actionId: actionId));
     await _loadData();
-    _notifs.rescheduleAll(reminders);
+    _notifs.reconcileAll(reminders);
     _notifs.idle.then((_) {
       if (!_notifs.ready) {
         _snack("Notifications couldn't start — reminders won't fire this session",
@@ -217,10 +220,11 @@ class _MainScreenState extends State<MainScreen> {
     if (actionId == 'skip') {
       // Skip the occurrence this notification announced, not the next one;
       // a stale or re-delivered tap changes nothing (B14).
-      final updated =
-          advanceAfterNotificationSkip(match, occurrence: tap.occurrence, now: DateTime.now());
-      final moved = !identical(updated, match);
-      if (moved) _replaceReminder(updated);
+      final now = DateTime.now();
+      final moved = !identical(
+          advanceAfterNotificationSkip(match, occurrence: tap.occurrence, now: now), match);
+      _updateReminder(match.id,
+          (current) => advanceAfterNotificationSkip(current, occurrence: tap.occurrence, now: now));
       _snack('Skipped ${match.compoundBase}${moved ? ' — rescheduled' : ''}',
           color: AppTheme.surface2);
       return;
@@ -248,8 +252,9 @@ class _MainScreenState extends State<MainScreen> {
       change();
       if (graph) _graphDataFuture = _computeGraph();
     });
-    // Each save encodes its collection synchronously, so this persists the
-    // state as of this change even if another one lands meanwhile.
+    // Each save snapshots its collection synchronously (and writes land in
+    // call order), so this persists the state as of this change even if
+    // another one lands meanwhile.
     final saves = [
       if (injections) _store.saveInjections(this.injections),
       if (compounds) _store.saveCompounds(userCompounds),
@@ -283,6 +288,7 @@ class _MainScreenState extends State<MainScreen> {
     Color color = AppTheme.surface2,
     bool dark = false,
     Duration duration = const Duration(seconds: 4),
+    SnackBarAction? action,
   }) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -292,6 +298,7 @@ class _MainScreenState extends State<MainScreen> {
       ),
       backgroundColor: color,
       duration: duration,
+      action: action,
     ));
   }
 
@@ -348,19 +355,35 @@ class _MainScreenState extends State<MainScreen> {
       injections.add(inj);
       advanced.forEach((i, r) => reminders[i] = r);
     }, injections: true, reminders: advanced.isNotEmpty, graph: true);
-    for (final r in advanced.values) {
-      _notifs.reschedule(r);
-    }
+    _refreshRemindersFor([inj]); // the advanced ones included
     await saved;
   }
 
-  void _updateInjection(Injection updated) => _mutate(() {
-        final i = injections.indexWhere((inj) => inj.id == updated.id);
-        if (i >= 0) injections[i] = updated;
-      }, injections: true, graph: true);
+  void _updateInjection(Injection updated) {
+    final i = injections.indexWhere((inj) => inj.id == updated.id);
+    if (i < 0) return;
+    final old = injections[i];
+    _mutate(() => injections[i] = updated, injections: true, graph: true);
+    _refreshRemindersFor([old, updated]);
+  }
 
-  void _deleteInjection(String id) =>
-      _mutate(() => injections.removeWhere((i) => i.id == id), injections: true, graph: true);
+  void _deleteInjection(String id) {
+    final gone = injections.where((i) => i.id == id).toList();
+    _mutate(() => injections.removeWhere((i) => i.id == id), injections: true, graph: true);
+    _refreshRemindersFor(gone);
+  }
+
+  /// Reminder notifications quote the latest matching log, so a change to
+  /// a compound's logs re-plans its enabled reminders (B19) — only the
+  /// notifications whose text actually changed go out again.
+  void _refreshRemindersFor(Iterable<Injection> changed) {
+    final keys = {for (final i in changed) compoundKey(i.snapshot.base, i.snapshot.ester)};
+    for (final r in reminders) {
+      if (r.enabled && keys.contains(compoundKey(r.compoundBase, r.compoundEster))) {
+        _notifs.reschedule(r);
+      }
+    }
+  }
 
   void _updateInjectionNotes(String id, String? notes) => _mutate(() {
         final i = injections.indexWhere((inj) => inj.id == id);
@@ -382,8 +405,35 @@ class _MainScreenState extends State<MainScreen> {
   void _addUserCompound(CompoundDefinition comp) =>
       _mutate(() => _upsert(userCompounds, comp, (c) => c.id), compounds: true);
 
-  void _deleteUserCompound(String id) =>
-      _mutate(() => userCompounds.removeWhere((c) => c.id == id), compounds: true);
+  /// Deletes a custom compound together with the reminders it leaves
+  /// without a compound (B11) — their notifications would keep firing and
+  /// "Log now" could find nothing to log.
+  void _deleteUserCompound(String id) {
+    final i = userCompounds.indexWhere((c) => c.id == id);
+    if (i < 0) return;
+    final c = userCompounds[i];
+    final orphaned = _remindersOrphanedBy(c);
+    for (final r in orphaned) {
+      _notifs.cancel(r);
+    }
+    final gone = {for (final r in orphaned) r.id};
+    _mutate(() {
+      userCompounds.removeWhere((x) => x.id == id);
+      reminders.removeWhere((r) => gone.contains(r.id));
+    }, compounds: true, reminders: gone.isNotEmpty);
+    final n = gone.length;
+    _snack('Deleted ${displayName(c)}${n == 0 ? '' : ' and its $n reminder${n == 1 ? '' : 's'}'}');
+  }
+
+  /// The reminders deleting [c] would orphan: same base+ester, unless the
+  /// catalogue still has that compound without it (a custom that shadowed
+  /// a built-in).
+  List<Reminder> _remindersOrphanedBy(CompoundDefinition c) {
+    final key = keyOf(c);
+    final rest = userCompounds.where((x) => x.id != c.id).toList();
+    if (cataloguedCompounds(userCompounds: rest).any((x) => keyOf(x) == key)) return const [];
+    return [for (final r in reminders) if (compoundKey(r.compoundBase, r.compoundEster) == key) r];
+  }
 
   // A first-time edit of a built-in adds a shadowing override.
   void _updateUserCompound(CompoundDefinition updated) =>
@@ -392,32 +442,40 @@ class _MainScreenState extends State<MainScreen> {
   // Reminders
 
   void _upsertReminder(Reminder r) {
+    final i = reminders.indexWhere((x) => x.id == r.id);
+    final previous = i >= 0 ? reminders[i] : null;
     _mutate(() => _upsert(reminders, r, (x) => x.id), reminders: true);
-    _notifs.reschedule(r);
+    _notifs.reschedule(r, previous: previous);
   }
 
-  /// Swaps in [updated] (matched by id) and reschedules it.
-  void _replaceReminder(Reminder updated) {
-    _mutate(() {
-      final i = reminders.indexWhere((x) => x.id == updated.id);
-      if (i >= 0) reminders[i] = updated;
-    }, reminders: true);
-    _notifs.reschedule(updated);
+  /// Applies [change] to the *current* reminder with [id], then saves and
+  /// reschedules it. Rows, routes and notification taps hand over the
+  /// Reminder they captured, which may be stale (B15: Pause right after
+  /// "Log now" wrote the pre-dose anchor back) — so only its id is trusted.
+  void _updateReminder(String id, Reminder Function(Reminder current) change) {
+    final i = reminders.indexWhere((x) => x.id == id);
+    if (i < 0) return;
+    final previous = reminders[i];
+    final updated = change(previous);
+    if (identical(updated, previous)) return;
+    _mutate(() => reminders[i] = updated, reminders: true);
+    _notifs.reschedule(updated, previous: previous);
   }
 
   void _deleteReminder(Reminder r) {
-    _notifs.cancel(r);
+    final i = reminders.indexWhere((x) => x.id == r.id);
+    _notifs.cancel(i >= 0 ? reminders[i] : r);
     _mutate(() => reminders.removeWhere((x) => x.id == r.id), reminders: true);
   }
 
-  void _toggleReminderEnabled(Reminder r) => _replaceReminder(r.copyWith(enabled: !r.enabled));
+  void _toggleReminderEnabled(Reminder r) =>
+      _updateReminder(r.id, (current) => current.copyWith(enabled: !current.enabled));
 
-  void _skipReminder(Reminder r, {bool fromNotification = false}) {
+  // In-app Skip. Notification Skip goes through _handleNotificationTap,
+  // which knows the occurrence it announced (B14).
+  void _skipReminder(Reminder r) {
     final now = DateTime.now();
-    final updated = fromNotification
-        ? advanceAfterNotificationSkip(r, now: now)
-        : advanceAfterSkip(r, now: now);
-    if (!identical(updated, r)) _replaceReminder(updated);
+    _updateReminder(r.id, (current) => advanceAfterSkip(current, now: now));
   }
 
   // Bloodwork
@@ -479,8 +537,12 @@ class _MainScreenState extends State<MainScreen> {
 
   /// F1: full-state backup through the share sheet.
   Future<void> _exportBackupFile() async {
+    // iPad needs an anchor for the share popover (D4); the Library's menu
+    // doesn't hand over its button, so the sheet anchors to this screen.
+    final box = context.findRenderObject() as RenderBox?;
+    final origin = box != null && box.hasSize ? box.localToGlobal(Offset.zero) & box.size : null;
     try {
-      await _backup.share(_collections);
+      await _backup.share(_collections, origin: origin);
     } catch (e) {
       _snack('Backup failed: $e', color: AppTheme.warn);
     }
@@ -504,13 +566,20 @@ class _MainScreenState extends State<MainScreen> {
       if (!await _confirm(title: 'Merge backup?', body: preview.summary, confirm: 'Merge')) return;
 
       final m = preview.merged;
+      final before = {for (final r in reminders) r.id: r};
       final saved = _mutate(() {
         injections = m.injections;
         userCompounds = m.compounds;
         reminders = m.reminders;
         bloodwork = m.bloodwork;
       }, injections: true, compounds: true, reminders: true, bloodwork: true, graph: true);
-      _notifs.rescheduleAll(reminders);
+      // Every reminder the backup added or replaced is rescheduled — one it
+      // disabled has its notifications cancelled (B16); the reconcile then
+      // refreshes the others' text for the new logs.
+      for (final r in reminders) {
+        if (m.changedReminderIds.contains(r.id)) _notifs.reschedule(r, previous: before[r.id]);
+      }
+      _notifs.reconcileAll(reminders);
       if (!await saved) return; // _mutate reported it
       if (await _backup.commitSites(preview)) {
         _snack('Backup merged', color: AppTheme.accentDeep);
@@ -553,7 +622,9 @@ class _MainScreenState extends State<MainScreen> {
       return;
     }
 
-    if (await _mutate(() => injections.addAll(parsed), injections: true, graph: true)) {
+    final saved = _mutate(() => injections.addAll(parsed), injections: true, graph: true);
+    _refreshRemindersFor(parsed);
+    if (await saved) {
       _snack('Imported ${parsed.length} entries', color: AppTheme.accentDeep);
     }
   }
@@ -567,7 +638,22 @@ class _MainScreenState extends State<MainScreen> {
     Widget content;
     switch (tab) {
       case ShellTab.today:
-        content = _buildDashboard();
+        content = DashboardView(
+          injections: injections,
+          bloodwork: bloodwork,
+          graphData: _graphDataFuture,
+          settings: settings,
+          colorResolver: _buildColorResolver(),
+          now: DateTime.now(),
+          onSettingsChanged: (s) {
+            // Cumulative adds a curve engine-side; normalized is paint-only
+            // but the recompute is cheap and keeps one path.
+            setState(() => settings = s);
+            _refreshGraph();
+          },
+          onAddBloodwork: () => _openBloodworkEditor(),
+          onOpenBloodwork: (e) => _openBloodworkPage(initialMarker: e.marker),
+        );
         break;
       case ShellTab.calendar:
         content = CalendarPage(
@@ -602,6 +688,8 @@ class _MainScreenState extends State<MainScreen> {
             if (def != null) _openAddInjectionWizard(prefill: def);
           },
           onSkip: _skipReminder,
+          notificationsDisabled: _notificationsBlocked,
+          onRequestNotificationPermission: _requestNotificationPermission,
         );
         break;
     }
@@ -691,6 +779,7 @@ class _MainScreenState extends State<MainScreen> {
           Navigator.of(context).pop(); // close detail before pushing wizard
           _openAddInjectionWizard(prefill: c);
         },
+        linkedReminderCount: _remindersOrphanedBy(compound).length,
       ),
     ));
   }
@@ -707,6 +796,12 @@ class _MainScreenState extends State<MainScreen> {
         await Navigator.of(context).push<CompoundDefinition>(MaterialPageRoute(
       builder: (_) => CompoundEditorPage(
         editing: editing,
+        userCompounds: userCompounds,
+        // B10/B11: a custom in use keeps its identity; delete names what goes.
+        logCount: editing == null
+            ? 0
+            : injectionCountFor(base: editing.base, ester: editing.ester, injections: injections),
+        linkedReminderCount: editing == null ? 0 : _remindersOrphanedBy(editing).length,
         onTabChanged: (t) =>
             setState(() => _currentIndex = ShellTab.values.indexOf(t)),
         onCreate: _addUserCompound,
@@ -737,11 +832,14 @@ class _MainScreenState extends State<MainScreen> {
     return result;
   }
 
+  // Blends are modelled from their component esters, so their snapshot PK
+  // never moves a curve — no rewrite offer (B9).
   bool _curveParamsChanged(CompoundDefinition a, CompoundDefinition b) =>
-      a.halfLife != b.halfLife ||
+      blendComponentsFor(b.ester) == null &&
+          (a.halfLife != b.halfLife ||
       a.timeToPeak != b.timeToPeak ||
       a.ratio != b.ratio ||
-      a.graphType != b.graphType;
+      a.graphType != b.graphType);
 
   /// Confirm dialog offering to rewrite past logs' snapshots to the new PK.
   Future<void> _offerRetroactiveRewrite(CompoundDefinition c, int n) async {
@@ -783,77 +881,5 @@ class _MainScreenState extends State<MainScreen> {
           if (cand.userSet != null) return Color(cand.userSet!);
           return AppTheme.compoundColor(base) ?? Color(cand.any ?? 0xFF9AA0A8);
         });
-  }
-
-  Widget _buildDashboard() {
-    final colorOf = _buildColorResolver();
-    final load = activeInjectableLoad(injections: injections, now: DateTime.now());
-    final totalActive = load.fold<double>(0.0, (s, e) => s + e.activeMg);
-    final breakdown = (load.toList()
-          ..sort((a, b) => b.activeMg.compareTo(a.activeMg)))
-        .map((e) => LoadHeroRow(
-              label: e.base,
-              valueMg: e.activeMg,
-              shareOfTotal: totalActive > 0 ? e.activeMg / totalActive : 0,
-              color: colorOf(e.base),
-            ))
-        .toList();
-    final delta = deltaSteroidNowVsPrior7(injections: injections, now: DateTime.now());
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(14, 18, 14, 90),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          LoadHero(
-            data: LoadHeroData(
-              totalActiveMg: totalActive,
-              delta: delta,
-              breakdown: breakdown,
-            ),
-          ),
-          const SizedBox(height: 18),
-          FutureBuilder<ComputedGraphData>(
-            future: _graphDataFuture,
-            builder: (context, snapshot) {
-              return PKChartCard(
-                graphData: snapshot.data,
-                settings: settings,
-                colorResolver: colorOf,
-                onRangeChanged: (range) {
-                  setState(() {
-                    settings = GraphSettings(
-                      normalized: settings.normalized,
-                      cumulative: settings.cumulative,
-                      showPeptides: settings.showPeptides,
-                      timeRange: range,
-                    );
-                  });
-                  _refreshGraph();
-                },
-                onSettingsChanged: (s) {
-                  setState(() => settings = s);
-                  // Cumulative adds a curve engine-side; normalized is
-                  // paint-only but the recompute is cheap and keeps one path.
-                  _refreshGraph();
-                },
-              );
-            },
-          ),
-          const SizedBox(height: 18),
-          SwimlaneCard(
-            injections: injections,
-            now: DateTime.now(),
-            colorResolver: colorOf,
-          ),
-          const SizedBox(height: 18),
-          BloodworkCard(
-            entries: bloodwork,
-            onCreate: () => _openBloodworkEditor(),
-            onTap: (e) => _openBloodworkPage(initialMarker: e.marker),
-          ),
-        ],
-      ),
-    );
   }
 }

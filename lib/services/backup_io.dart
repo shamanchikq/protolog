@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' show Rect;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:path_provider/path_provider.dart';
@@ -7,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import '../engine/backup.dart';
 import '../models.dart';
 import 'app_store.dart';
+import 'custom_sites_store.dart';
 
 /// The app state a backup is made from / merged into.
 typedef AppCollections = ({
@@ -38,34 +40,83 @@ class RestorePreview {
       ? 'Backup matches current data — nothing to merge'
       : 'Nothing new to merge — $_invalid ${skipped == 1 ? 'was' : 'were'} skipped';
 
-  /// Body of the "Merge backup?" confirmation.
-  String get summary => '${merged.newInjections} new logs, ${merged.changedCompounds} compound '
-      'updates, ${merged.changedReminders} reminder updates, '
-      '${merged.newBloodwork} lab results, ${merged.newSites} new sites. '
-      '${_invalid == null ? '' : '$_invalid will be skipped. '}'
-      'Existing data is never deleted.';
+  /// Body of the "Merge backup?" confirmation. Says plainly that records
+  /// this device already has are overwritten by the backup's copy (B23).
+  String get summary {
+    final m = merged;
+    final adds = _listing([
+      _count(m.newInjections, 'log'),
+      _count(m.newCompounds, 'compound'),
+      _count(m.newReminders, 'reminder'),
+      _count(m.newBloodwork, 'lab result'),
+      _count(m.newSites, 'injection site'),
+    ]);
+    final replaces = _listing([
+      _count(m.replacedCompounds, 'compound'),
+      _count(m.replacedReminders, 'reminder'),
+      _count(m.replacedBloodwork, 'lab result'),
+    ]);
+    return [
+      if (adds != null) 'Adds $adds.',
+      if (replaces != null)
+        "Replaces the matching $replaces on this device with the backup's copy.",
+      if (_invalid != null) '$_invalid will be skipped.',
+      'Nothing else changes.',
+    ].join(' ');
+  }
+
+  static String? _count(int n, String noun) => n == 0 ? null : '$n $noun${n == 1 ? '' : 's'}';
+
+  /// "a", "a and b", "a, b and c" — null when there's nothing to list.
+  static String? _listing(List<String?> parts) {
+    final p = parts.whereType<String>().toList();
+    if (p.isEmpty) return null;
+    if (p.length == 1) return p.single;
+    return '${p.sublist(0, p.length - 1).join(', ')} and ${p.last}';
+  }
 }
 
 /// F1 backup file I/O: share-sheet export, picker import, and the merge
 /// with stored custom sites. Dialogs stay with the caller.
 class BackupIO {
-  BackupIO(this._store, {DateTime Function()? clock}) : _clock = clock ?? DateTime.now;
+  BackupIO(
+    this._store, {
+    DateTime Function()? clock,
+    Future<Directory> Function()? tempDir,
+    Future<void> Function(ShareParams params)? shareSheet,
+  })  : _clock = clock ?? DateTime.now,
+        _tempDir = tempDir ?? getTemporaryDirectory,
+        _shareSheet = shareSheet ?? ((p) => SharePlus.instance.share(p));
 
   final AppStore _store;
   final DateTime Function() _clock;
+  final Future<Directory> Function() _tempDir;
+  final Future<void> Function(ShareParams params) _shareSheet;
 
   /// Full-state backup — every collection, the custom sites and any data set
   /// aside at load — as one versioned JSON file pushed through the share
-  /// sheet. Throws on failure.
-  Future<void> share(AppCollections current) async {
+  /// sheet. [origin] (global coordinates) anchors the sheet's popover on
+  /// iPad, where it's required (D4). The plaintext file is deleted from the
+  /// temp dir once the sheet returns (D8; share_plus hands targets its own
+  /// copy). Throws on failure.
+  Future<void> share(AppCollections current, {Rect? origin}) async {
     final payload = await encode(current);
-    final dir = await getTemporaryDirectory();
+    final dir = await _tempDir();
     final file = File('${dir.path}${Platform.pathSeparator}${backupFileName(_clock())}');
     await file.writeAsString(payload);
-    await SharePlus.instance.share(ShareParams(
-      files: [XFile(file.path, mimeType: 'application/json')],
-      subject: 'ProtoLog backup',
-    ));
+    try {
+      await _shareSheet(ShareParams(
+        files: [XFile(file.path, mimeType: 'application/json')],
+        subject: 'ProtoLog backup',
+        sharePositionOrigin: origin,
+      ));
+    } finally {
+      try {
+        await file.delete();
+      } catch (_) {
+        // Best effort: the OS clears the temp dir eventually.
+      }
+    }
   }
 
   /// The backup file's contents for [current].
@@ -90,6 +141,8 @@ class BackupIO {
       extensions: ['json'],
       // Broad mime list: share targets sometimes re-tag JSON attachments.
       mimeTypes: ['application/json', 'application/octet-stream', 'text/plain'],
+      // iOS filters by UTI and throws without one (D4).
+      uniformTypeIdentifiers: ['public.json', 'public.plain-text'],
     );
     final picked = await openFile(acceptedTypeGroups: const [group]);
     return picked?.readAsString();
@@ -116,5 +169,5 @@ class BackupIO {
   /// Writes the merged custom sites (the collections are the caller's
   /// state and saved with it). False on failure.
   Future<bool> commitSites(RestorePreview p) =>
-      _store.writeCustomSites((im: p.merged.customSitesIM, subQ: p.merged.customSitesSubQ));
+      _store.writeCustomSites(CustomSites(im: p.merged.customSitesIM, subQ: p.merged.customSitesSubQ));
 }

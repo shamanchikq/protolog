@@ -54,7 +54,7 @@ const Map<String, CompoundDefinition> BASE_LIBRARY = {
 
   // Ancillaries
   'HCG': CompoundDefinition(id: 'HCG', base: 'HCG', ester: 'None', type: CompoundType.peptide, graphType: GraphType.activeWindow, halfLife: 1.2, defaultHalfLife: 1.2, timeToPeak: 0.25, ratio: 1, unit: Unit.iu, colorValue: 0xFFEC4899),
-  'Anastrazole': CompoundDefinition(id: 'Anastrazole', base: 'Anastrazole', ester: 'None', type: CompoundType.ancillary, graphType: GraphType.activeWindow, halfLife: 2.1, defaultHalfLife: 2.1, timeToPeak: 0.5, ratio: 1, unit: Unit.mg, colorValue: 0xFF94A3B8),
+  'Anastrozole': CompoundDefinition(id: 'Anastrozole', base: 'Anastrozole', ester: 'None', type: CompoundType.ancillary, graphType: GraphType.activeWindow, halfLife: 2.1, defaultHalfLife: 2.1, timeToPeak: 0.5, ratio: 1, unit: Unit.mg, colorValue: 0xFF94A3B8),
   'Tamoxifen': CompoundDefinition(id: 'Tamoxifen', base: 'Tamoxifen', ester: 'None', type: CompoundType.ancillary, graphType: GraphType.activeWindow, halfLife: 6.0, defaultHalfLife: 6.0, timeToPeak: 0.5, ratio: 1, unit: Unit.mg, colorValue: 0xFF94A3B8),
   'Finasteride': CompoundDefinition(id: 'Finasteride', base: 'Finasteride', ester: 'None', type: CompoundType.ancillary, graphType: GraphType.event, halfLife: 0.25, defaultHalfLife: 0.25, timeToPeak: 0.1, ratio: 1, unit: Unit.mg, colorValue: 0xFF94A3B8),
   'Dutasteride': CompoundDefinition(id: 'Dutasteride', base: 'Dutasteride', ester: 'None', type: CompoundType.ancillary, graphType: GraphType.activeWindow, halfLife: 35.0, defaultHalfLife: 35.0, timeToPeak: 0.5, ratio: 1, unit: Unit.mg, colorValue: 0xFF94A3B8),

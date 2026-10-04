@@ -22,31 +22,65 @@ abstract class NotificationBackend {
   /// The tap that launched the app from a terminated state, if any.
   Future<({String? payload, String? actionId})?> launchTap();
 
-  Future<void> requestPermission();
+  /// Asks the OS for permission to post notifications: true if granted,
+  /// null if the platform doesn't say.
+  Future<bool?> requestPermission();
+
+  /// Whether the OS currently lets the app post notifications (runtime
+  /// permission and the app-level switch); null if the platform can't tell.
+  Future<bool?> areNotificationsEnabled();
 
   /// Whether exact alarms are permitted (Android).
   Future<bool> canScheduleExact();
 
-  /// Schedules one notification. [now] is the time the plan was made for.
+  /// Schedules one notification. A pending notification with the same id is
+  /// replaced in place (both platforms key pending requests by id), without
+  /// touching one already showing in the shade. [now] is the time the plan
+  /// was made for.
   Future<void> schedule(PlannedNotification n, {required bool exact, required DateTime now});
+
+  /// Ids of notifications scheduled and not yet delivered. A repeating one
+  /// stays pending after it fires; a delivered one-shot is not listed (it
+  /// may still be showing in the shade).
+  Future<Set<int>> pendingIds();
 
   /// Cancels a pending (and removes a displayed) notification.
   Future<void> cancel(int id);
 }
 
-/// Reminder notifications: plugin init, the serial job queue, and
-/// cancel-then-schedule per reminder from [planReminderNotifications].
+/// Reminder notifications: plugin init, the serial job queue, and keeping
+/// the platform's pending notifications in line with
+/// [planReminderNotifications].
 ///
-/// All notification work runs one job at a time: a reminder's cancel sweep
-/// must finish before its new schedule goes out, or the sweep (64
-/// sequential calls) can wipe ids the schedule just created. The queue
-/// starts with [init], so no job runs before the plugin and the platform
-/// zone are ready; if init fails, every job is a no-op.
+/// **Reconcile, don't sweep (B18, E3).** Cancelling an id also dismisses a
+/// notification showing in the shade, and every cancel is a platform call
+/// that rewrites the plugin's cache. So routine updates — launch, resume, a
+/// dose, a skip — read the pending ids, cancel only pending ids the new plan
+/// doesn't use, and schedule only what is missing or different (a changed id
+/// is replaced in place by [NotificationBackend.schedule]). A notification
+/// already delivered is never dismissed by them.
+///
+/// "Different" is judged against what this process scheduled (an in-memory
+/// ledger). It starts empty, so the first reconcile after a cold start
+/// re-sends every planned notification: Android drops an app's alarms on
+/// force-stop while the plugin still lists them as pending, and a cold start
+/// is the only way back from that.
+///
+/// **Complete cancellation** — every id the reminder could own, shown or
+/// pending — still happens when a reminder is deleted ([cancel]), disabled,
+/// or changes shape (mode, slots or id base; see [reschedule]), and whenever
+/// the pending ids can't be read.
+///
+/// All notification work runs one job at a time, so a sweep can never wipe
+/// ids a newer schedule just created. The queue starts with [init], so no
+/// job runs before the plugin and the platform zone are ready; if init
+/// fails, every job is a no-op.
 class ReminderNotificationService {
   ReminderNotificationService({
     required NotificationBackend backend,
     required List<Injection> Function() injections,
     this.onScheduleError,
+    this.onPermissionResult,
     DateTime Function()? clock,
     void Function(VoidCallback)? afterFirstFrame,
   })  : _backend = backend,
@@ -62,12 +96,20 @@ class ReminderNotificationService {
   final DateTime Function() _clock;
   final void Function(VoidCallback) _afterFirstFrame;
 
-  /// Called once per reminder whose schedule partly failed, with the first
-  /// error (the rest of that reminder's batch is still attempted).
+  /// Called once per job whose schedule partly failed, with the first error
+  /// (the rest of that batch is still attempted).
   final void Function(Object error)? onScheduleError;
+
+  /// Called with the answer to the permission request made after init
+  /// (null: unknown), so the app can check whether it's blocked.
+  final void Function(bool? granted)? onPermissionResult;
 
   Future<void> _chain = Future.value();
   bool _ready = false;
+
+  /// id → signature of what this process last scheduled under it (see the
+  /// class doc). Only trusted for ids the platform still lists as pending.
+  final Map<int, String> _sent = {};
 
   /// The plugin initialized; until then (and forever after a failed init)
   /// queued jobs do nothing.
@@ -98,14 +140,31 @@ class ReminderNotificationService {
       final launch = await _backend.launchTap();
       if (launch != null) onTap(launch.payload, launch.actionId);
     } catch (_) {}
-    _afterFirstFrame(requestPermission);
+    _afterFirstFrame(() async {
+      final granted = await requestPermission();
+      onPermissionResult?.call(granted);
+    });
   }
 
-  Future<void> requestPermission() async {
+  /// Asks the OS for permission to post notifications; true if granted,
+  /// null if unknown or the request failed.
+  Future<bool?> requestPermission() async {
     try {
-      await _backend.requestPermission();
+      return await _backend.requestPermission();
     } catch (_) {
       // Permission request may fail on older Android versions; safe to ignore.
+      return null;
+    }
+  }
+
+  /// Whether the OS lets the app post notifications (B20). Null before or
+  /// after a failed init, and when the platform can't tell.
+  Future<bool?> notificationsEnabled() async {
+    if (!_ready) return null;
+    try {
+      return await _backend.areNotificationsEnabled();
+    } catch (_) {
+      return null;
     }
   }
 
@@ -120,35 +179,115 @@ class ReminderNotificationService {
     return _chain;
   }
 
-  /// Cancel-then-schedule for one reminder (cancel only if it's disabled).
-  Future<void> reschedule(Reminder r) => _enqueue(() async {
-        await _cancelAll(r);
-        if (r.enabled) await _schedule(r);
-      });
-
-  /// [reschedule] for every enabled reminder (disabled ones are left alone).
-  void rescheduleAll(Iterable<Reminder> reminders) {
-    for (final r in reminders) {
-      if (r.enabled) reschedule(r);
-    }
+  /// Brings the platform in line with [reminders] — the app's full list — at
+  /// launch, on resume and after a restore: cancels every pending id that no
+  /// enabled reminder plans (leftovers of disabled, deleted or re-seeded
+  /// reminders included) and sends what is missing or changed. Never
+  /// dismisses a delivered notification. Falls back to the complete sweep
+  /// if the pending ids can't be read.
+  Future<void> reconcileAll(Iterable<Reminder> reminders) {
+    final list = List<Reminder>.of(reminders);
+    return _enqueue(() async {
+      final pending = await _pendingIds();
+      if (pending == null) {
+        for (final r in list) {
+          await _sweep(r);
+        }
+        await _send([for (final r in list) ..._plan(r)], const {});
+        return;
+      }
+      final plan = [for (final r in list) ..._plan(r)];
+      final wanted = {for (final n in plan) n.id};
+      await _cancelEach(pending.where((id) => !wanted.contains(id)));
+      await _send(plan, pending);
+    });
   }
 
-  /// Cancels every id the reminder could have scheduled.
-  Future<void> cancel(Reminder r) => _enqueue(() => _cancelAll(r));
+  /// Updates one reminder after an explicit change; [previous] is the
+  /// version it replaces, if any. A disabled reminder, or one whose shape
+  /// changed, gets the complete sweep first (the previous id base's too);
+  /// otherwise the reminder's own id range is reconciled like
+  /// [reconcileAll] does.
+  Future<void> reschedule(Reminder r, {Reminder? previous}) => _enqueue(() async {
+        final reshaped = previous != null && _shapeChanged(previous, r);
+        Set<int>? pending;
+        if (r.enabled && !reshaped) pending = await _pendingIds();
+        if (pending == null) {
+          if (reshaped && previous.notificationIdBase != r.notificationIdBase) {
+            await _sweep(previous);
+          }
+          await _sweep(r);
+          await _send(_plan(r), const {});
+          return;
+        }
+        final plan = _plan(r);
+        final wanted = {for (final n in plan) n.id};
+        await _cancelEach(pending.where((id) => _owns(r, id) && !wanted.contains(id)));
+        await _send(plan, pending);
+      });
+
+  /// Cancels every id the reminder could have scheduled, pending or shown
+  /// (it was deleted).
+  Future<void> cancel(Reminder r) => _enqueue(() => _sweep(r));
+
+  List<PlannedNotification> _plan(Reminder r) =>
+      planReminderNotifications(r, _clock(), injections: _injections());
+
+  static bool _owns(Reminder r, int id) =>
+      id >= r.notificationIdBase && id < r.notificationIdBase + kNotificationIdsPerReminder;
+
+  /// Mode, slot layout or id base differ, so ids map to other occurrences.
+  static bool _shapeChanged(Reminder a, Reminder b) {
+    if (a.scheduleMode != b.scheduleMode || a.notificationIdBase != b.notificationIdBase) {
+      return true;
+    }
+    if (a.scheduleMode != 'custom') return false;
+    if (a.customSlots.length != b.customSlots.length) return true;
+    for (var i = 0; i < a.customSlots.length; i++) {
+      final x = a.customSlots[i], y = b.customSlots[i];
+      if (x.weekday != y.weekday || x.hour != y.hour || x.minute != y.minute) return true;
+    }
+    return false;
+  }
+
+  /// The platform's pending ids, or null if they can't be read.
+  Future<Set<int>?> _pendingIds() async {
+    try {
+      final ids = await _backend.pendingIds();
+      // Whatever isn't pending any more fired or was cancelled elsewhere.
+      _sent.removeWhere((id, _) => !ids.contains(id));
+      return ids;
+    } catch (_) {
+      return null;
+    }
+  }
 
   // Sweeps the reminder's whole id range regardless of its *current*
   // mode/slot count — a mode switch must not orphan ids scheduled under the
-  // previous shape.
-  Future<void> _cancelAll(Reminder r) async {
+  // previous shape. A failing cancel aborts the job.
+  Future<void> _sweep(Reminder r) async {
     for (var i = 0; i < kNotificationIdsPerReminder; i++) {
-      await _backend.cancel(r.notificationIdBase + i);
+      final id = r.notificationIdBase + i;
+      await _backend.cancel(id);
+      _sent.remove(id);
     }
   }
 
-  Future<void> _schedule(Reminder r) async {
-    if (!r.enabled) return;
+  /// Cancels [ids] one by one; a failure costs only that id.
+  Future<void> _cancelEach(Iterable<int> ids) async {
+    for (final id in ids.toList()) {
+      try {
+        await _backend.cancel(id);
+        _sent.remove(id);
+      } catch (_) {}
+    }
+  }
+
+  /// Schedules each of [plan] unless [pending] holds its id with exactly what
+  /// this process last sent under it.
+  Future<void> _send(List<PlannedNotification> plan, Set<int> pending) async {
+    if (plan.isEmpty) return;
     final now = _clock();
-    final plan = planReminderNotifications(r, now, injections: _injections());
 
     // Exact alarms when permitted (auto-granted on Android 13+ via
     // USE_EXACT_ALARM); inexact delivery can lag by up to an hour in Doze.
@@ -160,13 +299,27 @@ class ReminderNotificationService {
     // Per-call try so one bad occurrence doesn't drop the rest of the batch.
     Object? firstError;
     for (final n in plan) {
+      final sig = _signature(n, exact);
+      if (pending.contains(n.id) && _sent[n.id] == sig) continue;
       try {
         await _backend.schedule(n, exact: exact, now: now);
+        _sent[n.id] = sig;
       } catch (e) {
+        _sent.remove(n.id);
         firstError ??= e;
       }
     }
     if (firstError != null) onScheduleError?.call(firstError);
+  }
+
+  /// Everything that decides what the platform does with [n]. A weekly
+  /// repeat is keyed by weekday and clock time rather than its next date, so
+  /// it isn't re-sent every week; the UTC offset catches a zone change.
+  static String _signature(PlannedNotification n, bool exact) {
+    final when = n.repeatsWeekly
+        ? 'weekly ${n.when.weekday} ${n.slotTime} ${n.when.timeZoneOffset}'
+        : '${n.when.toUtc().toIso8601String()} ${n.slotTime}';
+    return [when, n.title, n.body, n.payload, exact].join('\u0000');
   }
 }
 
@@ -191,7 +344,7 @@ class LocalNotificationsBackend implements NotificationBackend {
       // instant; custom slots lose wall-clock anchoring until the next
       // app launch.
     }
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings = AndroidInitializationSettings(_smallIcon);
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
@@ -212,14 +365,31 @@ class LocalNotificationsBackend implements NotificationBackend {
     return (payload: resp?.payload, actionId: resp?.actionId);
   }
 
+  IOSFlutterLocalNotificationsPlugin? get _ios =>
+      _plugin.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
+
   @override
-  Future<void> requestPermission() async {
-    await _android?.requestNotificationsPermission();
+  Future<bool?> requestPermission() async {
+    final android = _android;
+    if (android != null) return android.requestNotificationsPermission();
+    return _ios?.requestPermissions(alert: true, badge: true, sound: true);
+  }
+
+  @override
+  Future<bool?> areNotificationsEnabled() async {
+    final android = _android;
+    if (android != null) return android.areNotificationsEnabled();
+    return (await _ios?.checkPermissions())?.isEnabled;
   }
 
   @override
   Future<bool> canScheduleExact() async =>
       await _android?.canScheduleExactNotifications() ?? false;
+
+  /// Monochrome status-bar icon (D7; res/drawable, kept from the release
+  /// shrinker by res/raw/keep.xml). The full-colour launcher icon renders
+  /// as a white square.
+  static const _smallIcon = 'ic_stat_protolog';
 
   static const _details = NotificationDetails(
     android: AndroidNotificationDetails(
@@ -229,6 +399,10 @@ class LocalNotificationsBackend implements NotificationBackend {
       importance: Importance.high,
       priority: Priority.high,
       category: AndroidNotificationCategory.reminder,
+      icon: _smallIcon,
+      // The body names the compound and the last dose: hide it on a secure
+      // lock screen (D8).
+      visibility: NotificationVisibility.private,
       actions: <AndroidNotificationAction>[
         // Both actions bring the app to the foreground: Log opens the wizard
         // prefilled; Skip advances the schedule via the same tap handler.
@@ -268,6 +442,10 @@ class LocalNotificationsBackend implements NotificationBackend {
       matchDateTimeComponents: n.repeatsWeekly ? DateTimeComponents.dayOfWeekAndTime : null,
     );
   }
+
+  @override
+  Future<Set<int>> pendingIds() async =>
+      {for (final p in await _plugin.pendingNotificationRequests()) p.id};
 
   @override
   Future<void> cancel(int id) => _plugin.cancel(id);

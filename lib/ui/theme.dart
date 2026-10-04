@@ -54,6 +54,54 @@ class AppTheme {
     'aromasin': Color(0xFFD27A6B),
   };
 
+  /// The app's MaterialApp theme. Every ColorScheme slot pickers reach for
+  /// is filled — ColorScheme.dark() defaults secondary/containers to
+  /// Material teal (#03DAC6), which leaked an "emerald" look into date/time
+  /// pickers.
+  static final ThemeData materialTheme = ThemeData.dark().copyWith(
+    scaffoldBackgroundColor: bg,
+    colorScheme: const ColorScheme.dark(
+      primary: accent,
+      onPrimary: bg,
+      secondary: accent,
+      onSecondary: bg,
+      primaryContainer: accentDeep,
+      onPrimaryContainer: fg,
+      secondaryContainer: surface2,
+      onSecondaryContainer: fg,
+      surface: surface,
+      onSurface: fg,
+      onSurfaceVariant: fgMute,
+      outline: border,
+    ),
+    datePickerTheme: const DatePickerThemeData(
+      backgroundColor: surface2,
+      headerBackgroundColor: surface,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: border, width: 1),
+      ),
+    ),
+    timePickerTheme: const TimePickerThemeData(
+      backgroundColor: surface2,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: border, width: 1),
+      ),
+    ),
+    dialogTheme: const DialogThemeData(
+      backgroundColor: surface2,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: border, width: 1),
+      ),
+    ),
+    cardTheme: const CardThemeData(
+      color: surface,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: border, width: 1),
+      ),
+      margin: EdgeInsets.zero,
+    ),
+  );
+
   static final _whitespace = RegExp(r'\s+');
 
   /// Look up the redesign color for a compound base name; returns null

@@ -18,6 +18,10 @@ class LibraryPage extends StatefulWidget {
   final void Function(CompoundDefinition compound) onOpenDetail;
   final VoidCallback onOpenCreate;
 
+  /// "Now" for protocol membership and "used ago"; the real clock when null
+  /// (tests pin it).
+  final DateTime? now;
+
   const LibraryPage({
     super.key,
     required this.userCompounds,
@@ -28,6 +32,7 @@ class LibraryPage extends StatefulWidget {
     required this.onRestore,
     required this.onOpenDetail,
     required this.onOpenCreate,
+    this.now,
   });
 
   @override
@@ -39,7 +44,7 @@ class _LibraryPageState extends State<LibraryPage> {
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
+    final now = widget.now ?? DateTime.now();
     final protocol = protocolCompounds(
       userCompounds: widget.userCompounds,
       injections: widget.injections,
@@ -80,7 +85,7 @@ class _LibraryPageState extends State<LibraryPage> {
           LibrarySection(
             title: 'In your protocol',
             meta: protocol.isEmpty ? '0' : '${protocolFiltered.length}',
-            child: _protocolBody(protocolFiltered, protocol.isEmpty),
+            child: _protocolBody(protocolFiltered, protocol.isEmpty, now),
           ),
           const SizedBox(height: 18),
           LibrarySection(
@@ -103,7 +108,8 @@ class _LibraryPageState extends State<LibraryPage> {
     }
   }
 
-  Widget _protocolBody(List<CompoundDefinition> rows, bool overallEmpty) {
+  Widget _protocolBody(
+      List<CompoundDefinition> rows, bool overallEmpty, DateTime now) {
     if (overallEmpty) {
       return _ProtocolEmpty();
     }
@@ -120,7 +126,7 @@ class _LibraryPageState extends State<LibraryPage> {
         ),
       );
     }
-    return _BorderedSurface(child: _rowList(rows, showUsed: true));
+    return _BorderedSurface(child: _rowList(rows, usedAgoAt: now));
   }
 
   Widget _catalogueBody(List<CompoundDefinition> rows) {
@@ -137,25 +143,32 @@ class _LibraryPageState extends State<LibraryPage> {
         ),
       );
     }
-    return _BorderedSurface(child: _rowList(rows, showUsed: false));
+    return _BorderedSurface(child: _rowList(rows));
   }
 
-  Widget _rowList(List<CompoundDefinition> rows, {required bool showUsed}) {
+  /// Compound rows; with [usedAgoAt] each shows how long ago it was last
+  /// taken, measured at that instant (the same `now` protocol membership uses).
+  Widget _rowList(List<CompoundDefinition> rows, {DateTime? usedAgoAt}) {
     final children = <Widget>[];
     for (var i = 0; i < rows.length; i++) {
       final c = rows[i];
       if (i > 0) {
         children.add(const Divider(height: 1, thickness: 1, color: AppTheme.borderSoft));
       }
-      final last = lastInjectionFor(
-        base: c.base, ester: c.ester, injections: widget.injections,
-      );
+      String? usedAgo;
+      if (usedAgoAt != null) {
+        final last = lastInjectionFor(
+          base: c.base, ester: c.ester, injections: widget.injections,
+          now: usedAgoAt,
+        );
+        usedAgo = formatUsedAgo(last, now: usedAgoAt);
+      }
       children.add(LibraryRow(
         name: displayName(c),
         meta: metaLineFor(c),
         stripeColor: AppTheme.compoundColor(c.base) ?? Color(c.colorValue),
         isCustom: c.isCustom,
-        usedAgo: showUsed ? formatUsedAgo(last) : null,
+        usedAgo: usedAgo,
         onTap: () => widget.onOpenDetail(c),
       ));
     }
