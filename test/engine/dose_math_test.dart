@@ -181,4 +181,24 @@ void main() {
       expect(p.unit, Unit.iu);
     });
   });
+
+  group('formatAmount', () {
+    test('whole numbers have no decimal point', () {
+      expect(formatAmount(250), '250');
+      expect(formatAmount(250.0), '250');
+      expect(formatAmount(0), '0');
+    });
+
+    test('fractions keep up to 2 decimals without trailing zeros', () {
+      expect(formatAmount(0.25), '0.25');
+      expect(formatAmount(5.5), '5.5');
+      expect(formatAmount(0.1), '0.1');
+      expect(formatAmount(125.5), '125.5');
+    });
+
+    test('rounds past 2 decimals; a value that rounds whole drops the point', () {
+      expect(formatAmount(6.6666), '6.67');
+      expect(formatAmount(2.999), '3');
+    });
+  });
 }

@@ -212,6 +212,26 @@ Reminder advanceAfterDose(Reminder r, DateTime takenAt, {DateTime? now}) {
   return r.copyWith(anchorDate: next);
 }
 
+/// The enabled reminders for the logged dose's compound ([base] + [ester])
+/// that [advanceAfterDose] actually moves, keyed by their index in
+/// [reminders]. A back-dated dose moves nothing (A4).
+Map<int, Reminder> remindersAdvancedByDose(
+  List<Reminder> reminders, {
+  required String base,
+  required String ester,
+  required DateTime takenAt,
+  DateTime? now,
+}) {
+  final out = <int, Reminder>{};
+  for (var i = 0; i < reminders.length; i++) {
+    final r = reminders[i];
+    if (!r.enabled || r.compoundBase != base || r.compoundEster != ester) continue;
+    final updated = advanceAfterDose(r, takenAt, now: now);
+    if (!identical(updated, r)) out[i] = updated;
+  }
+  return out;
+}
+
 /// Notification body for a due reminder. Reminders don't store a dose, so
 /// the most recent matching log supplies the "last dose" context.
 String reminderNotificationBody(Reminder r, List<Injection> injections) {

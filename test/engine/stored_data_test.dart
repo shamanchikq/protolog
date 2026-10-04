@@ -87,6 +87,29 @@ void main() {
     });
   });
 
+  group('results are growable (adopted as live app state)', () {
+    // A fresh install's never-saved collections used to come back as
+    // `const []`, so the first logged dose / reminder / lab result threw
+    // inside setState and was silently lost.
+    for (final (label, raw) in [
+      ('never saved', null),
+      ('empty list', '[]'),
+      ('garbage', 'not json {'),
+      ('not a list', '{"a": 1}'),
+    ]) {
+      test(label, () {
+        final res = decodeStoredList(raw, Reminder.fromJson);
+        expect(() => res.items.add(_good), returnsNormally);
+        expect(res.items, [_good]);
+      });
+    }
+
+    test('decodeRecords on a non-list', () {
+      final res = decodeRecords(42, Reminder.fromJson);
+      expect(() => res.items.add(_good), returnsNormally);
+    });
+  });
+
   group('unreadable keys', () {
     test('format is <key>_unreadable_<millis>', () {
       final at = DateTime.fromMillisecondsSinceEpoch(1759500000000);

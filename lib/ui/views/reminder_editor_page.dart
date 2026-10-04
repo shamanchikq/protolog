@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models.dart';
 import '../theme.dart';
+import '../widgets/lab_pickers.dart';
 import '../widgets/lab_primitives.dart';
 import '../../engine/reminder_schedule.dart';
 import '../../engine/library_stats.dart';
@@ -446,55 +447,9 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
     final t = await showTimePicker(
       context: context,
       initialTime: _time,
-      builder: (ctx, child) => _themedPickerWrapper(child!),
+      builder: (ctx, child) => labPickerTheme(child!),
     );
     if (t != null) setState(() => _time = t);
-  }
-
-  /// Wraps the Material time picker in the "Lab Sheet" theme (near-black
-  /// surfaces, mint accent, sharp corners) — mirrors the add-injection wizard.
-  Widget _themedPickerWrapper(Widget child) {
-    return Theme(
-      data: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: AppTheme.bg,
-        colorScheme: const ColorScheme.dark(
-          primary: AppTheme.accent,
-          onPrimary: AppTheme.bg,
-          surface: AppTheme.surface,
-          onSurface: AppTheme.fg,
-          surfaceContainerHighest: AppTheme.surface2,
-          outline: AppTheme.border,
-          secondary: AppTheme.accent,
-          onSecondary: AppTheme.bg,
-          error: AppTheme.warn,
-        ),
-        dialogTheme: const DialogThemeData(
-          backgroundColor: AppTheme.surface,
-          surfaceTintColor: Colors.transparent,
-          shape: RoundedRectangleBorder(),
-        ),
-        timePickerTheme: const TimePickerThemeData(
-          backgroundColor: AppTheme.surface,
-          dialBackgroundColor: AppTheme.surface2,
-          dialHandColor: AppTheme.accent,
-          dialTextColor: AppTheme.fg,
-          hourMinuteColor: AppTheme.surface2,
-          hourMinuteTextColor: AppTheme.fg,
-          dayPeriodColor: AppTheme.surface2,
-          dayPeriodTextColor: AppTheme.fg,
-          shape: RoundedRectangleBorder(),
-          hourMinuteShape: RoundedRectangleBorder(),
-          entryModeIconColor: AppTheme.fgMute,
-        ),
-        textButtonTheme: TextButtonThemeData(
-          style: TextButton.styleFrom(
-            foregroundColor: AppTheme.accent,
-            textStyle: AppTheme.sans(size: 13, weight: FontWeight.w600),
-          ),
-        ),
-      ),
-      child: child,
-    );
   }
 
   // ---- custom controls ----
@@ -583,7 +538,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
                 final picked = await showTimePicker(
                   context: context,
                   initialTime: t,
-                  builder: (ctx, child) => _themedPickerWrapper(child!),
+                  builder: (ctx, child) => labPickerTheme(child!),
                 );
                 if (picked != null) setState(() => _dayTimes[weekday] = picked);
               },

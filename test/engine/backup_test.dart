@@ -192,7 +192,38 @@ void main() {
       );
       expect(res.customSitesIM, ['Quad sweep L', 'Pec R']);
       expect(res.customSitesSubQ, ['Navel L']);
+      expect(res.newSites, 2);
+      expect(res.totalChanges, 2);
     });
+
+    test('totalChanges sums every kind of change', () {
+      final incoming = decodeBackup(encodeBackup(
+        injections: [_inj('i1'), _inj('i2')],
+        compounds: [_testE],
+        reminders: [_rem('r1')],
+        customSitesIM: ['Pec R'],
+        customSitesSubQ: [],
+        bloodwork: [
+          BloodworkEntry(id: 'b1', date: DateTime(2026, 6, 2), marker: 'E2', value: 90, unit: 'pmol/L'),
+        ],
+      ))!;
+      final res = mergeBackup(
+        injections: [_inj('i1')],
+        compounds: [],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        incoming: incoming,
+      );
+      expect((res.newInjections, res.changedCompounds, res.changedReminders,
+          res.newBloodwork, res.newSites), (1, 1, 1, 1, 1));
+      expect(res.totalChanges, 5);
+    });
+  });
+
+  test('backupFileName is protolog_backup_YYYY-MM-DD.json', () {
+    expect(backupFileName(DateTime(2026, 3, 7, 23, 59)), 'protolog_backup_2026-03-07.json');
+    expect(backupFileName(DateTime(2026, 11, 21)), 'protolog_backup_2026-11-21.json');
   });
 
   group('decodeBackup drops invalid records (A7)', () {

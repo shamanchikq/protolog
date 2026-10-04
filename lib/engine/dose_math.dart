@@ -110,3 +110,20 @@ List<Unit> doseUnitOptions(Unit nativeUnit) =>
       : nativeUnit;
   return (dose: null, unit: unit);
 }
+
+/// Text for a dose, volume or concentration as the wizard shows and
+/// pre-fills it: whole numbers without a decimal point, anything else capped
+/// at 2 decimals with trailing zeros trimmed ("6.6666" → "6.67",
+/// "5.50" → "5.5", "250.0" → "250").
+///
+/// Pre-filled text is what gets saved when it isn't retyped, so the 2-decimal
+/// cap also rounds stored values (N1: 0.125 → 0.13).
+String formatAmount(double v) {
+  if (v == v.roundToDouble()) return v.toStringAsFixed(0);
+  var s = v.toStringAsFixed(2);
+  if (s.contains('.')) {
+    s = s.replaceFirst(RegExp(r'0+$'), '');
+    if (s.endsWith('.')) s = s.substring(0, s.length - 1);
+  }
+  return s;
+}

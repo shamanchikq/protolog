@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:protolog_tracker/models.dart';
 import 'package:protolog_tracker/engine/reminder_schedule.dart';
 
-// Frozen "now": Wed 2026-05-18 07:40 (matches the design's week strip).
+// Frozen "now": Mon 2026-05-18 07:40 (matches the design's week strip).
 final now = DateTime(2026, 5, 18, 7, 40);
 
 Reminder interval({
@@ -31,7 +31,7 @@ void main() {
     });
 
     test('custom returns next slot >= now', () {
-      // Mon/Wed/Fri 20:30; now is Wed 07:40 -> today 20:30
+      // Mon/Wed/Fri 20:30; now is Mon 07:40 -> today (Monday) 20:30
       final r = custom([
         ReminderSlot(weekday: 1, hour: 20, minute: 30),
         ReminderSlot(weekday: 3, hour: 20, minute: 30),
@@ -168,6 +168,32 @@ void main() {
       );
       expect(advanceAfterDose(legacy, DateTime(2026, 4, 27, 8, 0), now: now).anchorDate, isNull);
       expect(advanceAfterDose(legacy, now, now: now).anchorDate, now.add(const Duration(days: 7)));
+    });
+  });
+
+  group('remindersAdvancedByDose', () {
+    final te = interval(days: 7, anchor: DateTime(2026, 5, 25, 8, 0)); // Test Cyp
+    final other = Reminder(
+      id: 'o', compoundBase: 'Testosterone', compoundEster: 'Enanthate',
+      intervalDays: 7, hour: 8, minute: 0, enabled: true,
+      anchorDate: DateTime(2026, 5, 25, 8, 0),
+    );
+    final paused = interval(days: 7, anchor: DateTime(2026, 5, 25, 8, 0), enabled: false);
+
+    test('moves only enabled reminders for the same base + ester, keyed by index', () {
+      final taken = DateTime(2026, 5, 25, 8, 10);
+      final moved = remindersAdvancedByDose([other, paused, te],
+          base: 'Testosterone', ester: 'Cypionate', takenAt: taken, now: taken);
+      expect(moved.keys, [2]);
+      expect(moved[2]!.anchorDate, DateTime(2026, 6, 1, 8, 10));
+    });
+
+    test('a back-dated dose moves nothing (A4)', () {
+      expect(
+          remindersAdvancedByDose([te],
+              base: 'Testosterone', ester: 'Cypionate',
+              takenAt: DateTime(2026, 4, 27, 8, 0), now: now),
+          isEmpty);
     });
   });
 

@@ -1,18 +1,7 @@
-import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:file_selector/file_selector.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:flutter_timezone/flutter_timezone.dart';
-import 'package:timezone/data/latest_all.dart' as tz;
-import 'package:timezone/timezone.dart' as tz;
 import 'models.dart';
-import 'data.dart';
 import 'engine/compute_engine.dart';
 import 'engine/library_stats.dart';
 import 'engine/compound_edits.dart';
@@ -34,9 +23,9 @@ import 'ui/views/reminders_page.dart';
 import 'ui/views/reminder_editor_page.dart';
 import 'engine/reminder_schedule.dart';
 import 'engine/log_serde.dart';
-import 'engine/backup.dart';
-import 'engine/record_validation.dart';
-import 'engine/stored_data.dart';
+import 'services/app_store.dart';
+import 'services/backup_io.dart';
+import 'services/reminder_notifications.dart';
 
 // --- Entry Point ---
 void main() {
@@ -118,12 +107,19 @@ class ProtoLogApp extends StatelessWidget {
 // --- Main Screen ---
 
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key});
+  const MainScreen({super.key, this.store, this.notificationBackend});
+
+  /// Test seams: default to SharedPreferences and flutter_local_notifications.
+  final AppStore? store;
+  final NotificationBackend? notificationBackend;
 
   @override
   State<MainScreen> createState() => _MainScreenState();
 }
 
+/// Owns all app state and routing. Persistence lives in [AppStore],
+/// notification plumbing in [ReminderNotificationService], backup file I/O
+/// in [BackupIO]; every state change goes through [_mutate].
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
   List<Injection> injections = [];
@@ -133,34 +129,16 @@ class _MainScreenState extends State<MainScreen> {
   late GraphSettings settings;
   Future<ComputedGraphData>? _graphDataFuture;
   bool _loading = true;
+  DateTime _calendarSelectedDay = DateTime.now();
 
-  // Notifications
-  final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
-
-  // Interval reminders pre-schedule this many one-shot notifications so they
-  // keep firing even when the app isn't opened for several cycles.
-  static const int _kIntervalOccurrences = 10;
-
-  // Cancellation always sweeps this many ids per reminder, regardless of the
-  // reminder's *current* mode/slot count — a mode switch must not orphan ids
-  // scheduled under the previous shape. (Interval mode uses
-  // _kIntervalOccurrences; custom mode's layout is customSlotIdOffset.)
-  static const int _kMaxNotificationIdsPerReminder = kNotificationIdsPerReminder;
-
-  // All notification work runs one job at a time: a reminder's cancel sweep
-  // must finish before its new schedule goes out, or the sweep (64 sequential
-  // calls) can wipe ids the schedule just created. The chain starts with
-  // plugin init, so no job runs before the plugin and tz.local are ready.
-  Future<void> _notifChain = Future.value();
-  bool _notificationsReady = false;
-
-  // Collections persisted as JSON lists, loaded through decodeStoredList.
-  static const _kDataKeys = ['injections', 'compounds', 'reminders', 'bloodwork'];
-
-  // Keys whose stored contents this session hasn't accounted for yet —
-  // neither loaded nor set aside verbatim. Saves skip them, so a failed or
-  // partial load can never overwrite data the app couldn't read (A7).
-  final Set<String> _unsafeKeys = {..._kDataKeys};
+  late final AppStore _store = widget.store ?? AppStore();
+  late final BackupIO _backup = BackupIO(_store);
+  late final ReminderNotificationService _notifs = ReminderNotificationService(
+    backend: widget.notificationBackend ?? LocalNotificationsBackend(),
+    injections: () => injections,
+    onScheduleError: (e) =>
+        _snack('Failed to schedule notification: $e', color: AppTheme.warn),
+  );
 
   // Set when a notification tap arrives before _loadData has finished
   // (cold start); processed at the end of _loadData.
@@ -176,74 +154,46 @@ class _MainScreenState extends State<MainScreen> {
 
   // Notification init and data load are independent, so a plugin failure
   // (or hang) can never keep the app on the spinner (A7). Rescheduling still
-  // happens with the plugin initialized and tz.local set: it queues on
-  // _notifChain, which starts with init.
+  // happens with the plugin initialized and tz.local set: the service queues
+  // every job behind init.
   Future<void> _bootstrap() async {
-    _notifChain = _initNotifications();
+    _notifs.init(onTap: (payload, actionId) => _handleNotificationTap(payload, actionId: actionId));
     await _loadData();
-    _rescheduleAllReminders();
-    _notifChain.then((_) {
-      if (!_notificationsReady) {
+    _notifs.rescheduleAll(reminders);
+    _notifs.idle.then((_) {
+      if (!_notifs.ready) {
         _snack("Notifications couldn't start — reminders won't fire this session",
             color: AppTheme.warn);
       }
     });
   }
 
-  /// Never throws: on failure _notificationsReady stays false and every
-  /// queued notification job becomes a no-op.
-  Future<void> _initNotifications() async {
-    try {
-      tz.initializeTimeZones();
-      try {
-        final info = await FlutterTimezone.getLocalTimezone();
-        tz.setLocalLocation(tz.getLocation(info.identifier));
-      } catch (_) {
-        // tz.local stays UTC: one-shots still fire at the right instant; only
-        // weekly repeats lose wall-clock anchoring until the next app launch.
-      }
-      const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-      const iosSettings = DarwinInitializationSettings(
-        requestAlertPermission: true,
-        requestBadgePermission: true,
-        requestSoundPermission: true,
-      );
-      const initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
-      await _notificationsPlugin.initialize(
-        initSettings,
-        onDidReceiveNotificationResponse: (resp) =>
-            _handleNotificationTap(resp.payload, actionId: resp.actionId),
-      );
-      _notificationsReady = true;
-    } catch (_) {
-      return;
+  /// Tolerant load (A7, see AppStore.load): the spinner always clears, and
+  /// whatever couldn't be read was set aside before anything could save
+  /// over it; the user is told.
+  Future<void> _loadData() async {
+    final res = await _store.load();
+    if (!mounted) return;
+    setState(() {
+      injections = res.injections;
+      userCompounds = res.compounds;
+      reminders = res.reminders;
+      bloodwork = res.bloodwork;
+      _loading = false;
+    });
+    _refreshGraph();
+
+    final problem = res.problem;
+    if (problem != null) {
+      _snack(problem, color: AppTheme.warn, duration: const Duration(seconds: 10));
     }
 
-    // App launched by tapping a notification while terminated.
-    try {
-      final launch = await _notificationsPlugin.getNotificationAppLaunchDetails();
-      if (launch?.didNotificationLaunchApp ?? false) {
-        _handleNotificationTap(
-          launch!.notificationResponse?.payload,
-          actionId: launch.notificationResponse?.actionId,
-        );
-      }
-    } catch (_) {}
-
-    // Request POST_NOTIFICATIONS permission after the first frame,
-    // so the Activity is fully ready to show the system dialog.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _requestNotificationPermission();
-    });
-  }
-
-  Future<void> _requestNotificationPermission() async {
-    try {
-      final androidPlugin = _notificationsPlugin
-          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-      await androidPlugin?.requestNotificationsPermission();
-    } catch (_) {
-      // Permission request may fail on older Android versions; safe to ignore.
+    if (_pendingNotificationPayload != null) {
+      final p = _pendingNotificationPayload;
+      final a = _pendingNotificationAction;
+      _pendingNotificationPayload = null;
+      _pendingNotificationAction = null;
+      _handleNotificationTap(p, actionId: a);
     }
   }
 
@@ -273,6 +223,52 @@ class _MainScreenState extends State<MainScreen> {
     if (def != null) _openAddInjectionWizard(prefill: def);
   }
 
+  // --- State changes ---
+
+  /// The one way app state changes: applies [change] in setState (and, with
+  /// [graph], recomputes the PK chart), then saves the named collections.
+  /// Saves are awaited and a failed one shows a snackbar instead of failing
+  /// silently. Completes with false if any save failed.
+  Future<bool> _mutate(
+    VoidCallback change, {
+    bool injections = false,
+    bool compounds = false,
+    bool reminders = false,
+    bool bloodwork = false,
+    bool graph = false,
+  }) async {
+    setState(() {
+      change();
+      if (graph) _graphDataFuture = _computeGraph();
+    });
+    // Each save encodes its collection synchronously, so this persists the
+    // state as of this change even if another one lands meanwhile.
+    final saves = [
+      if (injections) _store.saveInjections(this.injections),
+      if (compounds) _store.saveCompounds(userCompounds),
+      if (reminders) _store.saveReminders(this.reminders),
+      if (bloodwork) _store.saveBloodwork(this.bloodwork),
+    ];
+    final ok = (await Future.wait(saves)).every((saved) => saved);
+    if (!ok) _reportSaveFailure();
+    return ok;
+  }
+
+  void _reportSaveFailure() => _snack(
+        "Couldn't save your latest change — it may be lost when the app closes.",
+        color: AppTheme.warn,
+        duration: const Duration(seconds: 10),
+      );
+
+  Future<ComputedGraphData> _computeGraph() =>
+      compute(calculateGraphData, IsolateInput(injections, settings));
+
+  void _refreshGraph() {
+    setState(() {
+      _graphDataFuture = _computeGraph();
+    });
+  }
+
   /// Lab Sheet-styled snackbar. `color` is the background; `dark` switches the
   /// text to bg-on-light for warm/light backgrounds.
   void _snack(
@@ -292,256 +288,132 @@ class _MainScreenState extends State<MainScreen> {
     ));
   }
 
-  /// Tolerant load (A7): each collection decodes record by record, and the
-  /// spinner always clears. Whatever couldn't be read is set aside verbatim
-  /// under an `<key>_unreadable_<millis>` key before anything can save over
-  /// it, and the user is told.
-  Future<void> _loadData() async {
-    var skipped = 0;
-    final unreadable = <String>[];
-    var loadFailed = false;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      // A non-string value under a data key (never written by the app) is
-      // handled like unreadable text.
-      final raw = <String, String?>{
-        for (final k in _kDataKeys)
-          k: switch (prefs.get(k)) { null => null, final String v => v, final v => '$v' },
-      };
-
-      final inj = decodeStoredList(raw['injections'], Injection.fromJson,
-          isValid: isValidInjection);
-      final comp = decodeStoredList(raw['compounds'], CompoundDefinition.fromJson,
-          isValid: isValidCompound);
-      final bw = decodeStoredList(raw['bloodwork'], BloodworkEntry.fromJson,
-          isValid: isValidBloodwork);
-      final rem = decodeStoredList(raw['reminders'], Reminder.fromJson,
-          isValid: isValidReminder);
-
-      // Nothing has been written yet. Set aside every lossy collection's raw
-      // text first; a key whose copy can't be written stays unsafe (never
-      // saved this session).
-      for (final (key, res) in <(String, DecodedRecords<Object?>)>[
-        ('injections', inj), ('compounds', comp), ('bloodwork', bw), ('reminders', rem),
-      ]) {
-        if (res.lossy) {
-          if (!await _setAside(prefs, key, raw[key]!)) continue;
-          skipped += res.skipped;
-          if (res.unreadable) unreadable.add(key);
-        }
-        _unsafeKeys.remove(key);
-      }
-
-      injections = inj.items;
-      userCompounds = raw['compounds'] == null ? List.from(INITIAL_COMPOUNDS) : comp.items;
-      bloodwork = bw.items;
-      reminders = rem.items;
-
-      // Freeze notification-id seeds for reminders saved before the seed
-      // existed, while id.hashCode still matches what was scheduled.
-      if (reminders.any((r) => r.notificationSeed == null)) _saveReminders();
-    } catch (_) {
-      loadFailed = true;
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-    if (!mounted) return;
-    _refreshGraph();
-
-    final problem = loadFailed
-        ? "Couldn't load saved data — nothing was changed. Restart to retry."
-        : _unsafeKeys.isNotEmpty
-            ? "Some saved data couldn't be read or set aside — changes to "
-                "${_unsafeKeys.join(', ')} won't be saved this session."
-            : _loadLossMessage(skipped, unreadable);
-    if (problem != null) {
-      _snack(problem, color: AppTheme.warn, duration: const Duration(seconds: 10));
-    }
-
-    if (_pendingNotificationPayload != null) {
-      final p = _pendingNotificationPayload;
-      final a = _pendingNotificationAction;
-      _pendingNotificationPayload = null;
-      _pendingNotificationAction = null;
-      _handleNotificationTap(p, actionId: a);
-    }
-  }
-
-  static String? _loadLossMessage(int skipped, List<String> unreadable) {
-    final parts = [
-      if (skipped > 0) '$skipped saved ${skipped == 1 ? 'entry' : 'entries'}',
-      if (unreadable.isNotEmpty) 'saved ${unreadable.join(' and ')}',
-    ];
-    if (parts.isEmpty) return null;
-    return "Couldn't read ${parts.join(' or ')}. The original data was kept "
-        'aside — nothing was deleted.';
-  }
-
-  /// Copies [raw] to `<key>_unreadable_<millis>` unless an identical copy is
-  /// already there from an earlier launch. True once the data is safe.
-  Future<bool> _setAside(SharedPreferences prefs, String key, String raw) async {
-    try {
-      final prefix = unreadableKeyPrefix(key);
-      for (final k in prefs.getKeys()) {
-        if (k.startsWith(prefix) && prefs.get(k) == raw) return true;
-      }
-      return await prefs.setString(unreadableKey(key, DateTime.now()), raw);
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /// Persists one collection, unless its stored contents were never
-  /// accounted for at load (see _unsafeKeys).
-  void _store(SharedPreferences prefs, String key, List<Object?> json) {
-    if (_unsafeKeys.contains(key)) return;
-    prefs.setString(key, jsonEncode(json));
-  }
-
-  Future<void> _saveData() async {
-    final prefs = await SharedPreferences.getInstance();
-    _store(prefs, 'injections', injections.map((e) => e.toJson()).toList());
-    _store(prefs, 'compounds', userCompounds.map((e) => e.toJson()).toList());
-  }
-
-  void _refreshGraph() {
-    setState(() {
-      _graphDataFuture = compute(calculateGraphData, IsolateInput(injections, settings));
-    });
-  }
-
-  /// Queues [job] behind all pending notification work (including plugin
-  /// init). A failing job never blocks the ones after it; if init failed,
-  /// jobs are skipped.
-  Future<void> _enqueueNotif(Future<void> Function() job) {
-    final run = _notifChain.then<void>((_) async {
-      if (_notificationsReady) await job();
-    });
-    _notifChain = run.catchError((Object _) {});
-    return _notifChain;
-  }
-
-  /// Cancel-then-schedule for one reminder (cancel only if it's disabled).
-  Future<void> _rescheduleReminder(Reminder r) => _enqueueNotif(() async {
-        await _cancelReminder(r);
-        if (r.enabled) await _scheduleReminder(r);
-      });
-
-  void _rescheduleAllReminders() {
-    for (final r in reminders) {
-      if (r.enabled) _rescheduleReminder(r);
-    }
-  }
-
-  Future<void> _saveReminders() async {
-    final prefs = await SharedPreferences.getInstance();
-    _store(prefs, 'reminders', reminders.map((r) => r.toJson()).toList());
-  }
-
-  Future<void> _saveBloodwork() async {
-    final prefs = await SharedPreferences.getInstance();
-    _store(prefs, 'bloodwork', bloodwork.map((b) => b.toJson()).toList());
-  }
-
-  Future<void> _scheduleReminder(Reminder reminder) async {
-    if (!reminder.enabled) return;
-    final now = DateTime.now();
-    final body = reminderNotificationBody(reminder, injections);
-    final androidDetails = AndroidNotificationDetails(
-      'protolog_reminders',
-      'Administration Reminders',
-      channelDescription: 'Recurring compound administration reminders',
-      importance: Importance.high,
-      priority: Priority.high,
-      category: AndroidNotificationCategory.reminder,
-      actions: const <AndroidNotificationAction>[
-        // Both actions bring the app to the foreground: Log opens the wizard
-        // prefilled; Skip advances the schedule via the same tap handler.
-        AndroidNotificationAction('log', 'Log now',
-            showsUserInterface: true, cancelNotification: true),
-        AndroidNotificationAction('skip', 'Skip',
-            showsUserInterface: true, cancelNotification: true),
-      ],
+  /// Lab Sheet confirm dialog; true only if the user picked [confirm].
+  Future<bool> _confirm({
+    required String title,
+    required String body,
+    required String confirm,
+    String cancel = 'Cancel',
+  }) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface2,
+        title: Text(title,
+            style: AppTheme.sans(size: 14, weight: FontWeight.w600, color: AppTheme.fg)),
+        content: Text(body,
+            style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(cancel, style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(confirm,
+                style: AppTheme.sans(size: 12, weight: FontWeight.w600, color: AppTheme.accent)),
+          ),
+        ],
+      ),
     );
-    const iosDetails = DarwinNotificationDetails();
-    final details = NotificationDetails(android: androidDetails, iOS: iosDetails);
+    return ok == true;
+  }
 
-    // Exact alarms when permitted (auto-granted on Android 13+ via
-    // USE_EXACT_ALARM); inexact delivery can lag by up to an hour in Doze.
-    bool canExact = false;
-    try {
-      final androidImpl = _notificationsPlugin
-          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-      canExact = await androidImpl?.canScheduleExactNotifications() ?? false;
-    } catch (_) {}
-    final mode = canExact
-        ? AndroidScheduleMode.exactAllowWhileIdle
-        : AndroidScheduleMode.inexactAllowWhileIdle;
-
-    // Per-call try so one bad occurrence doesn't drop the rest of the batch.
-    Object? firstError;
-    Future<void> schedule(int id, tz.TZDateTime when, DateTimeComponents? match) async {
-      try {
-        await _notificationsPlugin.zonedSchedule(
-          id,
-          'ProtoLog Reminder',
-          body,
-          when,
-          details,
-          androidScheduleMode: mode,
-          payload: reminder.id,
-          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-          matchDateTimeComponents: match,
-        );
-      } catch (e) {
-        firstError ??= e;
-      }
-    }
-
-    if (reminder.scheduleMode == 'custom') {
-      // One weekly-repeating notification per slot — except a slot whose next
-      // occurrence was acknowledged (Skip / logged dose), which gets weekly
-      // one-shots until a later reschedule (see customSlotPlans; A3). The
-      // engine's wall-clock dates are rebuilt in tz.local so the slot time
-      // survives DST.
-      final nowTz = tz.TZDateTime.from(now, tz.local);
-      final base = reminder.notificationIdBase;
-      for (final plan in customSlotPlans(reminder, now)) {
-        final slot = reminder.customSlots[plan.slotIndex];
-        tz.TZDateTime wall(DateTime d) =>
-            tz.TZDateTime(tz.local, d.year, d.month, d.day, slot.hour, slot.minute);
-        if (plan.repeatsWeekly) {
-          await schedule(base + customSlotIdOffset(plan.slotIndex),
-              wall(plan.fireTimes.first), DateTimeComponents.dayOfWeekAndTime);
-          continue;
-        }
-        for (int w = 0; w < plan.fireTimes.length; w++) {
-          final when = wall(plan.fireTimes[w]);
-          // Only possible if tz.local isn't the device zone (lookup failed).
-          if (!when.isAfter(nowTz)) continue;
-          await schedule(base + customSlotIdOffset(plan.slotIndex, oneShot: w), when, null);
-        }
-      }
+  /// Replaces the item with [item]'s id, or appends it.
+  static void _upsert<T>(List<T> list, T item, String Function(T) idOf) {
+    final i = list.indexWhere((x) => idOf(x) == idOf(item));
+    if (i >= 0) {
+      list[i] = item;
     } else {
-      // Interval mode: schedule the next few one-shots (fractional spacing
-      // drifts the time-of-day, so no repeating matchDateTimeComponents).
-      // A corrupt interval yields none rather than throwing.
-      final times = intervalOccurrences(reminder, now, _kIntervalOccurrences);
-      for (int i = 0; i < times.length; i++) {
-        await schedule(reminder.notificationIdBase + i, tz.TZDateTime.from(times[i], tz.local), null);
-      }
-    }
-
-    if (firstError != null) {
-      _snack('Failed to schedule notification: $firstError', color: AppTheme.warn);
+      list.add(item);
     }
   }
 
-  Future<void> _cancelReminder(Reminder reminder) async {
-    for (int i = 0; i < _kMaxNotificationIdsPerReminder; i++) {
-      await _notificationsPlugin.cancel(reminder.notificationIdBase + i);
+  // Injections
+
+  Future<void> _addInjection(Injection inj, {bool advanceReminder = false}) async {
+    // Matching reminders move past the dose (never back: A4).
+    final advanced = advanceReminder
+        ? remindersAdvancedByDose(reminders,
+            base: inj.snapshot.base, ester: inj.snapshot.ester, takenAt: inj.date)
+        : const <int, Reminder>{};
+    final saved = _mutate(() {
+      injections.add(inj);
+      advanced.forEach((i, r) => reminders[i] = r);
+    }, injections: true, reminders: advanced.isNotEmpty, graph: true);
+    for (final r in advanced.values) {
+      _notifs.reschedule(r);
     }
+    await saved;
   }
+
+  void _updateInjection(Injection updated) => _mutate(() {
+        final i = injections.indexWhere((inj) => inj.id == updated.id);
+        if (i >= 0) injections[i] = updated;
+      }, injections: true, graph: true);
+
+  void _deleteInjection(String id) =>
+      _mutate(() => injections.removeWhere((i) => i.id == id), injections: true, graph: true);
+
+  void _updateInjectionNotes(String id, String? notes) => _mutate(() {
+        final i = injections.indexWhere((inj) => inj.id == id);
+        if (i < 0) return;
+        final cur = injections[i];
+        injections[i] = Injection(
+          id: cur.id,
+          compoundId: cur.compoundId,
+          date: cur.date,
+          dosage: cur.dosage,
+          snapshot: cur.snapshot,
+          site: cur.site,
+          notes: notes,
+        );
+      }, injections: true);
+
+  // Compounds
+
+  void _addUserCompound(CompoundDefinition comp) =>
+      _mutate(() => _upsert(userCompounds, comp, (c) => c.id), compounds: true);
+
+  void _deleteUserCompound(String id) =>
+      _mutate(() => userCompounds.removeWhere((c) => c.id == id), compounds: true);
+
+  // A first-time edit of a built-in adds a shadowing override.
+  void _updateUserCompound(CompoundDefinition updated) =>
+      _mutate(() => _upsert(userCompounds, updated, (c) => c.id), compounds: true, graph: true);
+
+  // Reminders
+
+  void _upsertReminder(Reminder r) {
+    _mutate(() => _upsert(reminders, r, (x) => x.id), reminders: true);
+    _notifs.reschedule(r);
+  }
+
+  /// Swaps in [updated] (matched by id) and reschedules it.
+  void _replaceReminder(Reminder updated) {
+    _mutate(() {
+      final i = reminders.indexWhere((x) => x.id == updated.id);
+      if (i >= 0) reminders[i] = updated;
+    }, reminders: true);
+    _notifs.reschedule(updated);
+  }
+
+  void _deleteReminder(Reminder r) {
+    _notifs.cancel(r);
+    _mutate(() => reminders.removeWhere((x) => x.id == r.id), reminders: true);
+  }
+
+  void _toggleReminderEnabled(Reminder r) => _replaceReminder(r.copyWith(enabled: !r.enabled));
+
+  void _skipReminder(Reminder r, {bool fromNotification = false}) {
+    final now = DateTime.now();
+    final updated = fromNotification
+        ? advanceAfterNotificationSkip(r, now: now)
+        : advanceAfterSkip(r, now: now);
+    if (!identical(updated, r)) _replaceReminder(updated);
+  }
+
+  // Bloodwork
 
   // Common markers with their usual units — tapping a chip in the editor
   // prefills both fields. Free-text stays possible for anything else.
@@ -566,10 +438,7 @@ class _MainScreenState extends State<MainScreen> {
         markerSuggestions: _markerSuggestions,
         injections: injections,
         colorResolver: _buildColorResolver(),
-        onChanged: (list) {
-          setState(() => bloodwork = List.of(list));
-          _saveBloodwork();
-        },
+        onChanged: (list) => _mutate(() => bloodwork = List.of(list), bloodwork: true),
       ),
     ));
   }
@@ -583,169 +452,64 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
     if (result == null) return;
-    setState(() {
+    _mutate(() {
       if (result.delete) {
         bloodwork.removeWhere((b) => b.id == editing!.id);
       } else {
-        final entry = result.entry!;
-        final i = bloodwork.indexWhere((b) => b.id == entry.id);
-        if (i >= 0) {
-          bloodwork[i] = entry;
-        } else {
-          bloodwork.add(entry);
-        }
+        _upsert(bloodwork, result.entry!, (b) => b.id);
       }
-    });
-    _saveBloodwork();
+    }, bloodwork: true);
   }
 
-  /// Reads the wizard-owned custom site lists straight from prefs (the
-  /// wizard persists them as JSON-encoded string lists).
-  List<String> _readSites(SharedPreferences prefs, String key) {
-    final raw = prefs.getString(key);
-    if (raw == null) return const [];
-    try {
-      return (jsonDecode(raw) as List).whereType<String>().toList();
-    } catch (_) {
-      return const [];
-    }
-  }
+  // --- Import / export ---
 
-  /// Raw text set aside by a lossy load (see _setAside), keyed by prefs key.
-  Map<String, String> _setAsideData(SharedPreferences prefs) {
-    final out = <String, String>{};
-    for (final k in prefs.getKeys()) {
-      final v = prefs.get(k);
-      if (v is String && _kDataKeys.any((d) => k.startsWith(unreadableKeyPrefix(d)))) {
-        out[k] = v;
-      }
-    }
-    return out;
-  }
-
-  /// F1: full-state backup — everything SharedPreferences holds, as one
-  /// versioned JSON file pushed through the Android share sheet.
-  Future<void> _exportBackupFile() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final payload = encodeBackup(
+  AppCollections get _collections => (
         injections: injections,
         compounds: userCompounds,
         reminders: reminders,
-        customSitesIM: _readSites(prefs, 'customSitesIM'),
-        customSitesSubQ: _readSites(prefs, 'customSitesSubQ'),
         bloodwork: bloodwork,
-        unreadable: _setAsideData(prefs),
       );
-      final dir = await getTemporaryDirectory();
-      final d = DateTime.now();
-      final name = 'protolog_backup_${d.year}'
-          '-${d.month.toString().padLeft(2, '0')}'
-          '-${d.day.toString().padLeft(2, '0')}.json';
-      final file = File('${dir.path}${Platform.pathSeparator}$name');
-      await file.writeAsString(payload);
-      await SharePlus.instance.share(ShareParams(
-        files: [XFile(file.path, mimeType: 'application/json')],
-        subject: 'ProtoLog backup',
-      ));
+
+  /// F1: full-state backup through the share sheet.
+  Future<void> _exportBackupFile() async {
+    try {
+      await _backup.share(_collections);
     } catch (e) {
       _snack('Backup failed: $e', color: AppTheme.warn);
     }
   }
 
+  /// F1 restore: additive merge after a confirmation that shows what changes.
   Future<void> _importBackupFile() async {
     try {
-      const group = XTypeGroup(
-        label: 'ProtoLog backup',
-        extensions: ['json'],
-        // Broad mime list: share targets sometimes re-tag JSON attachments.
-        mimeTypes: ['application/json', 'application/octet-stream', 'text/plain'],
-      );
-      final picked = await openFile(acceptedTypeGroups: const [group]);
-      if (picked == null) return;
-      final data = decodeBackup(await picked.readAsString());
-      if (data == null) {
+      final text = await _backup.pickFile();
+      if (text == null) return;
+      final preview = await _backup.preview(text, _collections);
+      if (preview == null) {
         _snack('Not a valid ProtoLog backup file', color: AppTheme.warn);
         return;
       }
-
-      final prefs = await SharedPreferences.getInstance();
-      final sitesIM = _readSites(prefs, 'customSitesIM');
-      final sitesSubQ = _readSites(prefs, 'customSitesSubQ');
-      final res = mergeBackup(
-        injections: injections,
-        compounds: userCompounds,
-        reminders: reminders,
-        customSitesIM: sitesIM,
-        customSitesSubQ: sitesSubQ,
-        bloodwork: bloodwork,
-        incoming: data,
-      );
-      final newSites = (res.customSitesIM.length - sitesIM.length) +
-          (res.customSitesSubQ.length - sitesSubQ.length);
-      final changes = res.newInjections +
-          res.changedCompounds +
-          res.changedReminders +
-          res.newBloodwork +
-          newSites;
-      // Malformed / invalid entries in the file are left out (A7).
-      final invalid = data.skipped == 0
-          ? null
-          : '${data.skipped} invalid ${data.skipped == 1 ? 'entry' : 'entries'} in the file';
-      if (changes == 0) {
-        _snack(
-            invalid == null
-                ? 'Backup matches current data — nothing to merge'
-                : 'Nothing new to merge — $invalid ${data.skipped == 1 ? 'was' : 'were'} skipped',
-            color: AppTheme.warm,
-            dark: true);
+      if (preview.isNoOp) {
+        _snack(preview.nothingToMergeMessage, color: AppTheme.warm, dark: true);
         return;
       }
-
       if (!mounted) return;
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          backgroundColor: AppTheme.surface2,
-          title: Text('Merge backup?',
-              style: AppTheme.sans(size: 14, weight: FontWeight.w600, color: AppTheme.fg)),
-          content: Text(
-            '${res.newInjections} new logs, ${res.changedCompounds} compound '
-            'updates, ${res.changedReminders} reminder updates, '
-            '${res.newBloodwork} lab results, $newSites new sites. '
-            '${invalid == null ? '' : '$invalid will be skipped. '}'
-            'Existing data is never deleted.',
-            style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text('Cancel', style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: Text('Merge',
-                  style: AppTheme.sans(size: 12, weight: FontWeight.w600, color: AppTheme.accent)),
-            ),
-          ],
-        ),
-      );
-      if (ok != true) return;
+      if (!await _confirm(title: 'Merge backup?', body: preview.summary, confirm: 'Merge')) return;
 
-      setState(() {
-        injections = res.injections;
-        userCompounds = res.compounds;
-        reminders = res.reminders;
-        bloodwork = res.bloodwork;
-      });
-      await _saveData();
-      await _saveReminders();
-      await _saveBloodwork();
-      await prefs.setString('customSitesIM', jsonEncode(res.customSitesIM));
-      await prefs.setString('customSitesSubQ', jsonEncode(res.customSitesSubQ));
-      _rescheduleAllReminders();
-      _refreshGraph();
-      _snack('Backup merged', color: AppTheme.accentDeep);
+      final m = preview.merged;
+      final saved = _mutate(() {
+        injections = m.injections;
+        userCompounds = m.compounds;
+        reminders = m.reminders;
+        bloodwork = m.bloodwork;
+      }, injections: true, compounds: true, reminders: true, bloodwork: true, graph: true);
+      _notifs.rescheduleAll(reminders);
+      if (!await saved) return; // _mutate reported it
+      if (await _backup.commitSites(preview)) {
+        _snack('Backup merged', color: AppTheme.accentDeep);
+      } else {
+        _reportSaveFailure();
+      }
     } catch (e) {
       _snack('Restore failed: $e', color: AppTheme.warn);
     }
@@ -775,127 +539,16 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     if (!mounted) return;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.surface2,
-        title: Text('Import data',
-            style: AppTheme.sans(size: 14, weight: FontWeight.w600, color: AppTheme.fg)),
-        content: Text(
-          'Found ${parsed.length} new entries to import. Proceed?',
-          style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text('Cancel', style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Import',
-                style: AppTheme.sans(size: 12, weight: FontWeight.w600, color: AppTheme.accent)),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-
-    setState(() => injections.addAll(parsed));
-    _saveData();
-    _refreshGraph();
-    _snack('Imported ${parsed.length} entries', color: AppTheme.accentDeep);
-  }
-
-  Future<void> _addInjection(Injection inj, {bool advanceReminder = false}) async {
-    setState(() {
-      injections.add(inj);
-    });
-    _saveData();
-    _refreshGraph();
-
-    if (advanceReminder) {
-      var changed = false;
-      for (int i = 0; i < reminders.length; i++) {
-        final r = reminders[i];
-        if (r.enabled && r.compoundBase == inj.snapshot.base && r.compoundEster == inj.snapshot.ester) {
-          final updated = advanceAfterDose(r, inj.date);
-          // A back-dated dose leaves the schedule alone (A4).
-          if (identical(updated, r)) continue;
-          reminders[i] = updated;
-          changed = true;
-          _rescheduleReminder(updated);
-        }
-      }
-      if (changed) _saveReminders();
+    if (!await _confirm(
+        title: 'Import data',
+        body: 'Found ${parsed.length} new entries to import. Proceed?',
+        confirm: 'Import')) {
+      return;
     }
-  }
 
-  void _updateInjection(Injection updated) {
-    setState(() {
-      final i = injections.indexWhere((inj) => inj.id == updated.id);
-      if (i >= 0) injections[i] = updated;
-    });
-    _saveData();
-    _refreshGraph();
-  }
-
-  void _deleteInjection(String id) {
-    setState(() {
-      injections.removeWhere((i) => i.id == id);
-    });
-    _saveData();
-    _refreshGraph();
-  }
-
-  void _updateInjectionNotes(String id, String? notes) {
-    setState(() {
-      final i = injections.indexWhere((inj) => inj.id == id);
-      if (i < 0) return;
-      final cur = injections[i];
-      injections[i] = Injection(
-        id: cur.id,
-        compoundId: cur.compoundId,
-        date: cur.date,
-        dosage: cur.dosage,
-        snapshot: cur.snapshot,
-        site: cur.site,
-        notes: notes,
-      );
-    });
-    _saveData();
-  }
-
-  void _addUserCompound(CompoundDefinition comp) {
-    setState(() {
-      final i = userCompounds.indexWhere((c) => c.id == comp.id);
-      if (i >= 0) {
-        userCompounds[i] = comp;
-      } else {
-        userCompounds.add(comp);
-      }
-    });
-    _saveData();
-  }
-
-  void _deleteUserCompound(String id) {
-    setState(() {
-      userCompounds.removeWhere((c) => c.id == id);
-    });
-    _saveData();
-  }
-
-  void _updateUserCompound(CompoundDefinition updated) {
-    setState(() {
-      final idx = userCompounds.indexWhere((c) => c.id == updated.id);
-      if (idx == -1) {
-        // First-time override of a built-in: shadow it in userCompounds.
-        userCompounds.add(updated);
-      } else {
-        userCompounds[idx] = updated;
-      }
-    });
-    _saveData();
-    _refreshGraph();
+    if (await _mutate(() => injections.addAll(parsed), injections: true, graph: true)) {
+      _snack('Imported ${parsed.length} entries', color: AppTheme.accentDeep);
+    }
   }
 
   @override
@@ -982,55 +635,10 @@ class _MainScreenState extends State<MainScreen> {
         userCompounds: userCompounds,
         now: DateTime.now(),
         onSave: _upsertReminder,
-        onDelete: editing != null
-            ? () {
-                _enqueueNotif(() => _cancelReminder(editing));
-                setState(() => reminders.removeWhere((x) => x.id == editing.id));
-                _saveReminders();
-              }
-            : null,
+        onDelete: editing != null ? () => _deleteReminder(editing) : null,
       ),
     ));
   }
-
-  void _upsertReminder(Reminder r) {
-    setState(() {
-      final i = reminders.indexWhere((x) => x.id == r.id);
-      if (i >= 0) {
-        reminders[i] = r;
-      } else {
-        reminders.add(r);
-      }
-    });
-    _saveReminders();
-    _rescheduleReminder(r);
-  }
-
-  void _toggleReminderEnabled(Reminder r) {
-    final updated = r.copyWith(enabled: !r.enabled);
-    setState(() {
-      final i = reminders.indexWhere((x) => x.id == r.id);
-      if (i >= 0) reminders[i] = updated;
-    });
-    _saveReminders();
-    _rescheduleReminder(updated);
-  }
-
-  void _skipReminder(Reminder r, {bool fromNotification = false}) {
-    final now = DateTime.now();
-    final updated = fromNotification
-        ? advanceAfterNotificationSkip(r, now: now)
-        : advanceAfterSkip(r, now: now);
-    if (identical(updated, r)) return;
-    setState(() {
-      final i = reminders.indexWhere((x) => x.id == r.id);
-      if (i >= 0) reminders[i] = updated;
-    });
-    _saveReminders();
-    _rescheduleReminder(updated);
-  }
-
-  DateTime _calendarSelectedDay = DateTime.now();
 
   void _openAddInjectionWizard({
     CompoundDefinition? prefill,
@@ -1131,35 +739,16 @@ class _MainScreenState extends State<MainScreen> {
   /// Confirm dialog offering to rewrite past logs' snapshots to the new PK.
   Future<void> _offerRetroactiveRewrite(CompoundDefinition c, int n) async {
     final logWord = n == 1 ? 'log' : 'logs';
-    final apply = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.surface2,
-        title: Text('Apply to past logs?',
-            style: AppTheme.sans(size: 14, weight: FontWeight.w600, color: AppTheme.fg)),
-        content: Text(
-          'Update $n past $logWord of ${displayName(c)} to the new '
+    final apply = await _confirm(
+      title: 'Apply to past logs?',
+      body: 'Update $n past $logWord of ${displayName(c)} to the new '
           'pharmacokinetics? Historical curves and stats will recompute. '
           'This rewrites logged history.',
-          style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text('Keep history as-is',
-                style: AppTheme.sans(size: 12, color: AppTheme.fgMute)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text('Update $n $logWord',
-                style: AppTheme.sans(
-                    size: 12, weight: FontWeight.w600, color: AppTheme.accent)),
-          ),
-        ],
-      ),
+      confirm: 'Update $n $logWord',
+      cancel: 'Keep history as-is',
     );
-    if (apply == true) {
-      setState(() {
+    if (apply) {
+      _mutate(() {
         injections = rewriteSnapshots(
           injections: injections,
           base: c.base,
@@ -1169,9 +758,7 @@ class _MainScreenState extends State<MainScreen> {
           ratio: c.ratio,
           graphType: c.graphType,
         );
-      });
-      _saveData();
-      _refreshGraph();
+      }, injections: true, graph: true);
     }
   }
 
@@ -1262,6 +849,4 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
   }
-
-
 }

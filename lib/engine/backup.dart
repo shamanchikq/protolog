@@ -42,6 +42,13 @@ class BackupMergeResult {
   final int changedReminders;
   final int newBloodwork;
 
+  /// Custom sites the merge added (both routes).
+  final int newSites;
+
+  /// Everything the merge would change; 0 means the backup adds nothing.
+  int get totalChanges =>
+      newInjections + changedCompounds + changedReminders + newBloodwork + newSites;
+
   const BackupMergeResult({
     required this.injections,
     required this.compounds,
@@ -53,8 +60,14 @@ class BackupMergeResult {
     required this.changedCompounds,
     required this.changedReminders,
     required this.newBloodwork,
+    required this.newSites,
   });
 }
+
+/// `protolog_backup_YYYY-MM-DD.json` for a backup made at [at].
+String backupFileName(DateTime at) => 'protolog_backup_${at.year}'
+    '-${at.month.toString().padLeft(2, '0')}'
+    '-${at.day.toString().padLeft(2, '0')}.json';
 
 String encodeBackup({
   required List<Injection> injections,
@@ -190,17 +203,21 @@ BackupMergeResult mergeBackup({
 
   List<String> union(List<String> a, List<String> b) =>
       {...a, ...b}.toList();
+  final sitesIM = union(customSitesIM, incoming.customSitesIM);
+  final sitesSubQ = union(customSitesSubQ, incoming.customSitesSubQ);
 
   return BackupMergeResult(
     injections: mergedInjections,
     compounds: mergedCompounds,
     reminders: mergedReminders,
-    customSitesIM: union(customSitesIM, incoming.customSitesIM),
-    customSitesSubQ: union(customSitesSubQ, incoming.customSitesSubQ),
+    customSitesIM: sitesIM,
+    customSitesSubQ: sitesSubQ,
     bloodwork: mergedBloodwork,
     newInjections: newInjections,
     changedCompounds: changedCompounds,
     changedReminders: changedReminders,
     newBloodwork: newBloodwork,
+    newSites: (sitesIM.length - customSitesIM.length) +
+        (sitesSubQ.length - customSitesSubQ.length),
   );
 }

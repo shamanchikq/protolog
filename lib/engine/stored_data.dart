@@ -6,6 +6,8 @@ import 'dart:convert';
 /// than silently replaced, so the caller can set the raw text aside before
 /// anything overwrites it.
 class DecodedRecords<T> {
+  /// Always a growable list — callers adopt it as live app state, so an
+  /// empty result must not be a `const []` (the first add would throw).
   final List<T> items;
 
   /// Entries in the source that failed to parse or validate.
@@ -28,7 +30,7 @@ DecodedRecords<T> decodeRecords<T>(
   T Function(Map<String, dynamic>) fromJson, {
   bool Function(T)? isValid,
 }) {
-  if (source is! List) return DecodedRecords<T>(const [], unreadable: true);
+  if (source is! List) return DecodedRecords<T>(<T>[], unreadable: true);
   final items = <T>[];
   var skipped = 0;
   for (final e in source) {
@@ -55,12 +57,12 @@ DecodedRecords<T> decodeStoredList<T>(
   T Function(Map<String, dynamic>) fromJson, {
   bool Function(T)? isValid,
 }) {
-  if (raw == null) return DecodedRecords<T>(const []);
+  if (raw == null) return DecodedRecords<T>(<T>[]);
   final Object? parsed;
   try {
     parsed = jsonDecode(raw);
   } catch (_) {
-    return DecodedRecords<T>(const [], unreadable: true);
+    return DecodedRecords<T>(<T>[], unreadable: true);
   }
   return decodeRecords(parsed, fromJson, isValid: isValid);
 }
