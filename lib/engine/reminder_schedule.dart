@@ -1,10 +1,45 @@
+import 'dart:convert';
 import 'dart:ui' show Color;
 import '../models.dart';
+import '../ui/format.dart';
+import 'calendar.dart';
 
 const _msPerDay = 86400000;
 
-Duration _intervalDuration(double days) =>
-    Duration(milliseconds: (days * _msPerDay).round());
+/// A whole number of days (float noise from arithmetic or a foreign backup
+/// tolerated). Such intervals step by calendar day so a dose keeps its
+/// wall-clock time across DST (B17); fractional ones step absolute time and
+/// drift the time of day by design.
+bool isWholeDayInterval(double days) =>
+    days.isFinite && (days - days.roundToDouble()).abs() < 1e-9;
+
+/// Occurrence [k] (k >= 0) of the rhythm starting at [anchor] and repeating
+/// every [days]: `anchor + k × days`, in calendar days for a whole-day
+/// interval. Always computed from the anchor, so a wall-clock time that one
+/// DST date normalizes doesn't shift the rest.
+DateTime _rhythmAt(DateTime anchor, double days, int k) => isWholeDayInterval(days)
+    ? addCalendarDays(anchor, k * days.round())
+    : anchor.add(Duration(milliseconds: (k * (days * _msPerDay)).round()));
+
+/// Index of the first occurrence of [anchor]'s rhythm at/after [t] (strictly
+/// after with [strict]); 0 when the anchor itself qualifies. [days] must be
+/// schedulable.
+int _firstIndexFrom(DateTime anchor, double days, DateTime t, {bool strict = false}) {
+  bool reached(DateTime d) => strict ? d.isAfter(t) : !d.isBefore(t);
+  if (reached(anchor)) return 0;
+  // Estimate from absolute time — calendar stepping is at most a DST hour
+  // off it — then settle on the exact index in a step or two.
+  final stepMs = days * _msPerDay;
+  var k = (t.difference(anchor).inMilliseconds / stepMs).floor();
+  if (k < 1) k = 1;
+  for (var guard = 0; guard < 4 && k > 1 && reached(_rhythmAt(anchor, days, k - 1)); guard++) {
+    k--;
+  }
+  for (var guard = 0; guard < 4 && !reached(_rhythmAt(anchor, days, k)); guard++) {
+    k++;
+  }
+  return k;
+}
 
 /// Sanity bounds for an interval reminder's spacing. The editor offers
 /// 0.5–90 days; anything outside these came from corrupt data or a foreign
@@ -142,26 +177,28 @@ DateTime nextOccurrence(Reminder r, DateTime now) {
   // Corrupt interval (zero, NaN, absurd): no rhythm to roll forward on —
   // dividing by it below would throw.
   if (!isSchedulableInterval(r.intervalDays)) return now;
-  final stepMs = r.intervalDays * _msPerDay;
-  final diffMs = now.difference(anchor).inMilliseconds;
-  final k = (diffMs / stepMs).ceil();
-  return anchor.add(Duration(milliseconds: (k * stepMs).round()));
+  return _rhythmAt(anchor, r.intervalDays, _firstIndexFrom(anchor, r.intervalDays, now));
 }
 
 /// The next [count] interval-mode fire times, from [nextOccurrence] on.
 /// Empty for a corrupt interval, so the scheduler can never throw on one.
 List<DateTime> intervalOccurrences(Reminder r, DateTime now, int count) {
-  if (!isSchedulableInterval(r.intervalDays)) return const [];
-  final step = _intervalDuration(r.intervalDays);
-  final first = nextOccurrence(r, now);
-  return [for (var i = 0; i < count; i++) first.add(step * i)];
+  final days = r.intervalDays;
+  if (!isSchedulableInterval(days)) return const [];
+  final anchor = expectedDose(r, now);
+  final first = _firstIndexFrom(anchor, days, now);
+  return [for (var i = 0; i < count; i++) _rhythmAt(anchor, days, first + i)];
 }
+
+/// How far ahead a dose shows as Due (and, for a custom slot, how early a
+/// logged dose still counts for it).
+const Duration kReminderDueWindow = Duration(hours: 12);
 
 /// Current UI state of a reminder row.
 ReminderState reminderState(
   Reminder r,
   DateTime now, {
-  Duration dueWindow = const Duration(hours: 12),
+  Duration dueWindow = kReminderDueWindow,
 }) {
   if (!r.enabled) return ReminderState.paused;
   final dose = expectedDose(r, now);
@@ -173,40 +210,105 @@ ReminderState reminderState(
   return dose.isAfter(dueEdge) ? ReminderState.on : ReminderState.due;
 }
 
+/// Skip pressed in the app. Custom: acknowledges the row's next slot.
+/// Interval: moves the anchor to the first occurrence after both the
+/// current dose and [now] — one interval for a dose not yet due; for an
+/// overdue one, past every missed dose to the next future occurrence, so it
+/// doesn't stay Overdue (B14).
 Reminder advanceAfterSkip(Reminder r, {DateTime? now}) {
   final n = now ?? DateTime.now();
   if (r.scheduleMode == 'custom') {
     return r.copyWith(acknowledgedUntil: _nextCustomSlot(r, n));
   }
-  if (!isSchedulableInterval(r.intervalDays)) return r;
-  final next = expectedDose(r, n).add(_intervalDuration(r.intervalDays));
-  return r.copyWith(anchorDate: next);
+  return _skipIntervalThrough(r, expectedDose(r, n), n);
 }
 
-/// Skip pressed on a notification — after the occurrence it announced has
-/// fired. Interval: that occurrence is the anchor, so the regular skip moves
-/// past it. Custom: slots never go overdue, so the fired occurrence is
-/// already behind us and there's nothing to acknowledge; [advanceAfterSkip]
-/// would acknowledge the *next* slot and — since notifications honour
-/// acknowledgedUntil (A3) — silence a dose the user never skipped.
-/// Returns [r] itself when nothing changes.
-Reminder advanceAfterNotificationSkip(Reminder r, {DateTime? now}) =>
-    r.scheduleMode == 'custom' ? r : advanceAfterSkip(r, now: now);
+/// Interval [r] with its anchor moved to the first occurrence of [anchor]'s
+/// rhythm strictly after both [through] and [now].
+Reminder _skipIntervalThrough(Reminder r, DateTime through, DateTime now, {DateTime? anchor}) {
+  final days = r.intervalDays;
+  if (!isSchedulableInterval(days)) return r;
+  final origin = anchor ?? expectedDose(r, now);
+  final past = now.isAfter(through) ? now : through;
+  return r.copyWith(anchorDate: _rhythmAt(origin, days, _firstIndexFrom(origin, days, past, strict: true)));
+}
+
+/// Skip pressed on a notification that announced [occurrence] (null for a
+/// weekly-repeating notification or one scheduled by an older release — see
+/// [ReminderPayload]). Returns [r] itself when nothing changes, so a
+/// repeated delivery of the same tap is harmless.
+///
+/// * Interval: skips that occurrence and every one before [now] — unless the
+///   anchor is already past it (a stale notification, or the same Skip
+///   delivered twice). Without an occurrence it skips like the in-app Skip.
+/// * Custom: slots never go overdue, so a fired occurrence is already behind
+///   us and there's nothing to acknowledge; [advanceAfterSkip] would
+///   acknowledge the *next* slot and — since notifications honour
+///   acknowledgedUntil (A3) — silence a dose the user never skipped. Only an
+///   announced occurrence that is still owed (delivered early) is
+///   acknowledged.
+Reminder advanceAfterNotificationSkip(Reminder r, {DateTime? occurrence, DateTime? now}) {
+  final n = now ?? DateTime.now();
+  if (r.scheduleMode == 'custom') {
+    if (occurrence == null || !occurrence.isAfter(_slotThreshold(r, n))) return r;
+    return r.copyWith(acknowledgedUntil: occurrence);
+  }
+  if (occurrence == null) return advanceAfterSkip(r, now: n);
+  // A reminder without an anchor floats at "today, hh:mm"; the announced
+  // occurrence is the better rhythm origin.
+  final anchor = r.anchorDate ?? occurrence;
+  if (occurrence.isBefore(anchor)) return r;
+  return _skipIntervalThrough(r, occurrence, n, anchor: anchor);
+}
+
+/// How far ahead of a custom slot a logged dose still counts as taken early
+/// for it. Deliberately much tighter than [kReminderDueWindow]: a late dose
+/// (missed 08:00, logged at 21:00) must not silence tomorrow's 08:00 — an
+/// extra notification is cheaper than a missed one.
+const Duration kEarlyDoseWindow = Duration(hours: 4);
+
+/// The upcoming slot occurrence a custom dose taken at [takenAt] counts for
+/// (B14): the first slot after it, when that is within [kEarlyDoseWindow]
+/// and nearer than the slot occurrence before it — a dose an hour after
+/// Tuesday 20:00 is Tuesday's, not an early one for Wednesday 06:00. Null
+/// when the dose isn't early for any slot.
+DateTime? _slotCoveredByEarlyDose(Reminder r, DateTime takenAt) {
+  DateTime? next;
+  DateTime? prev;
+  final weekBefore = addCalendarDays(takenAt, -7);
+  for (final s in r.customSlots.take(kMaxCustomSlots)) {
+    final after = nextSlotAfter(s, takenAt);
+    if (after != null && (next == null || after.isBefore(next))) next = after;
+    // The one occurrence in (takenAt - 7 days, takenAt].
+    final before = nextSlotAfter(s, weekBefore);
+    if (before != null && !before.isAfter(takenAt) && (prev == null || before.isAfter(prev))) {
+      prev = before;
+    }
+  }
+  if (next == null) return null;
+  final ahead = next.difference(takenAt);
+  if (ahead > kEarlyDoseWindow) return null;
+  if (prev != null && takenAt.difference(prev) <= ahead) return null;
+  return next;
+}
 
 /// Moves the schedule past a logged dose — forward only (A4). Interval: the
 /// anchor becomes `takenAt + interval` unless that's no later than the
 /// current expected dose, so a back-dated log can't rewind the rhythm into
 /// the past (Overdue right after a dose); an early-but-recent dose still
 /// re-anchors, since its next dose lands after the old anchor. Custom:
-/// `acknowledgedUntil` only ever grows. Returns [r] itself when nothing moves.
+/// acknowledges through `takenAt` — or through the slot the dose was taken
+/// early for ([_slotCoveredByEarlyDose]) — and `acknowledgedUntil` only ever
+/// grows. Returns [r] itself when nothing moves.
 Reminder advanceAfterDose(Reminder r, DateTime takenAt, {DateTime? now}) {
   if (r.scheduleMode == 'custom') {
+    final through = _slotCoveredByEarlyDose(r, takenAt) ?? takenAt;
     final ack = r.acknowledgedUntil;
-    if (ack != null && !takenAt.isAfter(ack)) return r;
-    return r.copyWith(acknowledgedUntil: takenAt);
+    if (ack != null && !through.isAfter(ack)) return r;
+    return r.copyWith(acknowledgedUntil: through);
   }
   if (!isSchedulableInterval(r.intervalDays)) return r;
-  final next = takenAt.add(_intervalDuration(r.intervalDays));
+  final next = _rhythmAt(takenAt, r.intervalDays, 1);
   // A legacy reminder without an anchor floats at "today, hh:mm".
   if (!next.isAfter(expectedDose(r, now ?? DateTime.now()))) return r;
   return r.copyWith(anchorDate: next);
@@ -232,6 +334,67 @@ Map<int, Reminder> remindersAdvancedByDose(
   return out;
 }
 
+/// What a reminder notification hands back to the tap handler: which
+/// reminder, and — for a one-shot — the occurrence it announced, so Skip
+/// acts on that dose and a repeated or stale tap changes nothing (B14).
+///
+/// Encoded as a JSON object, `{"reminder": id, "at": µs since epoch}`.
+/// Notifications scheduled by earlier releases carry the bare reminder id;
+/// [parse] reads those as a payload without an occurrence.
+class ReminderPayload {
+  final String reminderId;
+
+  /// The occurrence announced; null for a weekly-repeating notification
+  /// (its date changes every week) and for an old bare-id payload.
+  final DateTime? occurrence;
+
+  const ReminderPayload(this.reminderId, {this.occurrence});
+
+  String encode() => jsonEncode({
+        'reminder': reminderId,
+        if (occurrence != null) 'at': occurrence!.microsecondsSinceEpoch,
+      });
+
+  /// Null for a missing payload. Never throws: anything that isn't the JSON
+  /// object above is taken as a bare reminder id.
+  static ReminderPayload? parse(String? payload) {
+    if (payload == null || payload.isEmpty) return null;
+    if (payload.startsWith('{')) {
+      Object? decoded;
+      try {
+        decoded = jsonDecode(payload);
+      } on FormatException {
+        decoded = null;
+      }
+      if (decoded is Map && decoded.containsKey('reminder')) {
+        final id = decoded['reminder'];
+        if (id is! String || id.isEmpty) return null;
+        return ReminderPayload(id, occurrence: _instant(decoded['at']));
+      }
+    }
+    return ReminderPayload(payload);
+  }
+
+  static DateTime? _instant(Object? micros) {
+    if (micros is! int) return null;
+    try {
+      return DateTime.fromMicrosecondsSinceEpoch(micros);
+    } on ArgumentError {
+      return null; // out of DateTime's range
+    }
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReminderPayload && other.reminderId == reminderId && other.occurrence == occurrence;
+
+  @override
+  int get hashCode => Object.hash(reminderId, occurrence);
+
+  @override
+  String toString() => 'ReminderPayload($reminderId @ $occurrence)';
+}
+
 /// Notification body for a due reminder. Reminders don't store a dose, so
 /// the most recent matching log supplies the "last dose" context.
 String reminderNotificationBody(Reminder r, List<Injection> injections) {
@@ -254,13 +417,13 @@ String reminderNotificationBody(Reminder r, List<Injection> injections) {
   return 'Time to administer $label · last dose $doseStr ${last.snapshot.unit.name}';
 }
 
-const _wdShort = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const _wdLetter = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-const _wdFull = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-const _monShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/// 24-hour "HH:mm" — the app shows clock times this way everywhere,
+/// whatever the locale's 12/24 h preference.
+String formatHourMinute(int hour, int minute) =>
+    '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
 
-String _hhmm(int h, int m) =>
-    '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
+/// "M", "T", … for [weekday] (1 = Monday).
+String weekdayLetter(int weekday) => weekdaysShort[weekday - 1].substring(0, 1);
 
 String formatSchedule(Reminder r) {
   if (r.scheduleMode == 'interval') {
@@ -268,35 +431,35 @@ String formatSchedule(Reminder r) {
     final numStr = n.isFinite && n == n.roundToDouble() ? n.toInt().toString() : n.toString();
     final unit = n == 1.0 ? 'day' : 'days';
     final t = r.anchorDate != null
-        ? _hhmm(r.anchorDate!.hour, r.anchorDate!.minute)
-        : _hhmm(r.hour, r.minute);
+        ? formatHourMinute(r.anchorDate!.hour, r.anchorDate!.minute)
+        : formatHourMinute(r.hour, r.minute);
     return 'Every $numStr $unit · $t';
   }
   final slots = r.customSlots.where(isValidSlot).toList()
     ..sort((a, b) => a.weekday.compareTo(b.weekday));
   if (slots.isEmpty) return 'Custom';
-  final t = _hhmm(slots.first.hour, slots.first.minute);
+  final t = formatHourMinute(slots.first.hour, slots.first.minute);
   final weekdays = slots.map((s) => s.weekday).toList();
   final set = weekdays.toSet();
   final sameTime =
       slots.every((s) => s.hour == slots.first.hour && s.minute == slots.first.minute);
   if (!sameTime) {
-    return '${weekdays.map((w) => _wdShort[w - 1]).join(' / ')} · varies';
+    return '${weekdays.map((w) => weekdaysShort[w - 1]).join(' / ')} · varies';
   }
   if (set.length == 5 && set.containsAll({1, 2, 3, 4, 5})) return 'Weekdays · $t';
-  if (set.length == 1) return '${_wdFull[weekdays.first - 1]}s · $t';
-  if (set.length == 2) return '${weekdays.map((w) => _wdShort[w - 1]).join(' / ')} · $t';
-  return '${weekdays.map((w) => _wdLetter[w - 1]).join(' / ')} · $t';
+  if (set.length == 1) return '${weekdaysLong[weekdays.first - 1]}s · $t';
+  if (set.length == 2) return '${weekdays.map((w) => weekdaysShort[w - 1]).join(' / ')} · $t';
+  return '${weekdays.map((w) => weekdayLetter(w)).join(' / ')} · $t';
 }
 
+/// "Today" / "Tomorrow" / "Yesterday" / "Thu May 21" for [d] relative to
+/// [now], counted in calendar days (a 23 h or 25 h DST day is still one).
 String relativeDayLabel(DateTime d, DateTime now) {
-  final dd = DateTime(d.year, d.month, d.day);
-  final nn = DateTime(now.year, now.month, now.day);
-  final diff = dd.difference(nn).inDays;
+  final diff = calendarDaysBetween(now, d);
   if (diff == 0) return 'Today';
   if (diff == 1) return 'Tomorrow';
   if (diff == -1) return 'Yesterday';
-  return '${_wdShort[d.weekday - 1]} ${_monShort[d.month - 1]} ${d.day}';
+  return '${weekdaysShort[d.weekday - 1]} ${monthsShort[d.month - 1]} ${d.day}';
 }
 
 /// For each of the next [days] days starting today, the distinct compound
@@ -309,8 +472,9 @@ List<List<Color>> weekAgenda(
   Color Function(Reminder) colorOf,
 ) {
   final result = List.generate(days, (_) => <Color>[]);
-  final startDay = DateTime(now.year, now.month, now.day);
-  final windowEnd = startDay.add(Duration(days: days));
+  // Calendar days, not 24 h steps: across DST those land on the wrong date.
+  final startDay = dateOnly(now);
+  final windowEnd = addCalendarDays(startDay, days);
   for (final r in reminders) {
     if (!r.enabled) continue;
     if (r.scheduleMode != 'custom' && !isSchedulableInterval(r.intervalDays)) continue;
@@ -318,7 +482,7 @@ List<List<Color>> weekAgenda(
     var occ = nextOccurrence(r, startDay);
     var guard = 0;
     while (occ.isBefore(windowEnd) && guard < 400) {
-      final idx = DateTime(occ.year, occ.month, occ.day).difference(startDay).inDays;
+      final idx = calendarDaysBetween(startDay, occ);
       if (idx >= 0 && idx < days && !result[idx].contains(col)) {
         result[idx].add(col);
       }

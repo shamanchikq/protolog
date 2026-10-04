@@ -99,8 +99,27 @@ void main() {
       final plan = _plan(_interval(), _now, injections: injections);
       for (final p in plan) {
         expect(p.title, 'ProtoLog Reminder');
-        expect(p.payload, 'iv');
         expect(p.body, 'Time to administer Testosterone Enanthate · last dose 150 mg');
+      }
+    });
+
+    test('each payload names the reminder and the occurrence it announces (B14)', () {
+      for (final p in _plan(_interval(), _now)) {
+        expect(ReminderPayload.parse(p.payload), ReminderPayload('iv', occurrence: p.when));
+      }
+    });
+
+    test('whole-day intervals pin each one-shot to its wall-clock time (B17)', () {
+      // Weekly 08:00 across the Mar 29 spring-forward (meaningful under
+      // TZ=Europe/Kyiv): every one-shot stays 08:00 and carries slotTime so
+      // the backend rebuilds it in the platform zone, like a custom slot.
+      final r = _interval(days: 7, anchor: DateTime(2026, 3, 22, 8, 0));
+      final plan = _plan(r, DateTime(2026, 3, 21, 9, 0));
+      expect(plan, hasLength(kIntervalNotificationCount));
+      for (var i = 0; i < plan.length; i++) {
+        expect(plan[i].when, DateTime(2026, 3, 22 + 7 * i, 8, 0));
+        expect(plan[i].slotTime, (hour: 8, minute: 0));
+        expect(plan[i].repeatsWeekly, isFalse);
       }
     });
 
@@ -123,7 +142,9 @@ void main() {
       for (final p in plan) {
         expect(p.repeatsWeekly, isTrue);
         expect(p.slotTime, (hour: 8, minute: 0));
-        expect(p.payload, 'cu');
+        // A repeating notification announces a different date every week,
+        // so it carries no occurrence.
+        expect(ReminderPayload.parse(p.payload), const ReminderPayload('cu'));
         expect(p.body, 'Time to administer BPC-157');
       }
     });
@@ -138,6 +159,9 @@ void main() {
       expect(monday.map((p) => p.when),
           [for (var w = 0; w < 8; w++) DateTime(2026, 5, 25 + 7 * w, 8, 0)]);
       expect(monday.every((p) => p.slotTime == (hour: 8, minute: 0)), isTrue);
+      for (final p in monday) {
+        expect(ReminderPayload.parse(p.payload), ReminderPayload('cu', occurrence: p.when));
+      }
 
       final repeating = plan.where((p) => p.repeatsWeekly).toList();
       expect(repeating.map((p) => p.id), [_seed + 2, _seed + 3]);
@@ -190,6 +214,37 @@ void main() {
       expect(plan, hasLength(8));
       expect(plan.every((p) => p.when.hour == 8 && p.when.minute == 0), isTrue);
       expect(plan.first.when, DateTime(2026, 3, 30, 8, 0));
+    });
+  });
+
+  group('ReminderPayload (B14)', () {
+    test('round-trips the reminder id and the exact occurrence', () {
+      final at = DateTime(2026, 5, 18, 8, 0, 12, 345, 678);
+      final p = ReminderPayload('r-1|x', occurrence: at);
+      final back = ReminderPayload.parse(p.encode())!;
+      expect(back.reminderId, 'r-1|x');
+      expect(back.occurrence, at);
+      expect(back.occurrence!.isUtc, isFalse);
+      expect(ReminderPayload.parse(const ReminderPayload('r1').encode()), const ReminderPayload('r1'));
+    });
+
+    test('notifications scheduled before this release carried the bare id', () {
+      expect(ReminderPayload.parse('1716012345678'), const ReminderPayload('1716012345678'));
+      expect(ReminderPayload.parse('r1'), const ReminderPayload('r1'));
+      // Anything that isn't our JSON object is a bare id too.
+      expect(ReminderPayload.parse('{not json'), const ReminderPayload('{not json'));
+      expect(ReminderPayload.parse('{"other": 1}'), const ReminderPayload('{"other": 1}'));
+    });
+
+    test('a bad occurrence is dropped, not fatal', () {
+      expect(ReminderPayload.parse('{"reminder": "r1", "at": "soon"}'), const ReminderPayload('r1'));
+      expect(ReminderPayload.parse('{"reminder": "r1", "at": 1e300}'), const ReminderPayload('r1'));
+    });
+
+    test('no payload, no reminder', () {
+      expect(ReminderPayload.parse(null), isNull);
+      expect(ReminderPayload.parse(''), isNull);
+      expect(ReminderPayload.parse('{"reminder": ""}'), isNull);
     });
   });
 

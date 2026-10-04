@@ -11,8 +11,10 @@ import '../../../models.dart';
 //   order; cataloguedCompounds sorts by type, then base name;
 // - non-steroid rows: here a user copy of a library entry is hidden behind
 //   the library row (and filed under the library's type); there the user
-//   copy replaces it;
-// - duplicates per base+ester: here the first user copy wins, there the last.
+//   copy replaces it.
+//
+// Duplicate user copies of one base+ester resolve the same way in both: the
+// last one wins (as `userCopyOf` in engine/injection_draft.dart, B6).
 
 /// The compound type a step-1 filter key selects
 /// ('steroid' | 'oral' | 'peptide' | 'ancillary'; anything else → steroid).
@@ -47,14 +49,14 @@ int esterCountForBase(String base, List<CompoundDefinition> userCompounds) {
   return esters.length;
 }
 
-/// The current user compound (first match) or BASE_LIBRARY entry for
+/// The user's copy (the last, like `userCopyOf`) or BASE_LIBRARY entry for
 /// (base, ester), or null.
 CompoundDefinition? catalogCompoundFor(
   String base,
   String ester,
   List<CompoundDefinition> userCompounds,
 ) {
-  for (final c in userCompounds) {
+  for (final c in userCompounds.reversed) {
     if (c.base == base && c.ester == ester) return c;
   }
   for (final v in BASE_LIBRARY.values) {
@@ -119,7 +121,7 @@ List<CompoundDefinition> pickerCompounds({
     final Map<String, CompoundDefinition> esters = {};
     for (final c in userCompounds) {
       if (c.type == CompoundType.steroid && c.base == drillBase) {
-        esters.putIfAbsent(c.ester, () => c);
+        esters[c.ester] = c; // a later duplicate replaces, keeping the slot
       }
     }
     BASE_LIBRARY.forEach((_, v) {

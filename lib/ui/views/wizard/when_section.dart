@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import '../../../engine/calendar.dart';
+import '../../../engine/injection_draft.dart';
 import '../../../utils.dart';
 import '../../theme.dart';
 import '../../widgets/lab_pickers.dart';
 import 'wizard_widgets.dart';
 
 /// "When" section of the details step: date + time fields (Material pickers
-/// in the Lab Sheet theme) and quick-time pills.
+/// in the Lab Sheet theme), quick-time pills, and a non-blocking hint when the
+/// log is dated more than a day ahead (planned doses are allowed).
 class WhenSection extends StatelessWidget {
   /// The log's day (its time-of-day is ignored).
   final DateTime date;
@@ -13,12 +16,16 @@ class WhenSection extends StatelessWidget {
   final ValueChanged<DateTime> onDateChanged;
   final ValueChanged<TimeOfDay> onTimeChanged;
 
+  /// Clock for "Today" labels and the future hint; null reads the real one.
+  final DateTime? now;
+
   const WhenSection({
     super.key,
     required this.date,
     required this.time,
     required this.onDateChanged,
     required this.onTimeChanged,
+    this.now,
   });
 
   /// Quick-time pills, as (hour, minute).
@@ -26,6 +33,11 @@ class WhenSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final n = now ?? DateTime.now();
+    final daysAhead = futureDaysAhead(
+      logDateTime(date, hour: time.hour, minute: time.minute),
+      now: n,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -38,7 +50,7 @@ class WhenSection extends StatelessWidget {
               child: WizardField(
                 label: 'Date',
                 onTap: () => _pickDate(context),
-                child: Text(formatRelativeDate(date),
+                child: Text(formatRelativeDate(date, now: n),
                     style: AppTheme.sans(size: 15, weight: FontWeight.w500, color: AppTheme.fg)),
               ),
             ),
@@ -56,6 +68,13 @@ class WhenSection extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         _buildQuickTimes(),
+        if (daysAhead != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            'In the future · $daysAhead ${daysAhead == 1 ? 'day' : 'days'} ahead',
+            style: AppTheme.sans(size: 11, color: AppTheme.warm),
+          ),
+        ],
       ],
     );
   }
@@ -79,14 +98,16 @@ class WhenSection extends StatelessWidget {
   }
 
   Future<void> _pickDate(BuildContext context) async {
+    final range = logDatePickerRange(current: date, now: now ?? DateTime.now());
     final picked = await showDatePicker(
       context: context,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2030),
-      initialDate: date,
+      firstDate: range.first,
+      lastDate: range.last,
+      initialDate: dateOnly(date),
       builder: (ctx, child) => labPickerTheme(child!),
     );
-    if (picked != null) onDateChanged(picked);
+    // The wizard may have closed while the picker was open.
+    if (picked != null && context.mounted) onDateChanged(picked);
   }
 
   Future<void> _pickTime(BuildContext context) async {
@@ -95,7 +116,7 @@ class WhenSection extends StatelessWidget {
       initialTime: time,
       builder: (ctx, child) => labPickerTheme(child!),
     );
-    if (picked != null) onTimeChanged(picked);
+    if (picked != null && context.mounted) onTimeChanged(picked);
   }
 }
 
@@ -103,9 +124,8 @@ class WhenSection extends StatelessWidget {
 /// "May 10, 2025".
 String formatRelativeDate(DateTime d, {DateTime? now}) {
   final n = now ?? DateTime.now();
-  final today = DateTime(n.year, n.month, n.day);
-  final that = DateTime(d.year, d.month, d.day);
-  final diff = today.difference(that).inDays;
+  // Calendar days, not Duration.inDays: a DST day is 23 or 25 h long (B27).
+  final diff = calendarDaysBetween(d, n);
   final monthDay = formatDate(d, 'MMM d');
   if (diff == 0) return 'Today, $monthDay';
   if (diff == 1) return 'Yesterday, $monthDay';

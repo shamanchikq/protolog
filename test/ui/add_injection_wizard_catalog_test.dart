@@ -60,6 +60,18 @@ void main() {
     expect(rows.first.halfLife, 9);
   });
 
+  test('drilled in with duplicate user copies: the last one is listed (B6)', () {
+    final rows = pickerCompounds(
+      type: CompoundType.steroid,
+      drillBase: 'Testosterone',
+      query: '',
+      userCompounds: [testE.copyWith(id: 'a', halfLife: 5), testE.copyWith(id: 'b', halfLife: 6)],
+    );
+    expect(rows.first.ester, 'Enanthate');
+    expect(rows.first.id, 'b');
+    expect(rows.where((c) => c.ester == 'Enanthate'), hasLength(1));
+  });
+
   test('non-steroids: library row stands for a user copy; true customs listed under their type', () {
     final staleCopy = hcg.copyWith(id: 'h', type: CompoundType.ancillary, halfLife: 3);
     final peptides = pickerCompounds(
@@ -81,10 +93,10 @@ void main() {
     expect(rows.map((c) => c.base), ['Trenbolone']);
   });
 
-  test('catalogCompoundFor prefers the first user copy, then the library', () {
+  test('catalogCompoundFor prefers the user copy (the last of duplicates, B6), then the library', () {
     final a = testE.copyWith(id: 'a');
     final b = testE.copyWith(id: 'b');
-    expect(catalogCompoundFor('Testosterone', 'Enanthate', [a, b])!.id, 'a');
+    expect(catalogCompoundFor('Testosterone', 'Enanthate', [a, b])!.id, 'b');
     expect(catalogCompoundFor('Testosterone', 'Enanthate', const [])!.halfLife, 4.5);
     expect(catalogCompoundFor('Nope', 'None', const []), isNull);
   });

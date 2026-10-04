@@ -3,6 +3,7 @@ import '../../../models.dart';
 import '../../../utils.dart';
 import '../../../engine/dose_math.dart';
 import '../../../engine/injection_draft.dart';
+import '../../format.dart';
 import '../../theme.dart';
 import 'wizard_widgets.dart';
 
@@ -188,20 +189,20 @@ class DoseSection extends StatelessWidget {
     if (dose != null && volumeRaw > 0) {
       if (unit == Unit.mcg) {
         // Mass-dosed peptide: show the syringe-reading IU equivalent.
-        final mlPart = formatAmount(volumeMl);
+        final mlPart = formatDose(volumeMl);
         final iuPart = syringeUnitsFromMl(volumeMl).toStringAsFixed(1);
         if (volumeInputUnit == 'IU') {
-          volumeHint = '= ${formatAmount(computedDose)} ${unit.name} · $mlPart mL';
+          volumeHint = '= ${formatDose(computedDose)} ${unit.name} · $mlPart mL';
         } else {
-          volumeHint = '= ${formatAmount(computedDose)} ${unit.name} ≈ $iuPart IU';
+          volumeHint = '= ${formatDose(computedDose)} ${unit.name} ≈ $iuPart IU';
         }
       } else if (_isPeptide && volumeInputUnit == 'IU') {
         // IU-native peptide and user entered IU volume: just show the dose
         // and the mL equivalent of the volume.
-        final mlPart = formatAmount(volumeMl);
-        volumeHint = '= ${formatAmount(computedDose)} ${unit.name} · $mlPart mL';
+        final mlPart = formatDose(volumeMl);
+        volumeHint = '= ${formatDose(computedDose)} ${unit.name} · $mlPart mL';
       } else {
-        volumeHint = '= ${formatAmount(computedDose)} ${unit.name}';
+        volumeHint = '= ${formatDose(computedDose)} ${unit.name}';
       }
     }
     // Keep the wizard's dose text in sync so the sticky bar / confirm logic stays simple.
@@ -209,7 +210,7 @@ class DoseSection extends StatelessWidget {
     if (doseText != computedDoseText) {
       WidgetsBinding.instance.addPostFrameCallback((_) => onVolumeDoseComputed(computedDoseText));
     }
-    final concDisplay = (conc != null) ? formatAmount(conc) : '—';
+    final concDisplay = (conc != null) ? formatDose(conc) : '—';
     // Peptides get a tap → reconstitution sheet (mg + bac → mg/mL).
     // Steroids/anything else: edit the concentration directly as a number.
     final Widget concField = _isPeptide

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models.dart';
 import '../../utils.dart';
+import '../../engine/calendar.dart';
 import '../../engine/dose_math.dart';
 import '../../engine/injection_draft.dart';
 import '../../services/custom_sites_store.dart';
@@ -73,8 +74,10 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
   String _volumeText = '';
   String _volumeInputUnit = 'mL'; // 'mL' | 'IU' — only meaningful for peptides
   double? _concentrationDraft;    // sheet/by-volume writes here; persisted on Confirm
-  DateTime _date = DateTime.now();
-  TimeOfDay _time = _roundedNow();
+  // The log's day and clock time, edited separately in the When section.
+  // Both start from one rounded timestamp (B24: 23:58 → tomorrow 00:00).
+  late DateTime _date;
+  late TimeOfDay _time;
   String _site = defaultIntramuscularSite;
   String _notes = '';
   Injection? _lastForCompound;
@@ -97,22 +100,22 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
   late final TextEditingController _volumeController = TextEditingController();
   late final TextEditingController _notesController = TextEditingController();
   late final TextEditingController _concController = TextEditingController();
+  // Step 1's search box: outlives the step so Back shows the query (B29).
+  late final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
+    _setWhen(defaultLogTime(now: DateTime.now(), day: widget.prefillDate));
     _loadCustomSites();
+    // Prefill is pure, so edit / prefilled modes start on the details step
+    // from the very first frame (no step-1 flash).
     final editing = widget.editingInjection;
     final pre = widget.prefillCompound;
     if (editing != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _enterEditMode(editing);
-      });
+      _applyEdit(editing);
     } else if (pre != null) {
-      // _enterStep2 calls setState, so schedule it after the first frame.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _enterStep2(pre);
-      });
+      _applyNewLog(pre);
     }
   }
 
@@ -122,54 +125,53 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
     _volumeController.dispose();
     _notesController.dispose();
     _concController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
-  static TimeOfDay _roundedNow() {
-    final t = roundedClockTime(DateTime.now());
-    return TimeOfDay(hour: t.hour, minute: t.minute);
+  /// Sets the When section's day and clock time from one timestamp.
+  void _setWhen(DateTime at) {
+    _date = dateOnly(at);
+    _time = TimeOfDay.fromDateTime(at);
   }
 
   // ── Entering the details step ──────────────────────────────────────────────
 
-  /// Moves to the details step for a new log of [c] (see [prefillNewLog]).
-  void _enterStep2(CompoundDefinition c) {
-    final prefill = prefillNewLog(
-      picked: c,
-      userCompounds: widget.userCompounds,
-      injections: widget.injections,
+  /// Moves to the details step for a new log of [c] (step 1's pick).
+  void _enterStep2(CompoundDefinition c) => setState(() => _applyNewLog(c));
+
+  /// Loads the details step for a new log of [c] (see [prefillNewLog]).
+  /// Call inside setState, or from initState.
+  void _applyNewLog(CompoundDefinition c) {
+    _applyPrefill(
+      prefillNewLog(
+        picked: c,
+        userCompounds: widget.userCompounds,
+        injections: widget.injections,
+      ),
+      at: defaultLogTime(now: DateTime.now(), day: widget.prefillDate),
+      notes: '',
     );
-    setState(() {
-      _applyPrefill(
-        prefill,
-        date: widget.prefillDate ?? DateTime.now(),
-        time: _roundedNow(),
-        notes: '',
-      );
-    });
   }
 
-  /// Prefills the details step from an existing injection. Unlike
-  /// [_enterStep2], the compound is the injection's own frozen snapshot —
-  /// editing a log must never silently re-canonicalize its PK.
-  void _enterEditMode(Injection inj) {
-    setState(() {
-      _applyPrefill(
-        prefillEdit(inj),
-        date: inj.date,
-        time: TimeOfDay.fromDateTime(inj.date),
-        notes: inj.notes ?? '',
-      );
-      _advanceReminder = false;
-    });
+  /// Loads the details step from an existing injection (edit mode, called
+  /// from initState). Unlike [_applyNewLog], the compound is the injection's
+  /// own frozen snapshot — editing a log must never silently
+  /// re-canonicalize its PK.
+  void _applyEdit(Injection inj) {
+    _applyPrefill(
+      prefillEdit(inj),
+      at: inj.date,
+      notes: inj.notes ?? '',
+    );
+    _advanceReminder = false;
   }
 
   /// Loads a [DraftPrefill] into the details-step state and moves to step 2.
-  /// Call inside setState.
+  /// Call inside setState, or from initState.
   void _applyPrefill(
     DraftPrefill p, {
-    required DateTime date,
-    required TimeOfDay time,
+    required DateTime at,
     required String notes,
   }) {
     final c = p.compound;
@@ -186,8 +188,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
     _concentrationDraft = c.concentration;
     _concController.text = c.concentration != null ? formatAmount(c.concentration!) : '';
     _site = p.site;
-    _date = date;
-    _time = time;
+    _setWhen(at);
     _step = 2;
   }
 
@@ -248,6 +249,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
       doseUnit: _unit,
       massUnitLabel: _isIuNative ? 'IU' : 'mg',
     );
+    if (!mounted) return; // the wizard closed while the sheet was open
     if (result != null && result > 0) {
       setState(() => _concentrationDraft = result);
     }
@@ -255,12 +257,26 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
 
   Future<void> _loadCustomSites() async {
     final sites = await _sitesStore.load();
+    if (!mounted) return;
     setState(() => _customSites = sites);
   }
 
+  /// The sites offered for the current route: built-ins, then the user's.
+  List<String> get _routeSites => sitesForRoute(
+        subcutaneous: _isSubQ,
+        custom: _customSites.forRoute(subcutaneous: _isSubQ),
+      );
+
   Future<void> _promptAddSite() async {
     final result = await showAddSiteDialog(context);
-    if (result == null || result.isEmpty) return;
+    if (!mounted || result == null || result.isEmpty) return;
+    // A name already offered (any case — "quad l") selects that tile
+    // instead of adding a duplicate.
+    final existing = matchingSite(result, _routeSites);
+    if (existing != null) {
+      setState(() => _site = existing);
+      return;
+    }
     setState(() {
       _customSites = _customSites.withSite(result, subcutaneous: _isSubQ);
       _site = result;
@@ -268,22 +284,55 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
     _sitesStore.save(_customSites);
   }
 
+  /// Long-press on a user-added site: confirm, then drop it from the route's
+  /// list. Logs that used it keep their site text.
+  Future<void> _promptRemoveSite(String site) async {
+    final confirmed = await showRemoveSiteDialog(context, site);
+    if (!mounted || !confirmed) return;
+    final c = _selectedCompound;
+    setState(() {
+      _customSites = _customSites.withoutSite(site, subcutaneous: _isSubQ);
+      if (c != null && matchingSite(_site, [site]) != null) _site = defaultSiteFor(c.type);
+    });
+    _sitesStore.save(_customSites);
+  }
+
   // ── Build ──────────────────────────────────────────────────────────────────
+
+  /// Whether Android back may close the wizard: only from step 1's base list
+  /// — or in edit mode, which has no step 1 (B25).
+  bool get _backClosesWizard => _isEdit || (_step == 1 && _selectedBase == null);
+
+  /// Android back inside the wizard: step 2 → step 1 (keeping the filter and
+  /// drill-down, like the Back button), ester drill-down → base list.
+  void _stepBack() {
+    if (_step == 2) {
+      setState(() => _step = 1);
+    } else if (_selectedBase != null) {
+      setState(() => _selectedBase = null);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppTheme.bg,
-      resizeToAvoidBottomInset: true,
-      body: SafeArea(
-        bottom: false,
-        child: Column(
-          children: [
-            Expanded(
-              child: _step == 1 ? _buildStep1() : _buildStep2(),
-            ),
-            if (_step == 2) _buildStickyBar(),
-          ],
+    return PopScope(
+      canPop: _backClosesWizard,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _stepBack();
+      },
+      child: Scaffold(
+        backgroundColor: AppTheme.bg,
+        resizeToAvoidBottomInset: true,
+        body: SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              Expanded(
+                child: _step == 1 ? _buildStep1() : _buildStep2(),
+              ),
+              if (_step == 2) _buildStickyBar(),
+            ],
+          ),
         ),
       ),
     );
@@ -294,6 +343,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
       typeFilter: _typeFilter,
       selectedBase: _selectedBase,
       searchQuery: _searchQuery,
+      searchController: _searchController,
       userCompounds: widget.userCompounds,
       injections: widget.injections,
       onTypeFilterChanged: (key) => setState(() {
@@ -367,14 +417,17 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
           const SizedBox.shrink()
         else
           SiteSection(
-            sites: sitesForRoute(
-              subcutaneous: _isSubQ,
-              custom: _customSites.forRoute(subcutaneous: _isSubQ),
-            ),
+            sites: _routeSites,
+            // Only tiles the user added; a stored copy of a built-in is hidden.
+            removableSites: {
+              for (final s in _routeSites)
+                if (!(_isSubQ ? builtInSitesSubQ : builtInSitesIM).contains(s)) s,
+            },
             selected: _site,
             lastSite: lastSiteFor(base: c.base, injections: widget.injections),
             onSelect: (s) => setState(() => _site = s),
             onAddSite: _promptAddSite,
+            onRemoveSite: _promptRemoveSite,
           ),
         if (!_isPillForm) const SizedBox(height: 18),
         NotesSection(
@@ -386,6 +439,16 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
     );
   }
 
+  /// G5: a soft warning when the dose is > 3× or < ⅓ of the last log of this
+  /// compound (no last log in edit mode, so none there).
+  String? get _doseWarning {
+    final last = _lastForCompound;
+    final dose = parseFlexibleDouble(_doseText);
+    if (last == null || dose == null) return null;
+    final ratio = unusualDoseRatio(dose: dose, unit: _unit, last: last);
+    return ratio == null ? null : unusualDoseMessage(ratio, last);
+  }
+
   Widget _buildStickyBar() {
     return WizardStickyBar(
       compound: _selectedCompound,
@@ -393,6 +456,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
       unit: _unit,
       site: _site,
       isEdit: _isEdit,
+      doseWarning: _doseWarning,
       linkedReminder: _matchingReminder,
       advanceReminder: _advanceReminder,
       onToggleAdvance: () => setState(() => _advanceReminder = !_advanceReminder),

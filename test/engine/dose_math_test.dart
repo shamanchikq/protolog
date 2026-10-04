@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:protolog_tracker/engine/dose_math.dart';
 import 'package:protolog_tracker/models.dart';
+import 'package:protolog_tracker/utils.dart';
 
 void main() {
   group('doseForVolume', () {
@@ -189,16 +190,39 @@ void main() {
       expect(formatAmount(0), '0');
     });
 
-    test('fractions keep up to 2 decimals without trailing zeros', () {
+    test('fractions keep their digits without trailing zeros', () {
       expect(formatAmount(0.25), '0.25');
       expect(formatAmount(5.5), '5.5');
       expect(formatAmount(0.1), '0.1');
       expect(formatAmount(125.5), '125.5');
     });
 
-    test('rounds past 2 decimals; a value that rounds whole drops the point', () {
-      expect(formatAmount(6.6666), '6.67');
-      expect(formatAmount(2.999), '3');
+    test('N1: up to 6 decimals, so a stored dose round-trips through the field', () {
+      expect(formatAmount(0.125), '0.125');
+      expect(formatAmount(6.6666), '6.6666');
+      expect(formatAmount(2.999), '2.999');
+      expect(formatAmount(0.0625), '0.0625');
+      expect(formatAmount(1 / 3), '0.333333');
+      expect(formatAmount(2.9999999), '3'); // past 6 decimals rounds
+      for (final v in [0.125, 6.6666, 0.0625, 12.345678, 1234.5, 0.000001]) {
+        expect(parseFlexibleDouble(formatAmount(v)), v, reason: '$v');
+      }
+    });
+
+    test('float noise is dropped', () {
+      expect(formatAmount(0.1 + 0.2), '0.3');
+      expect(formatAmount(0.1 * 2.5 * 1000), '250');
+    });
+
+    test('a "." decimal and no thousands grouping (parseFlexibleDouble rejects "5,000")', () {
+      expect(formatAmount(5000), '5000');
+      expect(formatAmount(12500.75), '12500.75');
+      expect(parseFlexibleDouble(formatAmount(5000)), 5000);
+    });
+
+    test('negative zero reads as 0', () {
+      expect(formatAmount(-0.0), '0');
+      expect(formatAmount(-0.0000001), '0');
     });
   });
 }

@@ -198,7 +198,9 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _handleNotificationTap(String? payload, {String? actionId}) {
-    if (payload == null || payload.isEmpty) return;
+    // Current payloads name the occurrence too; older ones are a bare id.
+    final tap = ReminderPayload.parse(payload);
+    if (tap == null) return;
     if (_loading) {
       _pendingNotificationPayload = payload;
       _pendingNotificationAction = actionId;
@@ -206,16 +208,21 @@ class _MainScreenState extends State<MainScreen> {
     }
     Reminder? match;
     for (final r in reminders) {
-      if (r.id == payload) {
+      if (r.id == tap.reminderId) {
         match = r;
         break;
       }
     }
     if (match == null) return;
     if (actionId == 'skip') {
-      // Skip the occurrence this notification announced, not the next one.
-      _skipReminder(match, fromNotification: true);
-      _snack('Skipped ${match.compoundBase} — rescheduled', color: AppTheme.surface2);
+      // Skip the occurrence this notification announced, not the next one;
+      // a stale or re-delivered tap changes nothing (B14).
+      final updated =
+          advanceAfterNotificationSkip(match, occurrence: tap.occurrence, now: DateTime.now());
+      final moved = !identical(updated, match);
+      if (moved) _replaceReminder(updated);
+      _snack('Skipped ${match.compoundBase}${moved ? ' — rescheduled' : ''}',
+          color: AppTheme.surface2);
       return;
     }
     // Body tap or the "Log now" action: open the wizard prefilled.

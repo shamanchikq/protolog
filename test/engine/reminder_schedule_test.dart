@@ -249,6 +249,10 @@ void main() {
     test('Skip on an interval notification skips the dose it announced', () {
       final r = interval(days: 3.5, anchor: DateTime(2026, 5, 18, 6, 0));
       expect(advanceAfterNotificationSkip(r, now: now).anchorDate, DateTime(2026, 5, 21, 18, 0));
+      expect(
+          advanceAfterNotificationSkip(r, occurrence: DateTime(2026, 5, 18, 6, 0), now: now)
+              .anchorDate,
+          DateTime(2026, 5, 21, 18, 0));
     });
 
     test('an acknowledgement in the past is a no-op', () {
@@ -347,6 +351,199 @@ void main() {
     });
   });
 
+  group('Skip acts on the right occurrence (B14)', () {
+    // now = Mon May 18 07:40.
+    test('in-app Skip on an overdue reminder moves past every missed dose', () {
+      // 3.5 d from Sun May 10 08:00: May 13 20:00 and May 17 08:00 were
+      // missed too; the next future occurrence is Wed May 20 20:00.
+      final r = interval(days: 3.5, anchor: DateTime(2026, 5, 10, 8, 0));
+      final skipped = advanceAfterSkip(r, now: now);
+      expect(skipped.anchorDate, DateTime(2026, 5, 20, 20, 0));
+      expect(skipped.anchorDate, nextOccurrence(r, now));
+      expect(reminderState(skipped, now), isNot(ReminderState.overdue));
+
+      final weekly = interval(days: 7, anchor: DateTime(2026, 5, 4, 8, 0));
+      expect(advanceAfterSkip(weekly, now: now).anchorDate, DateTime(2026, 5, 18, 8, 0));
+    });
+
+    test('in-app Skip on a dose not yet due moves exactly one interval', () {
+      final r = interval(days: 3.5, anchor: DateTime(2026, 5, 18, 8, 0));
+      expect(advanceAfterSkip(r, now: now).anchorDate, DateTime(2026, 5, 21, 20, 0));
+    });
+
+    group('notification Skip with the announced occurrence', () {
+      final anchor = DateTime(2026, 5, 18, 6, 0);
+      final r = interval(days: 3.5, anchor: anchor);
+
+      test('skips the dose it announced', () {
+        expect(advanceAfterNotificationSkip(r, occurrence: anchor, now: now).anchorDate,
+            DateTime(2026, 5, 21, 18, 0));
+      });
+
+      test('a repeated or stale tap changes nothing', () {
+        final once = advanceAfterNotificationSkip(r, occurrence: anchor, now: now);
+        // The launch intent re-delivered, or an old notification left in the
+        // shade after the dose was logged: the anchor is already past it.
+        expect(identical(advanceAfterNotificationSkip(once, occurrence: anchor, now: now), once),
+            isTrue);
+      });
+
+      test('a later missed occurrence skips to the next future one', () {
+        final overdue = interval(days: 3.5, anchor: DateTime(2026, 5, 10, 8, 0));
+        // The May 17 08:00 notification (the anchor's 3rd repeat) is tapped.
+        final skipped = advanceAfterNotificationSkip(overdue,
+            occurrence: DateTime(2026, 5, 17, 8, 0), now: now);
+        expect(skipped.anchorDate, DateTime(2026, 5, 20, 20, 0));
+      });
+
+      test('an old payload without the occurrence skips like the in-app Skip', () {
+        expect(advanceAfterNotificationSkip(r, now: now).anchorDate,
+            advanceAfterSkip(r, now: now).anchorDate);
+      });
+
+      test('a reminder without an anchor takes the rhythm from the occurrence', () {
+        const legacy = Reminder(
+          id: 'legacy', compoundBase: 'Testosterone', compoundEster: 'Cypionate',
+          intervalDays: 7, hour: 9, minute: 0, enabled: true,
+        );
+        // Notified Mon May 11 09:00; Skip tapped a week later at 07:40.
+        final skipped = advanceAfterNotificationSkip(legacy,
+            occurrence: DateTime(2026, 5, 11, 9, 0), now: now);
+        expect(skipped.anchorDate, DateTime(2026, 5, 18, 9, 0));
+      });
+
+      test('custom: a fired slot is already behind us; an owed one is acknowledged', () {
+        final c = custom(const [ReminderSlot(weekday: 1, hour: 8, minute: 0)]);
+        final fired = DateTime(2026, 5, 18, 8, 0);
+        final after = DateTime(2026, 5, 18, 8, 1);
+        expect(identical(advanceAfterNotificationSkip(c, occurrence: fired, now: after), c), isTrue);
+        expect(identical(advanceAfterNotificationSkip(c, now: after), c), isTrue);
+        // Delivered ahead of its time (clock change): that slot, not the next.
+        expect(advanceAfterNotificationSkip(c, occurrence: fired, now: now).acknowledgedUntil, fired);
+      });
+    });
+  });
+
+  group('a dose logged just before a custom slot acknowledges it (B14)', () {
+    const mwf = [
+      ReminderSlot(weekday: 1, hour: 8, minute: 0),
+      ReminderSlot(weekday: 3, hour: 8, minute: 0),
+      ReminderSlot(weekday: 5, hour: 8, minute: 0),
+    ];
+
+    test('07:30 for the 08:00 slot: no longer Due, no notification at 08:00', () {
+      final taken = DateTime(2026, 5, 18, 7, 30);
+      final logged = advanceAfterDose(custom(mwf), taken, now: taken);
+      expect(logged.acknowledgedUntil, DateTime(2026, 5, 18, 8, 0));
+      final at = DateTime(2026, 5, 18, 7, 35);
+      expect(expectedDose(logged, at), DateTime(2026, 5, 20, 8, 0));
+      expect(reminderState(logged, at), ReminderState.on);
+      expect(customSlotPlans(logged, at).first.fireTimes.first, DateTime(2026, 5, 25, 8, 0));
+    });
+
+    test('more than the 4 h early window ahead leaves the slot owed', () {
+      for (final taken in [
+        DateTime(2026, 5, 17, 19, 0), // 13 h before Mon 08:00
+        DateTime(2026, 5, 18, 3, 0), // 5 h before
+      ]) {
+        final logged = advanceAfterDose(custom(mwf), taken, now: taken);
+        expect(logged.acknowledgedUntil, taken);
+        expect(expectedDose(logged, taken), DateTime(2026, 5, 18, 8, 0));
+      }
+    });
+
+    test("a late dose doesn't silence the next day's slot", () {
+      // Daily 08:00; Monday's dose missed and logged at 21:00 — 11 h before
+      // Tuesday 08:00 and nearer it than Monday's slot. Tuesday stays owed.
+      final daily = [
+        for (var d = 1; d <= 7; d++) ReminderSlot(weekday: d, hour: 8, minute: 0),
+      ];
+      final taken = DateTime(2026, 5, 18, 21, 0);
+      final logged = advanceAfterDose(custom(daily), taken, now: taken);
+      expect(logged.acknowledgedUntil, taken);
+      expect(expectedDose(logged, taken), DateTime(2026, 5, 19, 8, 0));
+    });
+
+    test('a dose nearer the slot it followed belongs to that one', () {
+      // Tue 20:00 and Wed 06:00: a dose at Tue 21:00 is Tuesday's, late.
+      const uneven = [
+        ReminderSlot(weekday: 2, hour: 20, minute: 0),
+        ReminderSlot(weekday: 3, hour: 6, minute: 0),
+      ];
+      final taken = DateTime(2026, 5, 19, 21, 0);
+      final logged = advanceAfterDose(custom(uneven), taken, now: taken);
+      expect(logged.acknowledgedUntil, taken);
+      expect(expectedDose(logged, taken), DateTime(2026, 5, 20, 6, 0));
+      // At 02:00 it's nearer Wednesday's slot: that one is covered.
+      final early = DateTime(2026, 5, 20, 2, 0);
+      expect(advanceAfterDose(custom(uneven), early, now: early).acknowledgedUntil,
+          DateTime(2026, 5, 20, 6, 0));
+    });
+
+    test('still forward-only', () {
+      final acked = custom(mwf, ack: DateTime(2026, 5, 18, 8, 0));
+      final taken = DateTime(2026, 5, 18, 7, 50);
+      expect(identical(advanceAfterDose(acked, taken, now: taken), acked), isTrue);
+    });
+  });
+
+  group('whole-day intervals keep their wall-clock time across DST (B17)', () {
+    // Europe/Kyiv 2026: spring forward Sun Mar 29 03:00 -> 04:00, fall back
+    // Sun Oct 25 04:00 -> 03:00 (Europe/Dublin switches the same days).
+    // Adding 7 x 24 h would put a weekly 08:00 dose at 09:00 after March 29
+    // and at 07:00 after October 25. Meaningful under TZ=Europe/Kyiv;
+    // trivially true in UTC.
+    final weekly = interval(days: 7, anchor: DateTime(2026, 3, 22, 8, 0));
+
+    test('occurrences step by calendar days', () {
+      expect(intervalOccurrences(weekly, DateTime(2026, 3, 22, 7, 0), 4), [
+        DateTime(2026, 3, 22, 8, 0),
+        DateTime(2026, 3, 29, 8, 0),
+        DateTime(2026, 4, 5, 8, 0),
+        DateTime(2026, 4, 12, 8, 0),
+      ]);
+      final daily = interval(days: 1, anchor: DateTime(2026, 10, 24, 8, 0));
+      expect(intervalOccurrences(daily, DateTime(2026, 10, 24, 7, 0), 3), [
+        DateTime(2026, 10, 24, 8, 0),
+        DateTime(2026, 10, 25, 8, 0),
+        DateTime(2026, 10, 26, 8, 0),
+      ]);
+    });
+
+    test('an overdue anchor rolls forward to the same wall-clock time', () {
+      expect(nextOccurrence(weekly, DateTime(2026, 3, 30, 9, 0)), DateTime(2026, 4, 5, 8, 0));
+      expect(intervalOccurrences(weekly, DateTime(2026, 4, 20, 9, 0), 2), [
+        DateTime(2026, 4, 26, 8, 0),
+        DateTime(2026, 5, 3, 8, 0),
+      ]);
+      final autumn = interval(days: 2, anchor: DateTime(2026, 10, 20, 8, 0));
+      expect(nextOccurrence(autumn, DateTime(2026, 10, 25, 12, 0)), DateTime(2026, 10, 26, 8, 0));
+    });
+
+    test('skip and dose advance by calendar days', () {
+      expect(advanceAfterSkip(weekly, now: DateTime(2026, 3, 22, 7, 0)).anchorDate,
+          DateTime(2026, 3, 29, 8, 0));
+      final taken = DateTime(2026, 3, 22, 8, 30);
+      expect(advanceAfterDose(weekly, taken, now: taken).anchorDate, DateTime(2026, 3, 29, 8, 30));
+    });
+
+    test('float noise in a whole interval still counts as whole days', () {
+      // E.g. a value that went through float arithmetic in a foreign backup.
+      final noisy = interval(days: 7.000000000000001, anchor: DateTime(2026, 3, 22, 8, 0));
+      expect(noisy.intervalDays, isNot(7.0));
+      expect(intervalOccurrences(noisy, DateTime(2026, 3, 22, 7, 0), 2)[1],
+          DateTime(2026, 3, 29, 8, 0));
+    });
+
+    test('fractional intervals keep absolute spacing (they drift by design)', () {
+      final r = interval(days: 3.5, anchor: DateTime(2026, 3, 27, 20, 0));
+      final occ = intervalOccurrences(r, DateTime(2026, 3, 27, 19, 0), 3);
+      expect(occ[1].difference(occ[0]), const Duration(hours: 84));
+      expect(occ[2].difference(occ[1]), const Duration(hours: 84));
+      expect(advanceAfterSkip(r, now: DateTime(2026, 3, 27, 19, 0)).anchorDate, occ[1]);
+    });
+  });
+
   group('formatSchedule', () {
     test('interval fractional', () {
       final r = interval(days: 3.5, anchor: DateTime(2026, 5, 18, 8, 0));
@@ -391,6 +588,18 @@ void main() {
     });
     test('further out shows weekday + month + day', () {
       expect(relativeDayLabel(DateTime(2026, 5, 21, 8), now), 'Thu May 21');
+    });
+    test('counts calendar days across DST (B27)', () {
+      // Europe/Kyiv springs forward Sun Mar 29 and falls back Sun Oct 25
+      // 2026: those midnights are 23 h / 25 h apart, which read as "0 days"
+      // / "1 day" in absolute time. Meaningful under TZ=Europe/Kyiv.
+      final monday = DateTime(2026, 3, 30, 10);
+      expect(relativeDayLabel(DateTime(2026, 3, 29, 10), monday), 'Yesterday');
+      expect(relativeDayLabel(DateTime(2026, 3, 28, 10), monday), 'Sat Mar 28');
+      final sunday = DateTime(2026, 3, 29, 10);
+      expect(relativeDayLabel(DateTime(2026, 3, 30, 9), sunday), 'Tomorrow');
+      expect(relativeDayLabel(DateTime(2026, 10, 26, 9), DateTime(2026, 10, 25, 10)), 'Tomorrow');
+      expect(relativeDayLabel(DateTime(2026, 10, 24, 9), DateTime(2026, 10, 25, 10)), 'Yesterday');
     });
   });
 
@@ -458,6 +667,19 @@ void main() {
       final a = interval(days: 7, anchor: DateTime(2026, 5, 18, 8, 0), enabled: false);
       final agenda = weekAgenda([a], now, 7, (_) => red);
       expect(agenda.every((d) => d.isEmpty), isTrue);
+    });
+    test('buckets by calendar day across spring-forward (B27)', () {
+      // Fri Mar 27 2026 -> Thu Apr 2 (Kyiv springs forward Sun Mar 29).
+      const red = Color(0xFFFF0000);
+      final fri = DateTime(2026, 3, 27, 10);
+      final monday9 = custom(const [ReminderSlot(weekday: 1, hour: 9, minute: 0)]);
+      final agenda = weekAgenda([monday9], fri, 7, (_) => red);
+      expect([for (final d in agenda) d.isNotEmpty], [false, false, false, true, false, false, false]);
+
+      // The window ends at Apr 3 midnight, not 7 x 24 h later (01:00).
+      final friday0030 = custom(const [ReminderSlot(weekday: 5, hour: 0, minute: 30)]);
+      final edge = weekAgenda([friday0030], fri, 7, (_) => red);
+      expect([for (final d in edge) d.isNotEmpty], [true, false, false, false, false, false, false]);
     });
   });
 }

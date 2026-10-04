@@ -7,9 +7,9 @@ import 'wizard_widgets.dart';
 /// Step 1 of the add-injection wizard: header, search, type filters, Recent
 /// cards and the library list with the steroid base → ester drill-down.
 ///
-/// Stateless: the wizard owns the filter / drill-down / query so they survive
-/// a trip to step 2 and Back. The search box has no controller, so it shows
-/// empty after Back while [searchQuery] keeps filtering (B29).
+/// Stateless: the wizard owns the filter / drill-down / query — and the
+/// search box's controller, so the box still shows the query that filters
+/// after a trip to step 2 and Back (B29).
 class CompoundStep extends StatelessWidget {
   /// 'steroid' | 'oral' | 'peptide' | 'ancillary'.
   final String typeFilter;
@@ -17,6 +17,10 @@ class CompoundStep extends StatelessWidget {
   /// Non-null when drilled into a steroid base.
   final String? selectedBase;
   final String searchQuery;
+
+  /// The search box's controller, owned (and disposed) by the wizard; its
+  /// text is [searchQuery].
+  final TextEditingController searchController;
   final List<CompoundDefinition> userCompounds;
   final List<Injection> injections;
   final ValueChanged<String> onTypeFilterChanged;
@@ -34,6 +38,7 @@ class CompoundStep extends StatelessWidget {
     required this.typeFilter,
     required this.selectedBase,
     required this.searchQuery,
+    required this.searchController,
     required this.userCompounds,
     required this.injections,
     required this.onTypeFilterChanged,
@@ -122,9 +127,13 @@ class CompoundStep extends StatelessWidget {
                                 size: 22, weight: FontWeight.w500, color: AppTheme.fgMute, letterSpacing: -0.4)),
                       ),
                     ),
-                  Text(title,
-                      style: AppTheme.serif(
-                          size: 22, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.4)),
+                  Flexible(
+                    child: Text(title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.serif(
+                            size: 22, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.4)),
+                  ),
                 ],
               ),
             ],
@@ -156,6 +165,7 @@ class CompoundStep extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: TextField(
+              controller: searchController,
               onChanged: onSearchChanged,
               cursorColor: AppTheme.accent,
               style: AppTheme.sans(size: 13, color: AppTheme.fg),
@@ -179,18 +189,18 @@ class CompoundStep extends StatelessWidget {
       ('peptide', 'Peptide'),
       ('ancillary', 'Ancillary'),
     ];
-    return Row(
+    // A Wrap, not a Row: at large text sizes the pills flow onto a second
+    // line instead of overflowing (C1). One line at the default size.
+    return Wrap(
+      spacing: 4,
+      runSpacing: 4,
       children: [
-        for (final (key, label) in filters) ...[
-          Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: WizardPill(
-              label: label,
-              active: typeFilter == key,
-              onTap: () => onTypeFilterChanged(key),
-            ),
+        for (final (key, label) in filters)
+          WizardPill(
+            label: label,
+            active: typeFilter == key,
+            onTap: () => onTypeFilterChanged(key),
           ),
-        ],
       ],
     );
   }

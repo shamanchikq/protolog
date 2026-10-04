@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../models.dart';
-import '../../../engine/dose_math.dart';
+import '../../format.dart';
 import '../../theme.dart';
 import 'wizard_widgets.dart';
 
@@ -72,7 +72,7 @@ class SelectedCompoundChip extends StatelessWidget {
         ? ' ${c.ester}'
         : '';
     final concPart = concentration != null
-        ? '${formatAmount(concentration!)} ${concentrationUnitLabel(c)}'
+        ? '${formatDose(concentration!)} ${concentrationUnitLabel(c)}'
         : 'concentration unset';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -135,7 +135,7 @@ class LastLogLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(
-      'Last: ${formatAmount(last.dosage)} ${last.snapshot.unit.name} · ${relativeAgo(last.date)}',
+      'Last: ${formatDose(last.dosage)} ${last.snapshot.unit.name} · ${relativeAgo(last.date)}',
       style: AppTheme.sans(size: 11, color: AppTheme.accent),
     );
   }

@@ -80,4 +80,30 @@ void main() {
     expect(b.subQ, ['Love handle', 'Arm L']);
     expect(s.withSite('Lat L', subcutaneous: false), same(s));
   });
+
+  test('withSite ignores case and surrounding spaces when checking for a duplicate', () {
+    const s = CustomSites(im: ['Lat L']);
+    expect(s.withSite('lat l', subcutaneous: false), same(s));
+    expect(s.withSite(' LAT L ', subcutaneous: false), same(s));
+  });
+
+  test('withoutSite removes every case-insensitive match from that route only', () {
+    const s = CustomSites(im: ['Lat L', 'Pec R', 'lat l'], subQ: ['Lat L']);
+    final r = s.withoutSite('Lat L', subcutaneous: false);
+    expect(r.im, ['Pec R']);
+    expect(r.subQ, ['Lat L']);
+    final q = s.withoutSite('lat l', subcutaneous: true);
+    expect(q.im, ['Lat L', 'Pec R', 'lat l']);
+    expect(q.subQ, isEmpty);
+    expect(s.withoutSite('Nope', subcutaneous: false), same(s));
+  });
+
+  test('matchingSite finds an existing site ignoring case and surrounding spaces', () {
+    const sites = ['Vent. glute L', 'Quad L', 'Lat L'];
+    expect(matchingSite('quad l', sites), 'Quad L');
+    expect(matchingSite('  QUAD L ', sites), 'Quad L');
+    expect(matchingSite('Lat L', sites), 'Lat L');
+    expect(matchingSite('Quad', sites), isNull);
+    expect(matchingSite('', sites), isNull);
+  });
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../services/custom_sites_store.dart';
 import '../../theme.dart';
 import 'wizard_widgets.dart';
 
@@ -14,14 +15,26 @@ const builtInSitesSubQ = <String>[
   'Glute R', 'Quad L', 'Quad R',
 ];
 
-/// The route's built-in sites followed by the user's [custom] ones.
-List<String> sitesForRoute({required bool subcutaneous, required List<String> custom}) =>
-    [...(subcutaneous ? builtInSitesSubQ : builtInSitesIM), ...custom];
+/// The route's built-in sites followed by the user's [custom] ones. A custom
+/// site that repeats a built-in or an earlier custom one — ignoring case and
+/// surrounding spaces (see [matchingSite]) — is left out, so stored
+/// duplicates don't show up as a second tile.
+List<String> sitesForRoute({required bool subcutaneous, required List<String> custom}) {
+  final sites = [...(subcutaneous ? builtInSitesSubQ : builtInSitesIM)];
+  for (final c in custom) {
+    if (matchingSite(c, sites) == null) sites.add(c);
+  }
+  return sites;
+}
 
 /// "Site" section of the details step: a 3-column grid of [sites] plus an
-/// "+ Add site" tile. Tapping the selected site clears the selection.
+/// "+ Add site" tile. Tapping the selected site clears the selection;
+/// long-pressing one of [removableSites] (the user's own) asks to remove it.
 class SiteSection extends StatelessWidget {
   final List<String> sites;
+
+  /// The user-added sites among [sites]; only these can be long-pressed.
+  final Set<String> removableSites;
 
   /// The selected site; '' for none.
   final String selected;
@@ -31,13 +44,18 @@ class SiteSection extends StatelessWidget {
   final ValueChanged<String> onSelect;
   final VoidCallback onAddSite;
 
+  /// A removable site was long-pressed.
+  final ValueChanged<String> onRemoveSite;
+
   const SiteSection({
     super.key,
     required this.sites,
+    this.removableSites = const {},
     required this.selected,
     required this.lastSite,
     required this.onSelect,
     required this.onAddSite,
+    required this.onRemoveSite,
   });
 
   @override
@@ -80,6 +98,7 @@ class SiteSection extends StatelessWidget {
             return GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () => onSelect(active ? '' : s),
+              onLongPress: removableSites.contains(s) ? () => onRemoveSite(s) : null,
               child: Container(
                 alignment: Alignment.center,
                 decoration: BoxDecoration(

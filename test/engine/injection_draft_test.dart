@@ -56,12 +56,13 @@ void main() {
       expect(r.compound.concentration, 250);
     });
 
-    test('the first of duplicate user copies wins', () {
+    test('B6: of duplicate user copies, the one the Library edits (the last) wins', () {
       final r = resolveDraftCompound(
         picked: testE,
         userCompounds: [testE.copyWith(id: 'a', halfLife: 5), testE.copyWith(id: 'b', halfLife: 6)],
       );
-      expect(r.compound.id, 'a');
+      expect(r.compound.id, 'b');
+      expect(r.compound.halfLife, 6);
     });
 
     test('a true custom is its own canon', () {
@@ -147,10 +148,100 @@ void main() {
     });
   });
 
-  test('roundedClockTime rounds to the nearest 5 minutes', () {
-    expect(roundedClockTime(DateTime(2026, 5, 18, 10, 2)), (hour: 10, minute: 0));
-    expect(roundedClockTime(DateTime(2026, 5, 18, 10, 3)), (hour: 10, minute: 5));
-    expect(roundedClockTime(DateTime(2026, 5, 18, 10, 58)), (hour: 11, minute: 0));
+  group('defaultLogTime', () {
+    test('rounds now to the nearest 5 minutes', () {
+      expect(defaultLogTime(now: DateTime(2026, 5, 18, 10, 2, 59)), DateTime(2026, 5, 18, 10, 0));
+      expect(defaultLogTime(now: DateTime(2026, 5, 18, 10, 3)), DateTime(2026, 5, 18, 10, 5));
+      expect(defaultLogTime(now: DateTime(2026, 5, 18, 10, 58)), DateTime(2026, 5, 18, 11, 0));
+    });
+
+    test('B24: 23:58 rounds to midnight of the next day, not of today', () {
+      expect(defaultLogTime(now: DateTime(2026, 5, 18, 23, 58)), DateTime(2026, 5, 19));
+      expect(defaultLogTime(now: DateTime(2026, 12, 31, 23, 59)), DateTime(2027, 1, 1));
+      // The host pre-selecting today (Calendar's default) behaves the same.
+      expect(defaultLogTime(now: DateTime(2026, 5, 18, 23, 58), day: DateTime(2026, 5, 18, 9)),
+          DateTime(2026, 5, 19));
+    });
+
+    test('another pre-selected day gets the rounded clock time on that day', () {
+      expect(defaultLogTime(now: DateTime(2026, 5, 18, 9, 31), day: DateTime(2026, 5, 10)),
+          DateTime(2026, 5, 10, 9, 30));
+      expect(defaultLogTime(now: DateTime(2026, 5, 18, 9, 31), day: DateTime(2026, 6, 2, 23, 59)),
+          DateTime(2026, 6, 2, 9, 30));
+    });
+  });
+
+  group('logDatePickerRange (B28)', () {
+    final now = DateTime(2026, 5, 18, 9, 30);
+
+    test('from 2000 to a year ahead for a current date', () {
+      final r = logDatePickerRange(current: DateTime(2026, 5, 18), now: now);
+      expect(r.first, DateTime(2000));
+      expect(r.last, DateTime(2027, 5, 18));
+    });
+
+    test('stretches to include an older or later current value', () {
+      final old = logDatePickerRange(current: DateTime(1998, 3, 4, 17, 15), now: now);
+      expect(old.first, DateTime(1998, 3, 4));
+      expect(old.last, DateTime(2027, 5, 18));
+      final late = logDatePickerRange(current: DateTime(2031, 1, 2, 8), now: now);
+      expect(late.first, DateTime(2000));
+      expect(late.last, DateTime(2031, 1, 2));
+    });
+
+    test('keeps working past 2030', () {
+      final r = logDatePickerRange(current: DateTime(2031, 6, 1), now: DateTime(2031, 6, 1, 12));
+      expect(r.last, DateTime(2032, 5, 31));
+    });
+  });
+
+  group('futureDaysAhead (B28)', () {
+    final now = DateTime(2026, 5, 18, 9, 30);
+
+    test('null up to a day ahead, and for the past', () {
+      expect(futureDaysAhead(now.subtract(const Duration(days: 3)), now: now), isNull);
+      expect(futureDaysAhead(now, now: now), isNull);
+      expect(futureDaysAhead(DateTime(2026, 5, 19, 8), now: now), isNull);
+      expect(futureDaysAhead(DateTime(2026, 5, 19, 9, 30), now: now), isNull); // exactly 24 h
+    });
+
+    test('calendar days ahead once more than a day out', () {
+      expect(futureDaysAhead(DateTime(2026, 5, 19, 10), now: now), 1);
+      expect(futureDaysAhead(DateTime(2026, 5, 21, 8), now: now), 3);
+      expect(futureDaysAhead(DateTime(2027, 5, 18), now: now), 365);
+    });
+  });
+
+  group('unusualDoseRatio (G5)', () {
+    final last = log(sema.copyWith(unit: Unit.mcg), 250, at);
+
+    test('null without a last log, or within 3× either way', () {
+      expect(unusualDoseRatio(dose: 2500, unit: Unit.mcg, last: null), isNull);
+      for (final d in [250.0, 100.0, 84.0, 700.0, 750.0]) {
+        expect(unusualDoseRatio(dose: d, unit: Unit.mcg, last: last), isNull, reason: '$d');
+      }
+    });
+
+    test('the ratio to the last dose beyond 3× or under ⅓', () {
+      expect(unusualDoseRatio(dose: 2500, unit: Unit.mcg, last: last), 10);
+      expect(unusualDoseRatio(dose: 800, unit: Unit.mcg, last: last), closeTo(3.2, 1e-9));
+      expect(unusualDoseRatio(dose: 25, unit: Unit.mcg, last: last), closeTo(0.1, 1e-9));
+      expect(unusualDoseRatio(dose: 80, unit: Unit.mcg, last: last), closeTo(0.32, 1e-9));
+    });
+
+    test('mg and mcg compare as mass — a unit slip is the case that matters', () {
+      expect(unusualDoseRatio(dose: 250, unit: Unit.mg, last: last), 1000);
+      expect(unusualDoseRatio(dose: 0.25, unit: Unit.mg, last: last), isNull); // = 250 mcg
+      final mgLast = log(testE, 250, at);
+      expect(unusualDoseRatio(dose: 250, unit: Unit.mcg, last: mgLast), closeTo(0.001, 1e-12));
+    });
+
+    test('IU and mass can\'t be compared; bad numbers never warn', () {
+      expect(unusualDoseRatio(dose: 5000, unit: Unit.iu, last: last), isNull);
+      expect(unusualDoseRatio(dose: 0, unit: Unit.mcg, last: last), isNull);
+      expect(unusualDoseRatio(dose: double.nan, unit: Unit.mcg, last: last), isNull);
+      expect(unusualDoseRatio(dose: 250, unit: Unit.mcg, last: log(sema, 0, at)), isNull);
+    });
   });
 
   test('logDateTime combines a day with a clock time', () {
@@ -167,7 +258,7 @@ void main() {
   });
 
   group('buildNewLog', () {
-    test('first log of a built-in adopts it as a user copy', () {
+    test('first log of a built-in adopts it as a user copy under its library key (B6)', () {
       final drafted = resolveDraftCompound(picked: testE, userCompounds: const []).compound;
       final r = buildNewLog(
         compound: drafted,
@@ -181,7 +272,7 @@ void main() {
         now: now,
       );
       final adopted = r.compoundUpsert!;
-      expect(adopted.id, now.millisecondsSinceEpoch.toString());
+      expect(adopted.id, 'Testosterone Enanthate'); // the BASE_LIBRARY key
       expect(adopted.base, 'Testosterone');
       expect(adopted.ester, 'Enanthate');
       expect(adopted.type, CompoundType.steroid);
@@ -295,6 +386,47 @@ void main() {
         site: 'Vent. glute R', notes: '', concentrationDraft: null, now: now,
       );
       expect(r.injection.site, isNull);
+    });
+  });
+
+  group('buildNewLog — compound identity (B6)', () {
+    NewLog logFirst(CompoundDefinition c, List<CompoundDefinition> users, {DateTime? at2}) =>
+        buildNewLog(
+          compound: c, userCompounds: users, dosage: 1, unit: c.unit, date: at,
+          site: '', notes: '', concentrationDraft: null, now: at2 ?? now,
+        );
+
+    test('two installs adopt a built-in under the same id, whenever they log it', () {
+      final a = logFirst(testE, const []);
+      final b = logFirst(testE, const [], at2: DateTime(2027, 1, 1));
+      expect(a.compoundUpsert!.id, b.compoundUpsert!.id);
+      expect(logFirst(sust, const []).compoundUpsert!.id, 'Sustanon 250');
+    });
+
+    test('a legacy user compound already holding the library id: timestamp id', () {
+      // E.g. a built-in override renamed into a custom keeps its old id.
+      final legacy = testE.copyWith(id: 'Testosterone Enanthate', base: 'Renamed', isCustom: true);
+      final r = logFirst(testE, [legacy]);
+      expect(r.compoundUpsert!.id, now.millisecondsSinceEpoch.toString());
+      expect(r.compoundUpsert!.base, 'Testosterone');
+    });
+
+    test('an existing copy is matched by base+ester key; the last duplicate wins', () {
+      final first = testE.copyWith(id: 'a', halfLife: 5);
+      final last = testE.copyWith(id: 'b', halfLife: 6);
+      final r = logFirst(testE, [first, last]);
+      expect(r.compoundUpsert, isNull);
+      expect(r.injection.compoundId, 'b');
+      expect(r.injection.snapshot.halfLife, 6);
+    });
+
+    test('a true custom not yet stored keeps its own id when usable', () {
+      expect(logFirst(custom, const []).compoundUpsert!.id, 'c1');
+      final ts = now.millisecondsSinceEpoch.toString();
+      expect(logFirst(custom.copyWith(id: 'temp'), const []).compoundUpsert!.id, ts);
+      expect(logFirst(custom.copyWith(id: ''), const []).compoundUpsert!.id, ts);
+      final other = testE.copyWith(id: 'c1', halfLife: 9); // id taken by another compound
+      expect(logFirst(custom, [other]).compoundUpsert!.id, ts);
     });
   });
 

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../models.dart';
+import '../format.dart';
 import '../theme.dart';
+import '../../engine/calendar.dart';
 import '../../engine/reminder_schedule.dart';
 import '../../engine/library_stats.dart';
 
@@ -13,6 +15,12 @@ class RemindersPage extends StatelessWidget {
   final void Function(Reminder) onLogNow;
   final void Function(Reminder) onSkip;
 
+  /// Notification permission is denied (B20): a banner says reminders won't
+  /// alert, with an Allow action when [onRequestNotificationPermission] is
+  /// given.
+  final bool notificationsDisabled;
+  final VoidCallback? onRequestNotificationPermission;
+
   RemindersPage({
     super.key,
     required this.reminders,
@@ -22,6 +30,8 @@ class RemindersPage extends StatelessWidget {
     required this.onLogNow,
     required this.onSkip,
     DateTime? now,
+    this.notificationsDisabled = false,
+    this.onRequestNotificationPermission,
   }) : now = now ?? DateTime.now();
 
   Color _colorFor(Reminder r) {
@@ -54,6 +64,10 @@ class RemindersPage extends StatelessWidget {
           style: AppTheme.sans(size: 12, color: AppTheme.fgMute),
         ),
         const SizedBox(height: 22),
+        if (notificationsDisabled) ...[
+          _NotificationsOffBanner(onAllow: onRequestNotificationPermission),
+          const SizedBox(height: 18),
+        ],
         if (reminders.isEmpty)
           _EmptyState(onCreate: () => onEditReminder(null))
         else ...[
@@ -87,6 +101,55 @@ class RemindersPage extends StatelessWidget {
   }
 }
 
+/// Lab Sheet notice: notification permission is off, so reminders are
+/// silent. "Allow" re-asks; once Android stops showing the prompt (denied
+/// twice) only Settings can turn it back on, so the hint says where.
+class _NotificationsOffBanner extends StatelessWidget {
+  final VoidCallback? onAllow;
+  const _NotificationsOffBanner({required this.onAllow});
+
+  @override
+  Widget build(BuildContext context) {
+    final allow = onAllow;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+      decoration: const BoxDecoration(
+        color: AppTheme.surface,
+        border: Border(
+          left: BorderSide(color: AppTheme.warn, width: 3),
+          top: BorderSide(color: AppTheme.border, width: 1),
+          right: BorderSide(color: AppTheme.border, width: 1),
+          bottom: BorderSide(color: AppTheme.border, width: 1),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("Notifications are off — reminders won't alert you",
+                    style: AppTheme.sans(size: 12.5, weight: FontWeight.w600, height: 1.3)),
+                const SizedBox(height: 4),
+                Text(
+                  allow != null
+                      ? 'If no prompt appears, turn them on in Android Settings › Apps › ProtoLog › Notifications.'
+                      : 'Turn them on in Android Settings › Apps › ProtoLog › Notifications.',
+                  style: AppTheme.sans(size: 11, color: AppTheme.fgMute, height: 1.4),
+                ),
+              ],
+            ),
+          ),
+          if (allow != null) ...[
+            const SizedBox(width: 12),
+            _ActionButton(label: 'Allow', filled: true, onTap: allow),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _SectionHeader extends StatelessWidget {
   final String title;
   final String? meta;
@@ -109,17 +172,15 @@ class _WeekStrip extends StatelessWidget {
   final Color Function(Reminder) colorOf;
   const _WeekStrip({required this.reminders, required this.now, required this.colorOf});
 
-  static const _wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
   @override
   Widget build(BuildContext context) {
     final agenda = weekAgenda(reminders, now, 7, colorOf);
-    final startDay = DateTime(now.year, now.month, now.day);
+    final startDay = dateOnly(now);
     return Row(
       children: [
         for (var i = 0; i < 7; i++) ...[
           if (i > 0) const SizedBox(width: 4),
-          Expanded(child: _dayCell(startDay.add(Duration(days: i)), i == 0, agenda[i])),
+          Expanded(child: _dayCell(addCalendarDays(startDay, i), i == 0, agenda[i])),
         ],
       ],
     );
@@ -135,7 +196,7 @@ class _WeekStrip extends StatelessWidget {
       ),
       child: Column(
         children: [
-          Text(_wd[d.weekday - 1], style: AppTheme.sans(size: 10, color: today ? AppTheme.paperInk : AppTheme.fgDim)),
+          Text(weekdaysShort[d.weekday - 1], style: AppTheme.sans(size: 10, color: today ? AppTheme.paperInk : AppTheme.fgDim)),
           const SizedBox(height: 2),
           Text('${d.day}', style: AppTheme.sans(size: 17, weight: today ? FontWeight.w700 : FontWeight.w500, color: fg, height: 1.2)),
           const SizedBox(height: 8),
@@ -195,7 +256,7 @@ class _ReminderRow extends StatelessWidget {
     final paused = state == ReminderState.paused;
     final actionable = state == ReminderState.overdue || state == ReminderState.due;
     final dose = expectedDose(reminder, now);
-    final nextLabel = '${relativeDayLabel(dose, now)} ${dose.hour.toString().padLeft(2, '0')}:${dose.minute.toString().padLeft(2, '0')}';
+    final nextLabel = '${relativeDayLabel(dose, now)} ${formatHourMinute(dose.hour, dose.minute)}';
 
     return GestureDetector(
       onTap: onTap,

@@ -19,10 +19,11 @@ class PlannedNotification {
   /// When it fires (device-local).
   final DateTime when;
 
-  /// Custom slots only: the scheduler pins the notification to [when]'s
-  /// date at this clock time in the platform's zone, so the slot keeps its
-  /// wall-clock time across DST. Null for interval one-shots, which fire at
-  /// the instant [when] (fractional intervals drift the time of day).
+  /// Custom slots and whole-day intervals: the scheduler pins the
+  /// notification to [when]'s date at this clock time in the platform's
+  /// zone, so it keeps its wall-clock time across DST. Null for
+  /// fractional-interval one-shots, which fire at the instant [when] (they
+  /// drift the time of day by design).
   final SlotClockTime? slotTime;
 
   /// Repeats every week on [when]'s weekday and time (custom slot);
@@ -32,7 +33,7 @@ class PlannedNotification {
   final String title;
   final String body;
 
-  /// The reminder id — the tap handler routes on it.
+  /// An encoded [ReminderPayload] — the tap handler routes on it.
   final String payload;
 
   const PlannedNotification({
@@ -55,7 +56,9 @@ class PlannedNotification {
 /// throws, so one bad reminder can't stop the others being scheduled.
 ///
 /// * Interval: [kIntervalNotificationCount] one-shots from the next
-///   occurrence ([intervalOccurrences]), ids base + 0..9.
+///   occurrence ([intervalOccurrences]), ids base + 0..9; pinned to their
+///   wall-clock time ([PlannedNotification.slotTime]) for a whole-day
+///   interval.
 /// * Custom: per slot ([customSlotPlans]) one weekly-repeating notification
 ///   (id base + [customSlotIdOffset]), or — for a slot whose next
 ///   occurrence was acknowledged — [kAckedSlotOneShots] weekly one-shots
@@ -79,7 +82,7 @@ List<PlannedNotification> planReminderNotifications(
         repeatsWeekly: weekly,
         title: kReminderNotificationTitle,
         body: body,
-        payload: r.id,
+        payload: ReminderPayload(r.id, occurrence: weekly ? null : when).encode(),
       );
 
   if (r.scheduleMode == 'custom') {
@@ -96,7 +99,14 @@ List<PlannedNotification> planReminderNotifications(
   }
 
   final times = intervalOccurrences(r, now, kIntervalNotificationCount);
-  return [for (var i = 0; i < times.length; i++) note(i, times[i])];
+  // Whole-day rhythms keep a wall-clock time (B17), so they're pinned like
+  // custom slots; fractional ones fire at the instant.
+  final wholeDays = isWholeDayInterval(r.intervalDays);
+  return [
+    for (var i = 0; i < times.length; i++)
+      note(i, times[i],
+          slotTime: wholeDays ? (hour: times[i].hour, minute: times[i].minute) : null),
+  ];
 }
 
 SlotClockTime _clockOf(ReminderSlot s) => (hour: s.hour, minute: s.minute);

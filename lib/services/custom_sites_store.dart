@@ -15,14 +15,42 @@ class CustomSites {
   List<String> forRoute({required bool subcutaneous}) => subcutaneous ? subQ : im;
 
   /// These sites with [site] appended to its route's list, unless that list
-  /// already holds it.
+  /// already holds it (ignoring case and surrounding spaces, see
+  /// [matchingSite]).
   CustomSites withSite(String site, {required bool subcutaneous}) {
     final current = forRoute(subcutaneous: subcutaneous);
-    if (current.contains(site)) return this;
-    final next = [...current, site];
-    return subcutaneous ? CustomSites(im: im, subQ: next) : CustomSites(im: next, subQ: subQ);
+    if (matchingSite(site, current) != null) return this;
+    return _withRoute([...current, site], subcutaneous: subcutaneous);
   }
+
+  /// These sites without [site] — every entry of its route's list that
+  /// matches it ignoring case and surrounding spaces. The same instance when
+  /// nothing matches.
+  CustomSites withoutSite(String site, {required bool subcutaneous}) {
+    final current = forRoute(subcutaneous: subcutaneous);
+    final key = _siteKey(site);
+    final next = [for (final s in current) if (_siteKey(s) != key) s];
+    if (next.length == current.length) return this;
+    return _withRoute(next, subcutaneous: subcutaneous);
+  }
+
+  CustomSites _withRoute(List<String> sites, {required bool subcutaneous}) =>
+      subcutaneous ? CustomSites(im: im, subQ: sites) : CustomSites(im: sites, subQ: subQ);
 }
+
+/// The entry of [sites] that names the same site as [name] — equal ignoring
+/// case and surrounding spaces ("quad l" → "Quad L") — or null. A blank
+/// [name] matches nothing.
+String? matchingSite(String name, Iterable<String> sites) {
+  final key = _siteKey(name);
+  if (key.isEmpty) return null;
+  for (final s in sites) {
+    if (_siteKey(s) == key) return s;
+  }
+  return null;
+}
+
+String _siteKey(String site) => site.trim().toLowerCase();
 
 /// SharedPreferences persistence for [CustomSites]: one JSON string list per
 /// route under [imKey] / [subQKey].

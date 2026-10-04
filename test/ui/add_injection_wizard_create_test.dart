@@ -113,7 +113,7 @@ void main() {
     // First log of a built-in materializes a user copy carrying the library PK.
     final adopted = host.upserted.single;
     expect(added.compoundId, adopted.id);
-    expect(adopted.id, isNot('temp'));
+    expect(adopted.id, 'Testosterone Enanthate'); // its library key (B6)
     expect(adopted.base, 'Testosterone');
     expect(adopted.ester, 'Enanthate');
     expect(adopted.isCustom, isFalse);
@@ -470,5 +470,147 @@ void main() {
     expect(find.text('Add site'), findsNothing);
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('customSitesIM'), isNull);
+  });
+
+  testWidgets('N1: a 0.125 mg last dose is prefilled and logged exactly', (tester) async {
+    final user = testE.copyWith(id: 'te');
+    final host = await _pumpWizard(
+      tester,
+      prefillCompound: testE,
+      userCompounds: [user],
+      injections: [
+        Injection(
+          id: 'i1',
+          compoundId: 'te',
+          date: DateTime.now().subtract(const Duration(days: 3, minutes: 1)),
+          dosage: 0.125,
+          snapshot: user,
+        ),
+      ],
+    );
+    expect(find.widgetWithText(TextField, '0.125'), findsOneWidget);
+    expect(find.text('Last: 0.125 mg · 3d ago'), findsOneWidget);
+    expect(find.text('0.125 mg · glute R'), findsOneWidget);
+    await tester.tap(find.text('Log injection'));
+    await tester.pump();
+    expect(host.added!.dosage, 0.125);
+  });
+
+  testWidgets('B28: a date more than a day ahead shows a non-blocking hint', (tester) async {
+    final host = await _pumpWizard(
+      tester,
+      prefillCompound: testE,
+      prefillDate: DateTime.now().add(const Duration(days: 3)),
+    );
+    expect(find.text('In the future · 3 days ahead'), findsOneWidget);
+    await tester.enterText(_amountField, '250');
+    await tester.pump();
+    await tester.tap(find.text('Log injection'));
+    await tester.pump();
+    expect(host.added, isNotNull); // planned doses are allowed
+  });
+
+  testWidgets('B28: no future hint for a log dated now', (tester) async {
+    await _pumpWizard(tester, prefillCompound: testE);
+    expect(find.textContaining('In the future'), findsNothing);
+  });
+
+  testWidgets('B28: the date picker spans 2000 to a year ahead', (tester) async {
+    await _pumpWizard(tester, prefillCompound: testE, prefillDate: DateTime(2026, 5, 10));
+    await tester.tap(find.text('May 10'));
+    await tester.pumpAndSettle();
+    final dialog = tester.widget<DatePickerDialog>(find.byType(DatePickerDialog));
+    expect(dialog.firstDate, DateTime(2000));
+    final now = DateTime.now();
+    expect(dialog.lastDate, DateTime(now.year, now.month, now.day + 365));
+  });
+
+  testWidgets('B29: the search box still shows the query that filters after Back',
+      (tester) async {
+    await _pumpWizard(tester);
+    await tester.enterText(find.widgetWithText(TextField, 'Search compounds'), 'tren');
+    await tester.pump();
+    await tester.tap(find.text('Trenbolone'));
+    await tester.pump();
+    await tester.tap(find.text('Enanthate'));
+    await tester.pump();
+    expect(find.text('Dose & time'), findsOneWidget);
+
+    await tester.tap(find.text('Back'));
+    await tester.pump();
+    await tester.tap(find.text('‹'));
+    await tester.pump();
+    expect(find.text('Trenbolone'), findsOneWidget);
+    expect(find.text('Testosterone'), findsNothing); // still filtered…
+    expect(find.widgetWithText(TextField, 'tren'), findsOneWidget); // …and it shows
+
+    // Clearing the box clears the filter.
+    await tester.enterText(find.widgetWithText(TextField, 'tren'), '');
+    await tester.pump();
+    expect(find.text('Testosterone'), findsOneWidget);
+  });
+
+  testWidgets('adding a site that already exists (any case) selects it instead of duplicating',
+      (tester) async {
+    await _pumpWizard(tester, prefillCompound: testE, prefs: {'customSitesIM': '["Lat L"]'});
+    await tester.enterText(_amountField, '250');
+    await tester.pump();
+    await tester.tap(find.text('+ Add site'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'e.g. Lat L'), 'quad l');
+    await tester.tap(find.text('Add'));
+    await tester.pumpAndSettle();
+    expect(find.text('Quad L'), findsOneWidget);
+    expect(find.text('quad l'), findsNothing);
+    expect(find.text('250 mg · Quad L'), findsOneWidget); // the built-in got selected
+
+    await tester.tap(find.text('+ Add site'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'e.g. Lat L'), 'LAT L');
+    await tester.tap(find.text('Add'));
+    await tester.pumpAndSettle();
+    expect(find.text('Lat L'), findsOneWidget);
+    expect(find.text('250 mg · Lat L'), findsOneWidget);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('customSitesIM'), '["Lat L"]'); // nothing added
+  });
+
+  testWidgets('long-pressing a custom site asks, then removes it from storage', (tester) async {
+    await _pumpWizard(
+      tester,
+      prefillCompound: testE,
+      prefs: {'customSitesIM': '["Lat L","Pec R"]', 'customSitesSubQ': '["Love handle"]'},
+    );
+    await tester.enterText(_amountField, '250');
+    await tester.pump();
+
+    // Built-ins can't be removed.
+    await tester.longPress(find.text('Quad L'));
+    await tester.pumpAndSettle();
+    expect(find.text('Remove site?'), findsNothing);
+
+    // Cancel keeps it.
+    await tester.longPress(find.text('Lat L'));
+    await tester.pumpAndSettle();
+    expect(find.text('Remove site?'), findsOneWidget);
+    await tester.tap(find.text('Cancel').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Lat L'), findsOneWidget);
+
+    // Removing the selected site falls back to the route default.
+    await tester.tap(find.text('Pec R'));
+    await tester.pump();
+    expect(find.text('250 mg · Pec R'), findsOneWidget);
+    await tester.longPress(find.text('Pec R'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove'));
+    await tester.pumpAndSettle();
+    expect(find.text('Pec R'), findsNothing);
+    expect(find.text('250 mg · glute R'), findsOneWidget);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('customSitesIM'), '["Lat L"]');
+    expect(prefs.getString('customSitesSubQ'), '["Love handle"]');
   });
 }

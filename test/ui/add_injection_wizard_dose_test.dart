@@ -292,4 +292,50 @@ void main() {
       expect(host.added!.snapshot.unit, Unit.iu);
     });
   });
+
+  group('G5 — unusual dose warning', () {
+    testWidgets('warns past 3× / under ⅓ of the last dose without blocking Confirm',
+        (tester) async {
+      final copy = bpc.copyWith(id: 'bpc');
+      final host = await _pumpWizard(
+        tester,
+        compound: bpc,
+        userCompounds: [copy],
+        injections: [logOf(copy.copyWith(unit: Unit.mcg), 250)],
+      );
+      // Prefilled with the last dose: nothing unusual.
+      expect(find.widgetWithText(TextField, '250'), findsOneWidget);
+      expect(find.textContaining('your last dose'), findsNothing);
+
+      await tester.enterText(_amountField, '2500');
+      await tester.pump();
+      expect(find.text("That's 10× your last dose (250 mcg)"), findsOneWidget);
+
+      await tester.enterText(_amountField, '25');
+      await tester.pump();
+      expect(find.text("That's 10× less than your last dose (250 mcg)"), findsOneWidget);
+
+      await tester.enterText(_amountField, '600');
+      await tester.pump();
+      expect(find.textContaining('your last dose'), findsNothing);
+
+      // A unit slip: 250 mg against a last 250 mcg.
+      await tester.enterText(_amountField, '250');
+      await tester.tap(find.text('mg'));
+      await tester.pump();
+      expect(find.text("That's 1000× your last dose (250 mcg)"), findsOneWidget);
+
+      await tester.tap(find.text('Log injection'));
+      await tester.pump();
+      expect(host.added!.dosage, 250); // still logs
+      expect(host.added!.snapshot.unit, Unit.mg);
+    });
+
+    testWidgets('no warning without a previous log', (tester) async {
+      await _pumpWizard(tester, compound: bpc);
+      await tester.enterText(_amountField, '100000');
+      await tester.pump();
+      expect(find.textContaining('your last dose'), findsNothing);
+    });
+  });
 }

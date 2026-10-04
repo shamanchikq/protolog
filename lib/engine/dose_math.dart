@@ -111,19 +111,22 @@ List<Unit> doseUnitOptions(Unit nativeUnit) =>
   return (dose: null, unit: unit);
 }
 
-/// Text for a dose, volume or concentration as the wizard shows and
-/// pre-fills it: whole numbers without a decimal point, anything else capped
-/// at 2 decimals with trailing zeros trimmed ("6.6666" → "6.67",
-/// "5.50" → "5.5", "250.0" → "250").
+/// Text for a dose, volume or concentration as the wizard pre-fills and
+/// echoes it: up to 6 decimals with trailing zeros (and a dangling '.')
+/// stripped, a '.' decimal point and no thousands grouping — "250",
+/// "0.125", "6.6666", "0.333333" for 1/3, "0.3" for 0.1 + 0.2.
 ///
-/// Pre-filled text is what gets saved when it isn't retyped, so the 2-decimal
-/// cap also rounds stored values (N1: 0.125 → 0.13).
+/// Pre-filled text is what gets saved when it isn't retyped, so it must
+/// round-trip through [parseFlexibleDouble] (`utils.dart`) to the stored
+/// value: the old 2-decimal cap re-saved 0.125 as 0.13 (N1). Six decimals is
+/// exact for any amount someone can type and only trims float noise. For
+/// read-only display (hints, the "Last:" line) prefer `formatDose`
+/// (`ui/format.dart`).
 String formatAmount(double v) {
-  if (v == v.roundToDouble()) return v.toStringAsFixed(0);
-  var s = v.toStringAsFixed(2);
-  if (s.contains('.')) {
+  var s = v.toStringAsFixed(6);
+  if (s.contains('.') && !s.contains('e')) {
     s = s.replaceFirst(RegExp(r'0+$'), '');
     if (s.endsWith('.')) s = s.substring(0, s.length - 1);
   }
-  return s;
+  return s == '-0' ? '0' : s;
 }
