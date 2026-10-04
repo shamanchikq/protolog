@@ -8,12 +8,80 @@ import '../../engine/calendar.dart';
 import '../../engine/reminder_schedule.dart';
 import '../../engine/library_stats.dart';
 
+/// What saving the editor does to the reminder as it is *now*.
+///
+/// The editor saves the copy it was opened with ([opened]) plus the user's
+/// edits ([saved]); meanwhile the reminder may have moved on — a dose logged,
+/// a Skip from the notification shade — and writing [saved] as-is would put
+/// the old anchor / acknowledgement back. So, against [current]:
+///
+/// * the schedule the user left as it was (same mode, interval and first
+///   dose to the minute, or the same day slots) keeps [current]'s
+///   anchorDate and acknowledgedUntil; a changed schedule is a new rhythm
+///   and is taken as saved;
+/// * enabled and the notification seed always come from [current] — the
+///   editor doesn't edit them;
+/// * the compound and schedule fields come from [saved].
+///
+/// [openedAt] is the editor's `now`, which placed a legacy anchor-less
+/// reminder's first dose on that day.
+Reminder applyReminderEdit({
+  required Reminder opened,
+  required Reminder saved,
+  required Reminder current,
+  required DateTime openedAt,
+}) {
+  final keepProgress = _sameSchedule(opened, saved, openedAt);
+  return Reminder(
+    id: current.id,
+    compoundBase: saved.compoundBase,
+    compoundEster: saved.compoundEster,
+    scheduleMode: saved.scheduleMode,
+    intervalDays: saved.intervalDays,
+    hour: saved.hour,
+    minute: saved.minute,
+    customSlots: saved.customSlots,
+    enabled: current.enabled,
+    lastScheduledDate: saved.lastScheduledDate,
+    anchorDate: keepProgress ? (current.anchorDate ?? saved.anchorDate) : saved.anchorDate,
+    acknowledgedUntil: keepProgress ? current.acknowledgedUntil : saved.acknowledgedUntil,
+    notificationSeed: current.notificationSeed ?? saved.notificationSeed,
+  );
+}
+
+/// Whether [saved] has the schedule the editor showed for [opened].
+bool _sameSchedule(Reminder opened, Reminder saved, DateTime openedAt) {
+  if (opened.scheduleMode != saved.scheduleMode) return false;
+  if (saved.scheduleMode == 'custom') {
+    String key(List<ReminderSlot> slots) =>
+        ([for (final s in slots) '${s.weekday}@${s.hour}:${s.minute}']..sort()).join(',');
+    return key(opened.customSlots) == key(saved.customSlots);
+  }
+  if (opened.intervalDays != saved.intervalDays) return false;
+  // The editor shows the anchor to the minute; a legacy reminder without
+  // one starts on the day it was opened (see _ReminderEditorPageState).
+  final a = opened.anchorDate ??
+      DateTime(openedAt.year, openedAt.month, openedAt.day, opened.hour, opened.minute);
+  final b = saved.anchorDate;
+  return b != null &&
+      DateTime(a.year, a.month, a.day, a.hour, a.minute) ==
+          DateTime(b.year, b.month, b.day, b.hour, b.minute);
+}
+
 class ReminderEditorPage extends StatefulWidget {
+  /// The reminder being edited, as it was when the editor opened. Its
+  /// schedule progress may be stale by the time [onSave] fires; the host
+  /// applies the save with [applyReminderEdit].
   final Reminder? editing;
   final List<CompoundDefinition> userCompounds;
   final DateTime now;
   final void Function(Reminder) onSave;
   final VoidCallback? onDelete;
+
+  /// Live base → display color (MainScreen's resolver), so a library recolor
+  /// shows on the picker cards and the chosen-compound chip (B26). Without
+  /// one, the static palette and then the compound's stored color.
+  final Color Function(String base)? colorResolver;
 
   const ReminderEditorPage({
     super.key,
@@ -22,6 +90,7 @@ class ReminderEditorPage extends StatefulWidget {
     required this.onSave,
     this.onDelete,
     required this.now,
+    this.colorResolver,
   });
 
   @override
@@ -58,7 +127,9 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
     if (e != null) {
       _base = e.compoundBase;
       _ester = e.compoundEster;
-      _color = AppTheme.compoundColor(e.compoundBase) ?? AppTheme.fgMute;
+      _color = widget.colorResolver?.call(e.compoundBase) ??
+          AppTheme.compoundColor(e.compoundBase) ??
+          AppTheme.fgMute;
       if (e.scheduleMode == 'custom') {
         _mode = 'Custom days';
         for (final s in e.customSlots) {
@@ -210,11 +281,14 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
       .toSet()
       .length;
 
+  Color _colorOf(CompoundDefinition c) =>
+      widget.colorResolver?.call(c.base) ?? AppTheme.compoundColor(c.base) ?? Color(c.colorValue);
+
   void _select(CompoundDefinition c) {
     setState(() {
       _base = c.base;
       _ester = c.ester;
-      _color = AppTheme.compoundColor(c.base) ?? Color(c.colorValue);
+      _color = _colorOf(c);
       _drillBase = null;
     });
   }
@@ -329,7 +403,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
     final isInjectable = c.type == CompoundType.steroid;
     final esters = isInjectable ? _esterCount(c.base, catalogue) : 1;
     final multi = isInjectable && _drillBase == null && esters > 1;
-    final color = AppTheme.compoundColor(c.base) ?? Color(c.colorValue);
+    final color = _colorOf(c);
     return GestureDetector(
       onTap: () {
         if (multi) {

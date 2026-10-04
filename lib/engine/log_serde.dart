@@ -1,5 +1,6 @@
 import '../models.dart';
 import 'compute_engine.dart';
+import 'migrations.dart' show kRenamedBases;
 
 /// Markdown table cells may not contain pipes or newlines; replace them so a
 /// note like "a|b" can't break the column layout on re-import.
@@ -35,7 +36,8 @@ String injectionsToMarkdown(List<Injection> injections) {
 /// skipped, as are rows whose compound can't be resolved from [userCompounds]
 /// or the built-in library. The header row (and any other row whose date or
 /// dosage doesn't parse) is skipped by validation, so a paste without the
-/// header keeps its first row.
+/// header keeps its first row. A base spelled the old way in an older export
+/// ([kRenamedBases], e.g. "Anastrazole") resolves to its current name.
 List<Injection> parseMarkdownLog(
   String text, {
   required List<CompoundDefinition> userCompounds,
@@ -62,7 +64,7 @@ List<Injection> parseMarkdownLog(
     if (rawCells.length < 5) continue;
 
     final dateStr = rawCells[0]; // dd/MM/yyyy HH:mm
-    final base = rawCells[1];
+    final base = kRenamedBases[rawCells[1]] ?? rawCells[1];
     final ester = rawCells[2].isEmpty ? 'None' : rawCells[2];
     final dosage = double.tryParse(rawCells[3]);
     final unitStr = rawCells[4];

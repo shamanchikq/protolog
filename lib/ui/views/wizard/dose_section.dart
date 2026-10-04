@@ -77,6 +77,12 @@ class DoseSection extends StatelessWidget {
   bool get _isIuNative => compound.unit == Unit.iu;
   String get _concentrationUnit => concentrationUnitLabel(compound);
 
+  /// [concentration] when it can be used for a conversion: one over
+  /// [maxConcentrationPerMl] is flagged in By-volume mode and never used
+  /// (N5).
+  double? get _usableConcentration =>
+      isConcentrationTooHigh(concentration) ? null : concentration;
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -102,7 +108,7 @@ class DoseSection extends StatelessWidget {
     final ml = dose > 0
         ? volumeForDose(
             dose: dose,
-            concentration: concentration,
+            concentration: _usableConcentration,
             unit: unit,
             iuConcentration: _isIuNative,
           )
@@ -170,7 +176,8 @@ class DoseSection extends StatelessWidget {
   }
 
   Widget _buildDoseByVolume() {
-    final conc = concentration;
+    final conc = _usableConcentration;
+    final tooHigh = isConcentrationTooHigh(concentration);
     final volumeRaw = parseFlexibleDouble(volumeText) ?? 0;
     // Convert the user-entered volume to mL using the U100 standard
     // (100 IU = 1 mL) when they're inputting in IU.
@@ -210,13 +217,14 @@ class DoseSection extends StatelessWidget {
     if (doseText != computedDoseText) {
       WidgetsBinding.instance.addPostFrameCallback((_) => onVolumeDoseComputed(computedDoseText));
     }
-    final concDisplay = (conc != null) ? formatDose(conc) : '—';
+    final shown = concentration;
+    final concDisplay = (shown != null) ? formatDose(shown) : '—';
     // Peptides get a tap → reconstitution sheet (mg + bac → mg/mL).
     // Steroids/anything else: edit the concentration directly as a number.
     final Widget concField = _isPeptide
         ? WizardField(
             label: 'Concentration',
-            hint: (conc == null) ? 'tap to calculate' : 'from vial',
+            hint: (shown == null) ? 'tap to calculate' : 'from vial',
             onTap: onOpenReconstitution,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
@@ -259,7 +267,7 @@ class DoseSection extends StatelessWidget {
               ],
             ),
           );
-    return IntrinsicHeight(
+    final fields = IntrinsicHeight(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -313,6 +321,11 @@ class DoseSection extends StatelessWidget {
           ),
         ],
       ),
+    );
+    if (!tooHigh) return fields;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [fields, ConcentrationTooHighNote(unitLabel: _concentrationUnit)],
     );
   }
 }

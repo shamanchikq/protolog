@@ -100,6 +100,18 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   bool _notificationsBlocked = false;
   bool _blockedNoticeShown = false;
 
+  /// The display-color resolver for the current catalogue (E2), built on
+  /// first use and dropped whenever [userCompounds] changes (_loadData,
+  /// _mutate). Every build in between hands out the same function, so
+  /// PKGraphPainter.shouldRepaint's identity check holds and the chart
+  /// doesn't repaint on unrelated setStates.
+  Color Function(String base)? _resolver;
+  Color Function(String base) get _colorResolver => _resolver ??= _buildColorResolver();
+
+  /// Bumped whenever [injections] changes — the list is mutated in place, so
+  /// its identity can't say so. Keys the dashboard's swimlane memo (E2).
+  int _injectionsRevision = 0;
+
   // Set when a notification tap arrives before _loadData has finished
   // (cold start); processed at the end of _loadData.
   String? _pendingNotificationPayload;
@@ -108,7 +120,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    settings = const GraphSettings(normalized: false, cumulative: false, showPeptides: true, timeRange: 'standard');
+    settings = const GraphSettings(normalized: false, cumulative: false, timeRange: 'standard');
     WidgetsBinding.instance.addObserver(this);
     _bootstrap();
   }
@@ -182,6 +194,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       userCompounds = res.compounds;
       reminders = res.reminders;
       bloodwork = res.bloodwork;
+      _resolver = null;
+      _injectionsRevision++;
       _loading = false;
     });
     _refreshGraph();
@@ -250,6 +264,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }) async {
     setState(() {
       change();
+      if (compounds) _resolver = null; // recolors show everywhere (E2)
+      if (injections) _injectionsRevision++;
       if (graph) _graphDataFuture = _computeGraph();
     });
     // Each save snapshots its collection synchronously (and writes land in
@@ -502,7 +518,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         initialMarker: initialMarker,
         markerSuggestions: _markerSuggestions,
         injections: injections,
-        colorResolver: _buildColorResolver(),
+        colorResolver: _liveColor,
         onChanged: (list) => _mutate(() => bloodwork = List.of(list), bloodwork: true),
       ),
     ));
@@ -535,14 +551,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         bloodwork: bloodwork,
       );
 
-  /// F1: full-state backup through the share sheet.
-  Future<void> _exportBackupFile() async {
-    // iPad needs an anchor for the share popover (D4); the Library's menu
-    // doesn't hand over its button, so the sheet anchors to this screen.
+  /// F1: full-state backup through the share sheet. iPad needs an anchor
+  /// for the share popover (D4): the button the backup was started from
+  /// ([origin], from the Library's menu), else this whole screen.
+  Future<void> _exportBackupFile({Rect? origin}) async {
     final box = context.findRenderObject() as RenderBox?;
-    final origin = box != null && box.hasSize ? box.localToGlobal(Offset.zero) & box.size : null;
+    final anchor = origin ??
+        (box != null && box.hasSize ? box.localToGlobal(Offset.zero) & box.size : null);
     try {
-      await _backup.share(_collections, origin: origin);
+      await _backup.share(_collections, origin: anchor);
     } catch (e) {
       _snack('Backup failed: $e', color: AppTheme.warn);
     }
@@ -643,7 +660,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           bloodwork: bloodwork,
           graphData: _graphDataFuture,
           settings: settings,
-          colorResolver: _buildColorResolver(),
+          colorResolver: _colorResolver,
+          injectionsRevision: _injectionsRevision,
           now: DateTime.now(),
           onSettingsChanged: (s) {
             // Cumulative adds a curve engine-side; normalized is paint-only
@@ -662,7 +680,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           onUpdateNotes: _updateInjectionNotes,
           onEditInjection: (inj) => _openAddInjectionWizard(editing: inj),
           onDaySelected: (d) => _calendarSelectedDay = d,
-          colorResolver: _buildColorResolver(),
+          colorResolver: _colorResolver,
         );
         break;
       case ShellTab.library:
@@ -671,10 +689,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           injections: injections,
           onExport: _exportToMarkdown,
           onImport: _importFromMarkdown,
-          onBackup: _exportBackupFile,
+          onBackup: (origin) => _exportBackupFile(origin: origin),
           onRestore: _importBackupFile,
           onOpenDetail: _openCompoundDetail,
           onOpenCreate: () => _openCompoundEditor(),
+          colorResolver: _colorResolver,
         );
         break;
       case ShellTab.reminders:
@@ -690,6 +709,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           onSkip: _skipReminder,
           notificationsDisabled: _notificationsBlocked,
           onRequestNotificationPermission: _requestNotificationPermission,
+          colorResolver: _colorResolver,
         );
         break;
     }
@@ -724,13 +744,23 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   void _openReminderEditor({Reminder? editing}) {
+    final openedAt = DateTime.now();
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => ReminderEditorPage(
         editing: editing,
         userCompounds: userCompounds,
-        now: DateTime.now(),
-        onSave: _upsertReminder,
+        now: openedAt,
+        // An edit applies to the reminder as it is when saved: one that
+        // advanced while the editor was open (a dose logged, a Skip from
+        // the shade) keeps its progress unless the schedule was changed.
+        onSave: editing == null
+            ? _upsertReminder
+            : (saved) => _updateReminder(
+                editing.id,
+                (current) => applyReminderEdit(
+                    opened: editing, saved: saved, current: current, openedAt: openedAt)),
         onDelete: editing != null ? () => _deleteReminder(editing) : null,
+        colorResolver: _liveColor,
       ),
     ));
   }
@@ -756,6 +786,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             prefillDate: prefillDate,
             editingInjection: editing,
             onEdit: _updateInjection,
+            colorResolver: _liveColor,
           ),
         ),
       ),
@@ -780,6 +811,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           _openAddInjectionWizard(prefill: c);
         },
         linkedReminderCount: _remindersOrphanedBy(compound).length,
+        colorResolver: _liveColor,
       ),
     ));
   }
@@ -873,7 +905,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   ///   1. an explicit user color (custom, or a built-in the user recolored)
   ///   2. the static redesign palette (`AppTheme.compoundColor`)
   ///   3. the current catalogue color, else a neutral grey.
-  /// Memoized per call so a paint loop over many markers stays O(1) per base.
+  /// Memoized per base so a paint loop over many markers stays O(1) per base;
+  /// use it through [_colorResolver], which keeps one per catalogue state.
   Color Function(String) _buildColorResolver() {
     final cache = <String, Color>{};
     return (base) => cache.putIfAbsent(base, () {
@@ -882,4 +915,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           return AppTheme.compoundColor(base) ?? Color(cand.any ?? 0xFF9AA0A8);
         });
   }
+
+  /// The resolver for routes pushed above this screen (detail, editors, the
+  /// wizard, bloodwork). A route builds its page once, so it gets this
+  /// method, which defers to the *current* resolver on every call — a
+  /// recolor saved from the Compound Editor shows on the detail page it
+  /// returns to.
+  Color _liveColor(String base) => _colorResolver(base);
 }

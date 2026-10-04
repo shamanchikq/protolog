@@ -194,9 +194,14 @@ Future<ComputedGraphData> computeGraphData(IsolateInput input, {required DateTim
   final totalDurationMs = endDate.difference(startDate).inMilliseconds;
   final startMs = startDate.millisecondsSinceEpoch;
 
-  // Non-modelable legacy records (non-finite numbers) are skipped entirely:
-  // no flat curve, marker or lane, and nothing that can throw in the isolate.
-  final relevantInjections = injections.where((i) {
+  // Only steroid / oral doses are charted (peptides and ancillaries are the
+  // swimlane card's, which samples them itself). Non-modelable legacy
+  // records (non-finite numbers) are skipped entirely: no flat curve or
+  // marker, and nothing that can throw in the isolate.
+  final curveInjections = injections.where((i) {
+    if (i.snapshot.type != CompoundType.steroid && i.snapshot.type != CompoundType.oral) {
+      return false;
+    }
     if (!isModelableInjection(i)) return false;
     final injTime = i.date.millisecondsSinceEpoch;
     if (injTime > endDate.millisecondsSinceEpoch) return false;
@@ -204,39 +209,11 @@ Future<ComputedGraphData> computeGraphData(IsolateInput input, {required DateTim
     return (startMs - injTime) / 86400000.0 <= relevanceWindowDays(i.snapshot);
   }).toList();
 
-  final curveInjections = relevantInjections.where((i) => i.snapshot.type == CompoundType.steroid || i.snapshot.type == CompoundType.oral).toList();
-  final peptideInjections = relevantInjections.where((i) => i.snapshot.type == CompoundType.peptide || i.snapshot.type == CompoundType.ancillary).toList();
-
-  final uniquePeptideBases = peptideInjections.map((i) => i.snapshot.base).toSet().toList()..sort();
-  final laneMap = {for (var e in uniquePeptideBases) e: uniquePeptideBases.indexOf(e)};
-  final List<PeptideLaneData> lanes = [];
-
-  for (var inj in peptideInjections) {
-    // Read PK from the injection's frozen snapshot — same as steroid/oral
-    // curves. This keeps past lanes stable when a compound's library entry is
-    // edited; retroactive changes are applied explicitly via rewriteSnapshots.
-    final graphType = inj.snapshot.graphType;
-    final halfLife = effectiveHalfLife(inj.snapshot);
-
-    final msSinceStart = inj.date.millisecondsSinceEpoch - startMs;
-    final startPct = msSinceStart / totalDurationMs;
-    final fadeDurationMs = (halfLife * 4) * 86400000;
-    final durationPct = fadeDurationMs / totalDurationMs;
-
-    if (startPct + durationPct > 0 && startPct < 1.0) {
-      lanes.add(PeptideLaneData(
-          inj.snapshot.base,
-          inj.snapshot.colorValue,
-          laneMap[inj.snapshot.base] ?? 0,
-          startPct,
-          durationPct,
-          graphType
-      ));
-    }
-  }
-
   final uniqueCurveBases = curveInjections.map((i) => i.snapshot.base).toSet();
   double maxMg = 10.0;
+  // A floor, not a presence signal: a tiny oral dose still gets a readable
+  // right axis. Whether that axis is drawn at all is
+  // ComputedGraphData.hasOralCurve (B36).
   double maxOralMg = 5.0;
   final List<CurveData> curves = [];
 
@@ -320,7 +297,7 @@ Future<ComputedGraphData> computeGraphData(IsolateInput input, {required DateTim
       totalPoints.add(Offset((sampleTimes[s] - startMs) / totalDurationMs, totalSteroid[s]));
       dailyMaxTotal = math.max(dailyMaxTotal, totalSteroid[s]);
     }
-    curves.add(CurveData('Total Androgens', 0xFFFFFFFF, false, totalPoints));
+    curves.add(CurveData(totalCurveName, 0xFFFFFFFF, false, totalPoints));
     maxMg = math.max(maxMg, dailyMaxTotal);
   }
 
@@ -330,15 +307,13 @@ Future<ComputedGraphData> computeGraphData(IsolateInput input, {required DateTim
   }
 
   return ComputedGraphData(
+    settings: settings,
     curves: curves,
-    peptideLanes: lanes,
-    laneLabels: uniquePeptideBases,
     maxMg: maxMg * 1.1,
     maxOralMg: maxOralMg * 1.2,
     startDate: startDate,
     endDate: endDate,
     totalDurationMs: totalDurationMs,
-    laneCount: uniquePeptideBases.length,
     injectionMarkers: injectionMarkers,
   );
 }

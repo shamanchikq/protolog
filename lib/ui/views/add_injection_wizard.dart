@@ -39,6 +39,14 @@ class AddInjectionWizard extends StatefulWidget {
   final Injection? editingInjection;
   final void Function(Injection updated)? onEdit;
 
+  /// Live base → display color (MainScreen's resolver), so a library recolor
+  /// shows on the compound cards, rows and chip (B26). Without one, the
+  /// static palette and then the compound's stored color.
+  final Color Function(String base)? colorResolver;
+
+  /// Where the user's custom injection sites are kept (a test seam).
+  final CustomSitesStore sitesStore;
+
   const AddInjectionWizard({
     super.key,
     required this.onAdd,
@@ -52,6 +60,8 @@ class AddInjectionWizard extends StatefulWidget {
     this.prefillDate,
     this.editingInjection,
     this.onEdit,
+    this.colorResolver,
+    this.sitesStore = const CustomSitesStore(),
   });
 
   @override
@@ -85,7 +95,6 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
   bool _advanceReminder = true;
 
   // Custom sites loaded from SharedPreferences, keyed by route.
-  static const _sitesStore = CustomSitesStore();
   CustomSites _customSites = const CustomSites();
 
   bool get _isEdit => widget.editingInjection != null;
@@ -250,13 +259,13 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
       massUnitLabel: _isIuNative ? 'IU' : 'mg',
     );
     if (!mounted) return; // the wizard closed while the sheet was open
-    if (result != null && result > 0) {
+    if (result != null && result > 0 && !isConcentrationTooHigh(result)) {
       setState(() => _concentrationDraft = result);
     }
   }
 
   Future<void> _loadCustomSites() async {
-    final sites = await _sitesStore.load();
+    final sites = await widget.sitesStore.load();
     if (!mounted) return;
     setState(() => _customSites = sites);
   }
@@ -281,7 +290,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
       _customSites = _customSites.withSite(result, subcutaneous: _isSubQ);
       _site = result;
     });
-    _sitesStore.save(_customSites);
+    _saveSites(_customSites);
   }
 
   /// Long-press on a user-added site: confirm, then drop it from the route's
@@ -294,7 +303,21 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
       _customSites = _customSites.withoutSite(site, subcutaneous: _isSubQ);
       if (c != null && matchingSite(_site, [site]) != null) _site = defaultSiteFor(c.type);
     });
-    _sitesStore.save(_customSites);
+    _saveSites(_customSites);
+  }
+
+  /// Persists the custom sites. A refused write is reported like any failed
+  /// save; the sites stay offered for this session. The messenger is the
+  /// app's, so the report survives the wizard closing meanwhile.
+  Future<void> _saveSites(CustomSites sites) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (await widget.sitesStore.save(sites)) return;
+    messenger?.showSnackBar(SnackBar(
+      content: Text("Couldn't save your injection sites — the change may be lost when the app closes.",
+          style: AppTheme.sans(size: 12, color: AppTheme.fg)),
+      backgroundColor: AppTheme.warn,
+      duration: const Duration(seconds: 10),
+    ));
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────
@@ -354,6 +377,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
       onSelectBase: (base) => setState(() => _selectedBase = base),
       onPick: _enterStep2,
       onCancel: widget.onCancel,
+      colorResolver: widget.colorResolver,
     );
   }
 
@@ -376,6 +400,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
           compound: c,
           concentration: _concentrationDraft,
           onChange: _isEdit ? null : () => setState(() => _step = 1),
+          colorResolver: widget.colorResolver,
         ),
         if (_lastForCompound != null) ...[
           const SizedBox(height: 6),
@@ -439,6 +464,12 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
     );
   }
 
+  /// N5: a concentration over the limit is flagged inline in By-volume mode,
+  /// where it would feed the dose, and Confirm waits for a fix. A direct
+  /// dose doesn't use it (and buildNewLog never stores it).
+  bool get _concentrationBlocksConfirm =>
+      _mode == 'volume' && !_isPillForm && isConcentrationTooHigh(_concentrationDraft);
+
   /// G5: a soft warning when the dose is > 3× or < ⅓ of the last log of this
   /// compound (no last log in edit mode, so none there).
   String? get _doseWarning {
@@ -457,6 +488,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
       site: _site,
       isEdit: _isEdit,
       doseWarning: _doseWarning,
+      submitBlocked: _concentrationBlocksConfirm,
       linkedReminder: _matchingReminder,
       advanceReminder: _advanceReminder,
       onToggleAdvance: () => setState(() => _advanceReminder = !_advanceReminder),
@@ -468,7 +500,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
 
   void _submit() {
     final picked = _selectedCompound;
-    if (picked == null) return;
+    if (picked == null || _concentrationBlocksConfirm) return;
     final doseVal = parseFlexibleDouble(_doseText);
     if (doseVal == null || doseVal <= 0) return;
     final fullDate = logDateTime(_date, hour: _time.hour, minute: _time.minute);

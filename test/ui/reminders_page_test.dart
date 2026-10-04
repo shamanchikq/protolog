@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:protolog_tracker/models.dart';
 import 'package:protolog_tracker/ui/views/reminders_page.dart';
 
+import '../support/finders.dart';
+
 void main() {
   testWidgets('empty state shows CTA', (tester) async {
     await tester.pumpWidget(MaterialApp(
@@ -115,5 +117,110 @@ void main() {
       expect(find.textContaining('Android Settings'), findsOneWidget);
     });
   });
-}
 
+  testWidgets('row stripe and week-strip dots use the live resolver (B26)', (tester) async {
+    final now = DateTime(2026, 5, 18, 7, 40);
+    final r = Reminder(
+      id: 'r', compoundBase: 'Testosterone', compoundEster: 'Cypionate',
+      scheduleMode: 'interval', intervalDays: 3.5, hour: 8, minute: 0,
+      enabled: true, anchorDate: DateTime(2026, 5, 19, 8, 0),
+    );
+    Future<void> pump({Color Function(String base)? resolver}) => tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+            body: RemindersPage(
+              reminders: [r], userCompounds: const [], now: now,
+              onEditReminder: (_) {}, onToggleEnabled: (_) {},
+              onLogNow: (_) {}, onSkip: (_) {},
+              colorResolver: resolver,
+            ),
+          ),
+        ));
+
+    await pump(resolver: (base) => base == 'Testosterone' ? userColor : Colors.grey);
+    // The row's stripe plus the week strip's dots for the doses on the 19th
+    // and (3.5 days on) the 22nd.
+    expect(coloredWith(userColor), findsNWidgets(3));
+
+    await pump(); // no resolver: the static palette
+    expect(coloredWith(userColor), findsNothing);
+    expect(coloredWith(const Color(0xFF5DC59C)), findsNWidgets(3));
+  });
+
+  group('row actions hand over the row\'s reminder', () {
+    final now = DateTime(2026, 5, 18, 7, 40);
+    // Overdue (anchor two hours ago) — Log now / Skip are offered.
+    final due = Reminder(
+      id: 'due', compoundBase: 'Testosterone', compoundEster: 'Cypionate',
+      scheduleMode: 'interval', intervalDays: 3.5, hour: 8, minute: 0,
+      enabled: true, anchorDate: DateTime(2026, 5, 18, 6, 0),
+    );
+    // Next dose in three days — nothing to act on yet.
+    final later = Reminder(
+      id: 'later', compoundBase: 'BPC-157', compoundEster: 'None',
+      scheduleMode: 'interval', intervalDays: 7, hour: 9, minute: 0,
+      enabled: true, anchorDate: DateTime(2026, 5, 21, 9, 0),
+    );
+    // Paused: its toggle resumes it.
+    final paused = Reminder(
+      id: 'paused', compoundBase: 'HCG', compoundEster: 'None',
+      scheduleMode: 'interval', intervalDays: 3, hour: 8, minute: 0,
+      enabled: false, anchorDate: DateTime(2026, 5, 18, 6, 0),
+    );
+
+    late List<String> calls;
+    Future<void> pump(WidgetTester tester) {
+      calls = [];
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(800, 2000);
+      addTearDown(tester.view.reset);
+      return tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: RemindersPage(
+            reminders: [due, later, paused], userCompounds: const [], now: now,
+            onEditReminder: (r) => calls.add('edit:${r?.id}'),
+            onToggleEnabled: (r) => calls.add('toggle:${r.id}'),
+            onLogNow: (r) => calls.add('log:${r.id}'),
+            onSkip: (r) => calls.add('skip:${r.id}'),
+          ),
+        ),
+      ));
+    }
+
+    testWidgets('Log now and Skip only on the due row', (tester) async {
+      await pump(tester);
+      expect(find.text('Log now'), findsOneWidget, reason: 'not for later or paused');
+      expect(find.text('Skip'), findsOneWidget);
+      await tester.tap(find.text('Log now'));
+      await tester.tap(find.text('Skip'));
+      expect(calls, ['log:due', 'skip:due']);
+    });
+
+    testWidgets('each pause toggle pauses or resumes its own reminder', (tester) async {
+      await pump(tester);
+      expect(find.text('Paused'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('reminder-toggle-later')));
+      await tester.tap(find.byKey(const ValueKey('reminder-toggle-paused')));
+      await tester.tap(find.byKey(const ValueKey('reminder-toggle-due')));
+      expect(calls, ['toggle:later', 'toggle:paused', 'toggle:due']);
+    });
+
+    testWidgets('tapping a row edits that reminder; the empty state creates one', (tester) async {
+      await pump(tester);
+      await tester.tap(find.text('BPC-157'));
+      await tester.tap(find.text('Testosterone Cypionate'));
+      expect(calls, ['edit:later', 'edit:due']);
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: RemindersPage(
+            reminders: const [], userCompounds: const [], now: now,
+            onEditReminder: (r) => calls.add('edit:${r?.id}'),
+            onToggleEnabled: (_) {}, onLogNow: (_) {}, onSkip: (_) {},
+          ),
+        ),
+      ));
+      await tester.tap(find.text('+ New reminder'));
+      expect(calls.last, 'edit:null');
+    });
+  });
+}

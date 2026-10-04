@@ -21,6 +21,11 @@ class RemindersPage extends StatelessWidget {
   final bool notificationsDisabled;
   final VoidCallback? onRequestNotificationPermission;
 
+  /// Live base → display color (MainScreen's resolver), so a library recolor
+  /// shows on the rows and week strip too (B26). Without one, the static
+  /// palette, then the catalogue entry's stored color.
+  final Color Function(String base)? colorResolver;
+
   RemindersPage({
     super.key,
     required this.reminders,
@@ -32,9 +37,12 @@ class RemindersPage extends StatelessWidget {
     DateTime? now,
     this.notificationsDisabled = false,
     this.onRequestNotificationPermission,
+    this.colorResolver,
   }) : now = now ?? DateTime.now();
 
   Color _colorFor(Reminder r) {
+    final live = colorResolver;
+    if (live != null) return live(r.compoundBase);
     final override = AppTheme.compoundColor(r.compoundBase);
     if (override != null) return override;
     for (final c in cataloguedCompounds(userCompounds: userCompounds)) {
@@ -308,7 +316,10 @@ class _ReminderRow extends StatelessWidget {
                       _ActionButton(label: 'Skip', filled: false, onTap: onSkip),
                     ],
                     const Spacer(),
-                    _PauseToggle(paused: paused, onTap: onToggle),
+                    _PauseToggle(
+                        key: ValueKey('reminder-toggle-${reminder.id}'),
+                        paused: paused,
+                        onTap: onToggle),
                   ],
                 ),
               ),
@@ -345,7 +356,7 @@ class _ActionButton extends StatelessWidget {
 class _PauseToggle extends StatelessWidget {
   final bool paused;
   final VoidCallback onTap;
-  const _PauseToggle({required this.paused, required this.onTap});
+  const _PauseToggle({super.key, required this.paused, required this.onTap});
   @override
   Widget build(BuildContext context) {
     return GestureDetector(

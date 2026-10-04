@@ -135,6 +135,31 @@ void main() {
       expect(formatUsedAgo(now.add(const Duration(hours: 5)), now: now), 'in 5h');
       expect(formatUsedAgo(now.add(const Duration(minutes: 10)), now: now), 'in 1h');
     });
+
+    // Hold in every zone; only discriminate under a DST zone such as
+    // TZ=Europe/Kyiv (spring forward Mar 29 2026, fall back Oct 25 2026),
+    // where elapsed `.inDays` was off by one.
+    group('counts days on the wall clock across DST', () {
+      test('across spring forward (a 23 h day)', () {
+        // 08:00 → 08:00 three dates later: 71 h elapsed in Kyiv.
+        expect(formatUsedAgo(DateTime(2026, 3, 28, 8), now: DateTime(2026, 3, 31, 8)), '3d ago');
+        expect(formatUsedAgo(DateTime(2026, 3, 31, 8), now: DateTime(2026, 3, 28, 8)), 'in 3d');
+      });
+
+      test('across fall back (a 25 h day)', () {
+        // 08:00 → 07:30 three dates later: 72.5 h elapsed in Kyiv, but the
+        // clock hasn't reached 08:00 on the third day yet.
+        expect(formatUsedAgo(DateTime(2026, 10, 24, 8), now: DateTime(2026, 10, 27, 7, 30)), '2d ago');
+        expect(formatUsedAgo(DateTime(2026, 10, 27, 7, 30), now: DateTime(2026, 10, 24, 8)), 'in 2d');
+      });
+
+      test('24 h+ elapsed on a 25 h day is never "0d ago"', () {
+        final when = DateTime(2026, 10, 24, 8);
+        final n = DateTime(2026, 10, 25, 7, 30); // 24.5 h later in Kyiv, 23.5 h in UTC
+        final expected = n.difference(when).inHours >= 24 ? '1d ago' : '23h ago';
+        expect(formatUsedAgo(when, now: n), expected);
+      });
+    });
   });
 
   group('isInProtocol', () {
@@ -463,17 +488,6 @@ void main() {
         colorValue: 0xFF000000,
       );
       expect(metaLineFor(c), 'Peptide · window');
-    });
-  });
-
-  group('isBuiltIn', () {
-    test('true for a non-custom compound', () {
-      expect(isBuiltIn(_testCyp()), isTrue); // isCustom defaults to false
-    });
-
-    test('false for a custom compound', () {
-      final custom = _testCyp().copyWith(isCustom: true);
-      expect(isBuiltIn(custom), isFalse);
     });
   });
 

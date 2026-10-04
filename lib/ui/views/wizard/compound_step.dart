@@ -33,6 +33,9 @@ class CompoundStep extends StatelessWidget {
   final ValueChanged<CompoundDefinition> onPick;
   final VoidCallback onCancel;
 
+  /// Live base → color resolver (see [wizardCompoundColor]).
+  final Color Function(String base)? colorResolver;
+
   const CompoundStep({
     super.key,
     required this.typeFilter,
@@ -46,6 +49,7 @@ class CompoundStep extends StatelessWidget {
     required this.onSelectBase,
     required this.onPick,
     required this.onCancel,
+    this.colorResolver,
   });
 
   CompoundType get _targetType => typeForFilter(typeFilter);
@@ -242,7 +246,7 @@ class CompoundStep extends StatelessWidget {
   }
 
   Widget _buildCompoundCard({required CompoundDefinition compound, required DateTime lastDate}) {
-    final color = wizardCompoundColor(compound);
+    final color = wizardCompoundColor(compound, colorResolver);
     String sub;
     if (compound.type == CompoundType.steroid) {
       final n = _esterCount(compound.base);
@@ -347,7 +351,7 @@ class CompoundStep extends StatelessWidget {
   }
 
   Widget _buildLibraryRow(CompoundDefinition c, {required bool isFirst}) {
-    final color = wizardCompoundColor(c);
+    final color = wizardCompoundColor(c, colorResolver);
     final showCustom = c.isCustom;
     final nameStr = (_targetType == CompoundType.steroid && selectedBase != null)
         ? c.ester

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import '../../../engine/injection_draft.dart';
 import '../../../models.dart';
+import '../../format.dart';
 import '../../theme.dart';
 
 // Small building blocks shared by both steps of the add-injection wizard.
@@ -9,15 +11,35 @@ import '../../theme.dart';
 // and segment text are 10/12 px instead of 9.5/11.5 px, labels and hints
 // ellipsize, pills are 12 px with 12 px padding — so the wizard keeps its own.
 
-/// Display color of a compound in the wizard: the redesign palette for its
-/// base, else its stored color. Does not consult the live color resolver
-/// (B26), so a library recolor doesn't show here.
-Color wizardCompoundColor(CompoundDefinition c) =>
-    AppTheme.compoundColor(c.base) ?? Color(c.colorValue);
+/// Display color of a compound in the wizard: [resolver] (MainScreen's live
+/// base → color resolver, so a library recolor shows here too — B26) when
+/// given, else the redesign palette for its base, else its stored color.
+Color wizardCompoundColor(CompoundDefinition c, [Color Function(String base)? resolver]) =>
+    resolver?.call(c.base) ?? AppTheme.compoundColor(c.base) ?? Color(c.colorValue);
 
 /// Unit of a compound's vial concentration: IU/mL for IU-native compounds
 /// (HCG, HGH), mg/mL for everything else (including mcg-dosed peptides).
 String concentrationUnitLabel(CompoundDefinition c) => c.unit == Unit.iu ? 'IU/mL' : 'mg/mL';
+
+/// Inline note under a concentration over [maxConcentrationPerMl] (N5),
+/// e.g. "Above 100000 mg/mL — check the value". [unitLabel] is "mg/mL" or
+/// "IU/mL".
+String concentrationTooHighMessage(String unitLabel) =>
+    'Above ${formatDose(maxConcentrationPerMl)} $unitLabel — check the value';
+
+/// [concentrationTooHighMessage] in the wizard's warning style.
+class ConcentrationTooHighNote extends StatelessWidget {
+  final String unitLabel;
+  const ConcentrationTooHighNote({super.key, required this.unitLabel});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Text(concentrationTooHighMessage(unitLabel),
+            key: const Key('concentration-too-high'),
+            style: AppTheme.sans(size: 11.5, color: AppTheme.warn)),
+      );
+}
 
 /// "3d ago" / "5h ago" / "12m ago" / "just now" — the wizard's age label for
 /// a previous log.

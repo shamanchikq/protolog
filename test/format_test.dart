@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:protolog_tracker/ui/format.dart';
+import 'package:protolog_tracker/format.dart';
 
 void main() {
   group('stripTrailingZeros', () {

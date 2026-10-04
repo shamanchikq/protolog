@@ -101,12 +101,12 @@ class FakeNotificationBackend implements NotificationBackend {
   Iterable<String> get cancelCalls => calls.where((c) => c.startsWith('cancel:'));
 }
 
-/// A [CustomSitesStore] whose writes fail.
+/// A [CustomSitesStore] whose writes throw.
 class ThrowingSitesStore extends CustomSitesStore {
   const ThrowingSitesStore();
 
   @override
-  Future<void> save(CustomSites sites) async => throw StateError('disk full');
+  Future<bool> save(CustomSites sites) async => throw StateError('disk full');
 }
 
 /// Real mock prefs whose writes can be made to fail per key prefix.

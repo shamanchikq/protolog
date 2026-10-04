@@ -253,6 +253,16 @@ String? logSite(CompoundType type, String site) =>
 /// Notes stored on a log: trimmed, null when blank.
 String? logNotes(String notes) => notes.trim().isEmpty ? null : notes.trim();
 
+/// The highest vial concentration the wizard accepts, per mL: mg/mL, or
+/// IU/mL for IU-native compounds (N5). No real vial comes close; the bound
+/// keeps a slipped "1e308" from being stored or multiplied into a dose.
+const double maxConcentrationPerMl = 100000;
+
+/// Whether [concentration] is over [maxConcentrationPerMl] (infinity
+/// included). Null or non-positive means "unset", not too high.
+bool isConcentrationTooHigh(double? concentration) =>
+    concentration != null && concentration > maxConcentrationPerMl;
+
 /// What confirming a new log produces.
 class NewLog {
   const NewLog({required this.injection, required this.compoundUpsert});
@@ -272,7 +282,9 @@ class NewLog {
 /// none, one is materialized from [compound] under [adoptionId]. A
 /// concentration typed or calculated in the wizard
 /// ([concentrationDraft]) is baked into that copy and written back only when
-/// it changed. The copy keeps its own unit: [unit] belongs to this log only
+/// it changed — and never when it's over [maxConcentrationPerMl] (N5; the
+/// wizard flags such a value, a direct dose doesn't need it). The copy
+/// keeps its own unit: [unit] belongs to this log only
 /// and goes into the snapshot, so logging in another unit neither reverts a
 /// Compound Editor choice nor flags a built-in as edited.
 NewLog buildNewLog({
@@ -286,11 +298,11 @@ NewLog buildNewLog({
   required double? concentrationDraft,
   required DateTime now,
 }) {
+  final draft = isConcentrationTooHigh(concentrationDraft) ? null : concentrationDraft;
   final existing = userCopyOf(compound, userCompounds);
   final CompoundDefinition compDef;
   final CompoundDefinition? upsert;
   if (existing != null) {
-    final draft = concentrationDraft;
     if (draft != null && draft != existing.concentration) {
       compDef = existing.copyWith(concentration: draft);
       upsert = compDef;
@@ -312,7 +324,7 @@ NewLog buildNewLog({
       unit: compound.unit,
       colorValue: compound.colorValue,
       isCustom: compound.isCustom,
-      concentration: concentrationDraft ?? compound.concentration,
+      concentration: draft ?? compound.concentration,
     );
     upsert = compDef;
   }

@@ -55,17 +55,21 @@ class SelectedCompoundChip extends StatelessWidget {
   final double? concentration;
   final VoidCallback? onChange;
 
+  /// Live base → color resolver (see [wizardCompoundColor]).
+  final Color Function(String base)? colorResolver;
+
   const SelectedCompoundChip({
     super.key,
     required this.compound,
     required this.concentration,
     required this.onChange,
+    this.colorResolver,
   });
 
   @override
   Widget build(BuildContext context) {
     final c = compound;
-    final color = wizardCompoundColor(c);
+    final color = wizardCompoundColor(c, colorResolver);
     final esterPart = (c.type == CompoundType.steroid &&
             c.ester.isNotEmpty &&
             c.ester.toLowerCase() != 'none')

@@ -55,25 +55,35 @@ String _siteKey(String site) => site.trim().toLowerCase();
 /// SharedPreferences persistence for [CustomSites]: one JSON string list per
 /// route under [imKey] / [subQKey].
 class CustomSitesStore {
-  const CustomSitesStore();
+  const CustomSitesStore({Future<SharedPreferences> Function() prefs = SharedPreferences.getInstance})
+      : _prefs = prefs;
+
+  /// Test seam: the preferences instance (the app's by default).
+  final Future<SharedPreferences> Function() _prefs;
 
   static const imKey = 'customSitesIM';
   static const subQKey = 'customSitesSubQ';
 
   /// Stored sites. A missing or unreadable value loads as an empty list.
   Future<CustomSites> load() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     return CustomSites(
       im: decodeSiteList(prefs.get(imKey)),
       subQ: decodeSiteList(prefs.get(subQKey)),
     );
   }
 
-  /// Writes both routes' lists.
-  Future<void> save(CustomSites sites) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(imKey, jsonEncode(sites.im));
-    await prefs.setString(subQKey, jsonEncode(sites.subQ));
+  /// Writes both routes' lists. False if either write was refused or
+  /// threw — callers report it like any failed save.
+  Future<bool> save(CustomSites sites) async {
+    try {
+      final prefs = await _prefs();
+      final im = await prefs.setString(imKey, jsonEncode(sites.im));
+      final subQ = await prefs.setString(subQKey, jsonEncode(sites.subQ));
+      return im && subQ;
+    } catch (_) {
+      return false;
+    }
   }
 }
 

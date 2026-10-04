@@ -12,11 +12,16 @@ import 'package:protolog_tracker/services/backup_io.dart';
 import 'package:protolog_tracker/ui/views/add_injection_wizard.dart';
 import 'package:protolog_tracker/ui/views/calendar_page.dart';
 import 'package:protolog_tracker/ui/views/compound_detail_page.dart';
+import 'package:protolog_tracker/ui/views/dashboard_view.dart';
 import 'package:protolog_tracker/ui/views/library_page.dart';
+import 'package:protolog_tracker/ui/views/reminder_editor_page.dart';
 import 'package:protolog_tracker/ui/views/reminders_page.dart';
+import 'package:protolog_tracker/ui/widgets/library_row.dart';
+import 'package:protolog_tracker/ui/widgets/swimlane_card.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/fakes.dart';
+import 'support/finders.dart';
 
 // End-to-end checks of MainScreen's load, mutation and notification paths
 // against mocked prefs.
@@ -71,6 +76,15 @@ class _PickedBackup extends BackupIO {
 
   @override
   Future<String?> pickFile() async => text;
+}
+
+/// BackupIO that records the share request instead of opening the sheet.
+class _SharedBackup extends BackupIO {
+  _SharedBackup() : super(AppStore());
+  final origins = <Rect?>[];
+
+  @override
+  Future<void> share(AppCollections current, {Rect? origin}) async => origins.add(origin);
 }
 
 const _testE = CompoundDefinition(
@@ -439,5 +453,193 @@ void main() {
 
     expect(find.textContaining("Notifications couldn't start"), findsOneWidget);
     expect(backend.calls, ['init']);
+  });
+
+  testWidgets('a recolored built-in shows on every surface, routes included (B26)',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(800, 3000);
+    addTearDown(tester.view.reset);
+    final recolored =
+        BASE_LIBRARY['Testosterone Enanthate']!.copyWith(colorValue: userColor.toARGB32());
+    SharedPreferences.setMockInitialValues({
+      'compounds': jsonEncode([recolored.toJson()]),
+      'reminders': jsonEncode([_dueReminder(_anchor())]),
+    });
+    await _bootFake(tester);
+    final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
+    Finder userColored(Type on) =>
+        find.descendant(of: find.byType(on), matching: coloredWith(userColor));
+
+    await tester.tap(find.text('Library').first);
+    await _settle(tester);
+    expect(userColored(LibraryRow), findsWidgets);
+    tester.widget<LibraryPage>(find.byType(LibraryPage)).onOpenDetail(recolored);
+    await _settle(tester);
+    expect(userColored(CompoundDetailPage), findsOneWidget);
+    nav.pop();
+    await tester.pump(const Duration(seconds: 1)); // the route's exit transition
+    await _settle(tester);
+
+    await tester.tap(find.text('Reminders').first);
+    await _settle(tester);
+    expect(userColored(RemindersPage), findsWidgets);
+    RemindersPage page() => tester.widget<RemindersPage>(find.byType(RemindersPage));
+    final reminder = page().reminders.single;
+
+    page().onEditReminder(reminder);
+    await _settle(tester);
+    expect(userColored(ReminderEditorPage), findsOneWidget);
+    nav.pop();
+    await tester.pump(const Duration(seconds: 1)); // the route's exit transition
+    await _settle(tester);
+
+    page().onLogNow(reminder);
+    await _settle(tester);
+    expect(userColored(AddInjectionWizard), findsOneWidget);
+  });
+
+  testWidgets('dashboard rebuilds keep one resolver and swimlane card until data changes (E2)',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await _bootFake(tester);
+    final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
+    DashboardView dash() => tester.widget<DashboardView>(find.byType(DashboardView));
+    SwimlaneCard lanes() => tester.widget<SwimlaneCard>(find.byType(SwimlaneCard));
+    final resolver = dash().colorResolver;
+    final card = lanes();
+
+    // Unrelated rebuilds: a chart setting, a blocked-notifications refresh.
+    dash().onSettingsChanged(const GraphSettings(
+        normalized: true, cumulative: false, timeRange: 'zoom'));
+    await _settle(tester);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _settle(tester);
+    expect(dash().settings.timeRange, 'zoom');
+    expect(dash().colorResolver, same(resolver), reason: 'the painter compares it by identity');
+    expect(lanes(), same(card));
+
+    // A recolor saved from the wizard: a new resolver, with the new color.
+    await tester.tap(find.text('Log dose'));
+    await _settle(tester);
+    final wizard = tester.widget<AddInjectionWizard>(find.byType(AddInjectionWizard));
+    final te = BASE_LIBRARY['Testosterone Enanthate']!;
+    wizard.addUserCompound(te.copyWith(colorValue: userColor.toARGB32()));
+    await _settle(tester);
+    expect(wizard.colorResolver!('Testosterone'), userColor, reason: 'routes read it live');
+    // A logged dose: the lanes resample.
+    wizard.onAdd(
+        Injection(id: 'i1', compoundId: te.id, date: DateTime.now(), dosage: 250, snapshot: te),
+        false);
+    nav.pop();
+    await tester.pump(const Duration(seconds: 1));
+    await _settle(tester);
+
+    expect(dash().colorResolver, isNot(same(resolver)));
+    expect(dash().colorResolver('Testosterone'), userColor);
+    expect(lanes(), isNot(same(card)));
+    expect(lanes().injections, hasLength(1));
+  });
+
+  group('saving the reminder editor applies to the current reminder', () {
+    Future<(FakeNotificationBackend, RemindersPage Function())> openEditor(
+        WidgetTester tester, Map<String, Object?> reminder) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(800, 2000);
+      addTearDown(tester.view.reset);
+      SharedPreferences.setMockInitialValues({'reminders': jsonEncode([reminder])});
+      final backend = await _bootFake(tester);
+      await tester.tap(find.text('Reminders').first);
+      await _settle(tester);
+      RemindersPage page() =>
+          tester.widget<RemindersPage>(find.byType(RemindersPage, skipOffstage: false));
+      page().onEditReminder(page().reminders.single);
+      await tester.pump(const Duration(seconds: 1)); // the route's entry transition
+      await _settle(tester);
+      expect(find.text('Edit reminder'), findsOneWidget);
+      return (backend, page);
+    }
+
+    // Saves the open editor. The "Skipped …" snackbar shows over the
+    // editor's save bar, so it goes first.
+    Future<void> save(WidgetTester tester) async {
+      tester.state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger)).removeCurrentSnackBar();
+      await tester.pump();
+      await tester.tap(find.text('Save reminder'));
+      await tester.pump(const Duration(seconds: 1));
+      await _settle(tester);
+      expect(find.text('Edit reminder'), findsNothing, reason: 'saved and closed');
+    }
+
+    testWidgets('an unchanged schedule keeps an advance made while it was open', (tester) async {
+      final anchor = _anchor();
+      final (backend, _) = await openEditor(tester, _dueReminder(anchor));
+      backend.onTap!('r1', 'skip'); // from the shade, editor still open
+      await _settle(tester);
+      final skipped = anchor.add(const Duration(hours: 84));
+      final prefs = await SharedPreferences.getInstance();
+      expect(DateTime.parse(_storedReminder(prefs)['anchorDate'] as String), skipped);
+
+      await save(tester);
+      expect(DateTime.parse(_storedReminder(prefs)['anchorDate'] as String), skipped,
+          reason: 'not the anchor the editor was opened with');
+      expect(backend.pending[500]!.when, skipped);
+    });
+
+    testWidgets('a changed schedule is saved as edited', (tester) async {
+      final anchor = _anchor();
+      final (backend, _) = await openEditor(tester, _dueReminder(anchor));
+      backend.onTap!('r1', 'skip');
+      await _settle(tester);
+
+      await tester.tap(find.text('+')); // every 3.5 → 4 days
+      await tester.pump();
+      await save(tester);
+      final stored = _storedReminder(await SharedPreferences.getInstance());
+      expect(stored['intervalDays'], 4.0);
+      expect(DateTime.parse(stored['anchorDate'] as String), anchor,
+          reason: 'the new rhythm starts from the first dose the editor showed');
+    });
+
+    testWidgets("a custom reminder keeps the slot skipped while it was open", (tester) async {
+      final (_, page) = await openEditor(tester, {
+        ..._reminderNoSeed,
+        'id': 'c1',
+        'compoundBase': 'BPC-157',
+        'compoundEster': 'None',
+        'scheduleMode': 'custom',
+        'intervalDays': 0,
+        'customSlots': [for (var d = 1; d <= 7; d++) {'weekday': d, 'hour': 9, 'minute': 0}],
+        'notificationSeed': 700,
+      });
+      page().onSkip(page().reminders.single); // in-app Skip of the next slot
+      await _settle(tester);
+      final prefs = await SharedPreferences.getInstance();
+      final acked = _storedReminder(prefs)['acknowledgedUntil'] as String?;
+      expect(acked, isNotNull);
+
+      await save(tester);
+      expect(_storedReminder(prefs)['acknowledgedUntil'], acked,
+          reason: 'saving used to drop the acknowledgement');
+      expect(_storedReminder(prefs)['customSlots'], hasLength(7));
+    });
+  });
+
+  testWidgets('a backup started from the Library anchors the share sheet to its button (D4)',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final backup = _SharedBackup();
+    await tester.pumpWidget(MaterialApp(
+        home: MainScreen(notificationBackend: FakeNotificationBackend(), backup: backup)));
+    await _settle(tester);
+    await tester.tap(find.text('Library').first);
+    await _settle(tester);
+
+    await tester.tap(find.text('Import / export'));
+    await _settle(tester);
+    await tester.tap(find.text('Back up everything to file…'));
+    await _settle(tester);
+    expect(backup.origins, [tester.getRect(find.byType(PopupMenuButton<String>))]);
   });
 }

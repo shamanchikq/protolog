@@ -241,11 +241,11 @@ class AppStore {
   /// data reads as empty).
   Future<CustomSites> readCustomSites() => _sites.load();
 
-  /// Writes both lists through [CustomSitesStore]; false if that threw.
+  /// Writes both lists through [CustomSitesStore]; false if a write was
+  /// refused or threw.
   Future<bool> writeCustomSites(CustomSites sites) async {
     try {
-      await _sites.save(sites);
-      return true;
+      return await _sites.save(sites);
     } catch (_) {
       return false;
     }

@@ -5,6 +5,7 @@ import 'package:protolog_tracker/data.dart';
 import 'package:protolog_tracker/models.dart';
 import 'package:protolog_tracker/ui/views/compound_detail_page.dart';
 
+import '../support/finders.dart';
 import 'real_fonts.dart';
 
 const _custom = CompoundDefinition(
@@ -153,6 +154,53 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Delete Testium Enanthate?'), findsOneWidget);
       expect(find.textContaining('reminder'), findsNothing);
+    });
+  });
+
+  group('hero color (B26)', () {
+    final te = BASE_LIBRARY['Testosterone Enanthate']!;
+
+    testWidgets('comes from the live resolver, read again after an edit', (tester) async {
+      Color color = Colors.grey;
+      await tester.pumpWidget(MaterialApp(
+        home: CompoundDetailPage(
+          compound: te,
+          injections: const [],
+          onTabChanged: (_) {},
+          // The host saves the recolor; its resolver now answers with it.
+          openEditor: (c) async {
+            color = userColor;
+            return c.copyWith(colorValue: userColor.toARGB32());
+          },
+          onDelete: () {},
+          onLogInjection: (_) {},
+          colorResolver: (base) => base == 'Testosterone' ? color : Colors.black,
+        ),
+      ));
+      expect(coloredWith(Colors.grey), findsOneWidget);
+      expect(coloredWith(userColor), findsNothing);
+
+      await tester.tap(find.text('Edit'));
+      await tester.pumpAndSettle();
+      expect(coloredWith(userColor), findsOneWidget);
+      expect(coloredWith(Colors.grey), findsNothing);
+    });
+
+    testWidgets('without a resolver: palette for the base, else the stored color',
+        (tester) async {
+      await _pump(tester);
+      expect(coloredWith(Color(_custom.colorValue)), findsOneWidget);
+      await tester.pumpWidget(MaterialApp(
+        home: CompoundDetailPage(
+          compound: te,
+          injections: const [],
+          onTabChanged: (_) {},
+          openEditor: (_) async => null,
+          onDelete: () {},
+          onLogInjection: (_) {},
+        ),
+      ));
+      expect(coloredWith(const Color(0xFF5DC59C)), findsOneWidget);
     });
   });
 }

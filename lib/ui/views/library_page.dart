@@ -13,7 +13,11 @@ class LibraryPage extends StatefulWidget {
   final List<Injection> injections;
   final VoidCallback onExport;
   final VoidCallback onImport;
-  final VoidCallback onBackup;
+
+  /// "Back up everything to file…", with the global rect of the menu button
+  /// it came from (null if it couldn't be measured) — the iPad share
+  /// popover needs an anchor (D4).
+  final void Function(Rect? origin) onBackup;
   final VoidCallback onRestore;
   final void Function(CompoundDefinition compound) onOpenDetail;
   final VoidCallback onOpenCreate;
@@ -21,6 +25,11 @@ class LibraryPage extends StatefulWidget {
   /// "Now" for protocol membership and "used ago"; the real clock when null
   /// (tests pin it).
   final DateTime? now;
+
+  /// Live base → display color (MainScreen's resolver), so a library recolor
+  /// shows on the row stripes too (B26). Without one, the static palette
+  /// and then the compound's stored color.
+  final Color Function(String base)? colorResolver;
 
   const LibraryPage({
     super.key,
@@ -33,6 +42,7 @@ class LibraryPage extends StatefulWidget {
     required this.onOpenDetail,
     required this.onOpenCreate,
     this.now,
+    this.colorResolver,
   });
 
   @override
@@ -166,7 +176,9 @@ class _LibraryPageState extends State<LibraryPage> {
       children.add(LibraryRow(
         name: displayName(c),
         meta: metaLineFor(c),
-        stripeColor: AppTheme.compoundColor(c.base) ?? Color(c.colorValue),
+        stripeColor: widget.colorResolver?.call(c.base) ??
+            AppTheme.compoundColor(c.base) ??
+            Color(c.colorValue),
         isCustom: c.isCustom,
         usedAgo: usedAgo,
         onTap: () => widget.onOpenDetail(c),
@@ -190,7 +202,7 @@ class _Header extends StatelessWidget {
   final String statsLine;
   final VoidCallback onExport;
   final VoidCallback onImport;
-  final VoidCallback onBackup;
+  final void Function(Rect? origin) onBackup;
   final VoidCallback onRestore;
   final VoidCallback onCreate;
   const _Header({
@@ -242,7 +254,7 @@ class _Header extends StatelessWidget {
 class _ImportExportPill extends StatelessWidget {
   final VoidCallback onExport;
   final VoidCallback onImport;
-  final VoidCallback onBackup;
+  final void Function(Rect? origin) onBackup;
   final VoidCallback onRestore;
   const _ImportExportPill({
     required this.onExport,
@@ -264,7 +276,7 @@ class _ImportExportPill extends StatelessWidget {
       onSelected: (v) {
         if (v == 'export') onExport();
         if (v == 'import') onImport();
-        if (v == 'backup') onBackup();
+        if (v == 'backup') onBackup(_globalRect(context));
         if (v == 'restore') onRestore();
       },
       itemBuilder: (_) => [
@@ -293,6 +305,14 @@ class _ImportExportPill extends StatelessWidget {
       child: const LabPill(label: 'Import / export'),
     );
   }
+}
+
+/// Where the widget [context] belongs to sits on screen, or null when it
+/// isn't laid out.
+Rect? _globalRect(BuildContext context) {
+  final box = context.findRenderObject();
+  if (box is! RenderBox || !box.attached || !box.hasSize) return null;
+  return box.localToGlobal(Offset.zero) & box.size;
 }
 
 class _FilterStrip extends StatelessWidget {

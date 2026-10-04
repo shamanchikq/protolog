@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:ui' show Color;
 import '../models.dart';
-import '../ui/format.dart';
+import '../format.dart';
 import 'calendar.dart';
 
 const _msPerDay = 86400000;

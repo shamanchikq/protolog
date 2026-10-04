@@ -124,6 +124,41 @@ void main() {
     });
   });
 
+  group('renamed bases (G7)', () {
+    const oldExport = '''
+| Date | Compound | Ester | Dosage | Unit | Site | Notes |
+|------|----------|-------|--------|------|------|-------|
+| 03/06/2026 09:00 | Anastrazole |  | 0.5 | mg |  | e2 high |
+''';
+
+    test('an old export\'s "Anastrazole" imports as the Anastrozole compound', () {
+      final parsed = parseMarkdownLog(oldExport, userCompounds: const [], existing: const []);
+      expect(parsed, hasLength(1));
+      final inj = parsed.single;
+      expect(inj.snapshot.base, 'Anastrozole');
+      expect(inj.compoundId, 'Anastrozole');
+      expect(inj.snapshot.id, 'Anastrozole');
+      expect(inj.snapshot.type, CompoundType.ancillary);
+      expect(inj.notes, 'e2 high');
+    });
+
+    test('it matches a user override of the new spelling', () {
+      const override = CompoundDefinition(
+        id: 'Anastrozole', base: 'Anastrozole', ester: 'None',
+        type: CompoundType.ancillary, graphType: GraphType.activeWindow,
+        halfLife: 2.5, timeToPeak: 0.5, ratio: 1, unit: Unit.mg, colorValue: 0xFFD27A6B,
+      );
+      final parsed = parseMarkdownLog(oldExport, userCompounds: const [override], existing: const []);
+      expect(parsed.single.snapshot.halfLife, 2.5);
+    });
+
+    test('re-importing it next to the migrated entry is a duplicate', () {
+      final first = parseMarkdownLog(oldExport, userCompounds: const [], existing: const []);
+      final again = parseMarkdownLog(oldExport, userCompounds: const [], existing: first);
+      expect(again, isEmpty);
+    });
+  });
+
   group('import ids are unique across imports (B21)', () {
     const testC = CompoundDefinition(
       id: 'test_c', base: 'Testosterone', ester: 'Cypionate',

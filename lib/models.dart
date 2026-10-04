@@ -179,15 +179,20 @@ class Injection {
 class GraphSettings {
   final bool normalized;
   final bool cumulative;
-  final bool showPeptides;
   final String timeRange;
 
   const GraphSettings({
     required this.normalized,
     required this.cumulative,
-    required this.showPeptides,
     required this.timeRange
   });
+
+  GraphSettings copyWith({bool? normalized, bool? cumulative, String? timeRange}) =>
+      GraphSettings(
+        normalized: normalized ?? this.normalized,
+        cumulative: cumulative ?? this.cumulative,
+        timeRange: timeRange ?? this.timeRange,
+      );
 
   @override
   bool operator ==(Object other) =>
@@ -196,40 +201,57 @@ class GraphSettings {
               runtimeType == other.runtimeType &&
               normalized == other.normalized &&
               cumulative == other.cumulative &&
-              showPeptides == other.showPeptides &&
               timeRange == other.timeRange;
 
   @override
-  int get hashCode => Object.hash(normalized, cumulative, showPeptides, timeRange);
+  int get hashCode => Object.hash(normalized, cumulative, timeRange);
 }
 
 // --- View Models for Painting ---
 
 class ComputedGraphData {
+  /// The settings this data was computed with. Painters render from these
+  /// (range, "% of peak", Σ total), never from the live selection: while a
+  /// new `compute()` is pending the dashboard still shows the previous
+  /// result, and drawing it with the new settings mislabels it (B40).
+  final GraphSettings settings;
+
+  /// Steroid / oral curves, one per base, plus the Σ total
+  /// ([totalCurveName]) when computed with `settings.cumulative`.
   final List<CurveData> curves;
-  final List<PeptideLaneData> peptideLanes;
-  final List<String> laneLabels;
   final double maxMg;
+
+  /// Right-axis scale for oral curves. Floored by the engine so a tiny oral
+  /// dose still gets a readable axis — so it says nothing about whether an
+  /// oral curve exists; see [hasOralCurve].
   final double maxOralMg;
   final DateTime startDate;
   final DateTime endDate;
   final int totalDurationMs;
-  final int laneCount;
   final List<InjectionMarkerData> injectionMarkers;
 
   ComputedGraphData({
+    required this.settings,
     required this.curves,
-    required this.peptideLanes,
-    required this.laneLabels,
     required this.maxMg,
     required this.maxOralMg,
     required this.startDate,
     required this.endDate,
     required this.totalDurationMs,
-    required this.laneCount,
     required this.injectionMarkers,
   });
+
+  /// True when at least one dose curve (not just the Σ total) is in range.
+  bool get hasDoseCurves => curves.any((c) => !c.isTotal);
+
+  /// True when an oral curve is in range — the only case the right (oral)
+  /// axis is drawn (B36).
+  bool get hasOralCurve => curves.any((c) => c.isOral);
 }
+
+/// [CurveData.baseName] of the Σ total curve ("Σ total" mode): the summed
+/// steroid level, drawn as a fill under the dose curves.
+const String totalCurveName = 'Total Androgens';
 
 class CurveData {
   final String baseName;
@@ -239,18 +261,9 @@ class CurveData {
 
   CurveData(this.baseName, this.colorValue, this.isOral, this.points);
   Color get color => Color(colorValue);
-}
 
-class PeptideLaneData {
-  final String baseName;
-  final int colorValue;
-  final int laneIndex;
-  final double startPct;
-  final double durationPct;
-  final GraphType type;
-
-  PeptideLaneData(this.baseName, this.colorValue, this.laneIndex, this.startPct, this.durationPct, this.type);
-  Color get color => Color(colorValue);
+  /// True for the Σ total curve ([totalCurveName]).
+  bool get isTotal => baseName == totalCurveName;
 }
 
 /// One lab result (F6): a measured blood marker at a point in time,

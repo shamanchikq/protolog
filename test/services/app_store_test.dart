@@ -359,6 +359,12 @@ void main() {
       final store = AppStore(sites: const ThrowingSitesStore());
       expect(await store.writeCustomSites(const CustomSites(subQ: ['x'])), isFalse);
     });
+
+    test('a refused write reports failure too', () async {
+      final prefs = await FlakyPrefs.withValues({}, refuse: {'customSites'});
+      final store = AppStore(sites: CustomSitesStore(prefs: () async => prefs));
+      expect(await store.writeCustomSites(const CustomSites(subQ: ['x'])), isFalse);
+    });
   });
 
   test('setAsideData returns only set-aside copies of data collections', () async {

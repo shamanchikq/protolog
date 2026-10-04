@@ -129,7 +129,7 @@ void main() {
     for (final cumulative in [false, true]) {
       test('$range (Σ $cumulative): optimized graph == brute-force reference (E1)', () async {
         final settings = GraphSettings(
-            normalized: false, cumulative: cumulative, showPeptides: true, timeRange: range);
+            normalized: false, cumulative: cumulative, timeRange: range);
         final g = await computeGraphData(IsolateInput(log, settings), now: now);
         final ref = _reference(log, g, steps[range]!);
 

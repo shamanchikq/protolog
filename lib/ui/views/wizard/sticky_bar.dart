@@ -22,8 +22,8 @@ String _factor(double f) =>
 
 /// Bottom bar of the details step: the linked-reminder banner (if any), a
 /// "LOGGING 250 mg · glute R" summary and the Confirm button, which is inert
-/// until [doseText] parses to a positive dose. A soft [doseWarning] (G5)
-/// sits above the summary; it never blocks Confirm.
+/// until [doseText] parses to a positive dose, and while [submitBlocked]. A
+/// soft [doseWarning] (G5) sits above the summary; it never blocks Confirm.
 class WizardStickyBar extends StatelessWidget {
   final CompoundDefinition? compound;
   final String doseText;
@@ -34,6 +34,10 @@ class WizardStickyBar extends StatelessWidget {
   /// Shown above the summary when the dose looks unusual, e.g. "That's 10×
   /// your last dose (250 mcg)" (see [unusualDoseMessage]).
   final String? doseWarning;
+
+  /// Holds Confirm back while an input the wizard flags inline is invalid
+  /// (N5: a concentration over the limit in By-volume mode).
+  final bool submitBlocked;
 
   /// The reminder this log can advance (null in edit mode).
   final Reminder? linkedReminder;
@@ -49,6 +53,7 @@ class WizardStickyBar extends StatelessWidget {
     required this.site,
     required this.isEdit,
     this.doseWarning,
+    this.submitBlocked = false,
     required this.linkedReminder,
     required this.advanceReminder,
     required this.onToggleAdvance,
@@ -60,6 +65,7 @@ class WizardStickyBar extends StatelessWidget {
     final c = compound;
     final doseVal = parseFlexibleDouble(doseText) ?? 0;
     final hasDose = doseVal > 0;
+    final canSubmit = hasDose && !submitBlocked;
     final isPillForm = c != null && isPillFormType(c.type);
     final showSite = c != null && !isPillForm;
     final siteShort = (showSite && site.isNotEmpty)
@@ -90,7 +96,12 @@ class WizardStickyBar extends StatelessWidget {
                 Text(doseWarning!, style: AppTheme.sans(size: 11.5, color: AppTheme.warn)),
                 const SizedBox(height: 8),
               ],
-              _buildSummaryRow(hasDose: hasDose, doseVal: doseVal, siteShort: siteShort, isPillForm: isPillForm),
+              _buildSummaryRow(
+                  hasDose: hasDose,
+                  canSubmit: canSubmit,
+                  doseVal: doseVal,
+                  siteShort: siteShort,
+                  isPillForm: isPillForm),
             ],
           ),
         ),
@@ -100,6 +111,7 @@ class WizardStickyBar extends StatelessWidget {
 
   Widget _buildSummaryRow({
     required bool hasDose,
+    required bool canSubmit,
     required double doseVal,
     required String siteShort,
     required bool isPillForm,
@@ -125,11 +137,11 @@ class WizardStickyBar extends StatelessWidget {
     );
     final button = GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: hasDose ? onSubmit : null,
+      onTap: canSubmit ? onSubmit : null,
       child: Container(
         alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(vertical: 12),
-        color: hasDose ? AppTheme.accent : AppTheme.surface2,
+        color: canSubmit ? AppTheme.accent : AppTheme.surface2,
         child: Text(
             isEdit
                 ? 'Save changes'
@@ -137,7 +149,7 @@ class WizardStickyBar extends StatelessWidget {
             style: AppTheme.sans(
                 size: 13,
                 weight: FontWeight.w600,
-                color: hasDose ? AppTheme.bg : AppTheme.fgDim,
+                color: canSubmit ? AppTheme.bg : AppTheme.fgDim,
                 letterSpacing: 0.3)),
       ),
     );

@@ -26,6 +26,11 @@ class CompoundDetailPage extends StatefulWidget {
   /// confirmation.
   final int linkedReminderCount;
 
+  /// Live base → display color (MainScreen's resolver), consulted on every
+  /// build so a recolor made in the editor shows on return (B26). Without
+  /// one, the static palette and then the compound's stored color.
+  final Color Function(String base)? colorResolver;
+
   const CompoundDetailPage({
     super.key,
     required this.compound,
@@ -35,6 +40,7 @@ class CompoundDetailPage extends StatefulWidget {
     required this.onDelete,
     required this.onLogInjection,
     this.linkedReminderCount = 0,
+    this.colorResolver,
   });
 
   @override
@@ -90,7 +96,7 @@ class _CompoundDetailPageState extends State<CompoundDetailPage> {
                   onDelete: () => _confirmDelete(context),
                 ),
                 const SizedBox(height: 22),
-                _Hero(compound: c),
+                _Hero(compound: c, colorResolver: widget.colorResolver),
                 const SizedBox(height: 24),
                 _PKSection(compound: c),
                 const SizedBox(height: 22),
@@ -236,12 +242,15 @@ class _ActionBar extends StatelessWidget {
 
 class _Hero extends StatelessWidget {
   final CompoundDefinition compound;
-  const _Hero({required this.compound});
+  final Color Function(String base)? colorResolver;
+  const _Hero({required this.compound, this.colorResolver});
 
   @override
   Widget build(BuildContext context) {
     final c = compound;
-    final color = AppTheme.compoundColor(c.base) ?? Color(c.colorValue);
+    final color = colorResolver?.call(c.base) ??
+        AppTheme.compoundColor(c.base) ??
+        Color(c.colorValue);
     final hasEster = c.ester.trim().isNotEmpty && c.ester.toLowerCase() != 'none';
     final typeLabel = _typeUpper(c.type);
     final microlabel = hasEster ? '$typeLabel · ${c.ester.toUpperCase()}' : typeLabel;

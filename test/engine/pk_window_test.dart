@@ -18,7 +18,6 @@ Injection _inj(CompoundDefinition c, DateTime when, double mg) => Injection(
 const _zoom = GraphSettings(
   normalized: false,
   cumulative: false,
-  showPeptides: true,
   timeRange: 'zoom',
 );
 
@@ -153,7 +152,7 @@ void main() {
           ],
         ];
         final settings = GraphSettings(
-            normalized: false, cumulative: true, showPeptides: true, timeRange: range);
+            normalized: false, cumulative: true, timeRange: range);
         final g = await calculateGraphData(IsolateInput(injections, settings));
         final clean = await calculateGraphData(IsolateInput([good], settings));
 
@@ -162,11 +161,10 @@ void main() {
         for (final c in g.curves) {
           expect(c.points.every((p) => p.dx.isFinite && p.dy.isFinite), isTrue, reason: c.baseName);
         }
-        // Bad records draw nothing: same curves, markers and lanes as the good dose alone.
+        // Bad records draw nothing: same curves and markers as the good dose alone.
         expect(g.curves.length, clean.curves.length);
         expect(g.injectionMarkers.length, clean.injectionMarkers.length);
         expect(g.injectionMarkers.every((m) => m.yLevel.isFinite), isTrue);
-        expect(g.peptideLanes, isEmpty);
         expect(g.maxMg, closeTo(clean.maxMg, 1e-9));
       });
     }

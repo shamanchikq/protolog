@@ -3,86 +3,35 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:protolog_tracker/models.dart';
 import 'package:protolog_tracker/ui/widgets/pk_graph_painter.dart';
 
+import 'pk_chart_test_support.dart';
+
 const _size = Size(400, 240);
-// skipPeptides → no lane area; chart height = size.height − 20 px bottom pad.
+// No lane area; chart height = size.height − 20 px bottom pad.
 const _chartHeight = 220.0;
-const _paddingRight = 20.0;
 
-GraphSettings _settings({bool normalized = false}) => GraphSettings(
-      normalized: normalized,
-      cumulative: false,
-      showPeptides: false,
-      timeRange: 'standard',
-    );
-
-ComputedGraphData _data({
-  List<CurveData> curves = const [],
-  List<InjectionMarkerData> markers = const [],
-  double maxMg = 11,
-  double maxOralMg = 6,
-}) {
-  final start = DateTime.now().subtract(const Duration(days: 28));
-  final end = start.add(const Duration(days: 63));
-  return ComputedGraphData(
-    curves: curves,
-    peptideLanes: const [],
-    laneLabels: const [],
-    maxMg: maxMg,
-    maxOralMg: maxOralMg,
-    startDate: start,
-    endDate: end,
-    totalDurationMs: end.difference(start).inMilliseconds,
-    laneCount: 0,
-    injectionMarkers: markers,
-  );
-}
-
-CurveData _curve(String base, double peak, {bool oral = false}) => CurveData(
-      base,
-      0xFF5DC59C,
-      oral,
-      [
-        const Offset(0, 0),
-        Offset(0.3, peak / 2),
-        Offset(0.5, peak),
-        const Offset(1, 0),
-      ],
-    );
-
-List<RecordedInvocation> _paint(ComputedGraphData data, GraphSettings s) {
-  final canvas = TestRecordingCanvas();
-  PKGraphPainter(graphData: data, settings: s, skipPeptides: true)
-      .paint(canvas, _size);
-  return canvas.invocations;
-}
-
-Iterable<Offset> _circles(List<RecordedInvocation> calls) => calls
-    .where((c) => c.invocation.memberName == #drawCircle)
-    .map((c) => c.invocation.positionalArguments[0] as Offset);
-
-Iterable<Offset> _paragraphs(List<RecordedInvocation> calls) => calls
-    .where((c) => c.invocation.memberName == #drawParagraph)
-    .map((c) => c.invocation.positionalArguments[1] as Offset);
+List<RecordedInvocation> _paint(ComputedGraphData data) =>
+    recordPaint(PKGraphPainter(graphData: data), _size);
 
 void main() {
   group('"% of peak" markers (B35)', () {
     test('sit on their curve, not on the baseline', () {
-      final data = _data(
-        curves: [_curve('Testosterone', 200)],
+      final data = pkData(
+        curves: [pkCurve('Testosterone', 200)],
         markers: [InjectionMarkerData(0.3, 100, false, 0xFF5DC59C, 'Testosterone')],
         maxMg: 220,
+        settings: pkSettings(normalized: true),
       );
-      final circles = _circles(_paint(data, _settings(normalized: true))).toList();
+      final circles = paintedCircles(_paint(data)).toList();
       expect(circles, hasLength(1));
       // 100 / curve peak 200 → half height.
       expect(circles.single.dy, closeTo(_chartHeight / 2, 0.01));
     });
 
     test('each marker normalizes against its own curve', () {
-      final data = _data(
+      final data = pkData(
         curves: [
-          _curve('Testosterone', 400),
-          _curve('Oxandrolone', 40, oral: true),
+          pkCurve('Testosterone', 400),
+          pkCurve('Oxandrolone', 40, oral: true),
         ],
         markers: [
           InjectionMarkerData(0.5, 400, false, 0xFF5DC59C, 'Testosterone'),
@@ -90,8 +39,9 @@ void main() {
         ],
         maxMg: 440,
         maxOralMg: 48,
+        settings: pkSettings(normalized: true),
       );
-      final circles = _circles(_paint(data, _settings(normalized: true))).toList();
+      final circles = paintedCircles(_paint(data)).toList();
       expect(circles[0].dy, closeTo(0, 0.01)); // at its own peak
       expect(circles[1].dy, closeTo(_chartHeight * 0.75, 0.01)); // 10 / 40
     });
@@ -99,28 +49,76 @@ void main() {
 
   group('oral axis (B36)', () {
     bool rightAxisDrawn(List<RecordedInvocation> calls) =>
-        _paragraphs(calls).any((o) => o.dx > _size.width - _paddingRight);
+        paintedParagraphs(calls).any((o) => o.dx > _size.width - pkPaddingRight);
 
     test('not drawn for a steroid-only chart (engine floors maxOralMg to 6)', () {
-      final data = _data(curves: [_curve('Testosterone', 300)], maxMg: 330, maxOralMg: 6);
-      expect(rightAxisDrawn(_paint(data, _settings())), isFalse);
+      final data = pkData(curves: [pkCurve('Testosterone', 300)], maxMg: 330, maxOralMg: 6);
+      expect(rightAxisDrawn(_paint(data)), isFalse);
     });
 
     test('drawn when an oral curve exists', () {
-      final data = _data(
-        curves: [_curve('Testosterone', 300), _curve('Oxandrolone', 4, oral: true)],
+      final data = pkData(
+        curves: [pkCurve('Testosterone', 300), pkCurve('Oxandrolone', 4, oral: true)],
         maxMg: 330,
         maxOralMg: 6,
       );
-      expect(rightAxisDrawn(_paint(data, _settings())), isTrue);
+      expect(rightAxisDrawn(_paint(data)), isTrue);
     });
 
     test('no y tick labels at all on an empty chart', () {
-      final calls = _paint(_data(), _settings());
+      final calls = _paint(pkData());
       // Only the five x-axis date labels, below the chart.
-      final labels = _paragraphs(calls).toList();
+      final labels = paintedParagraphs(calls).toList();
       expect(labels, hasLength(5));
       expect(labels.every((o) => o.dy > _chartHeight), isTrue);
+    });
+  });
+
+  group('draws with the settings the data was computed with (B40)', () {
+    test('x labels follow graphData.settings.timeRange', () {
+      final standard = pkData(curves: [pkCurve('Testosterone', 300)], maxMg: 330);
+      final zoom = pkData(
+        curves: [pkCurve('Testosterone', 300)],
+        maxMg: 330,
+        settings: pkSettings(timeRange: 'zoom'),
+      );
+      // The two label formats really differ in width, so the check below
+      // tells them apart.
+      expect(expectedXLabelWidths(standard, 'MMM d'),
+          isNot(expectedXLabelWidths(standard, 'EEE ha')));
+      expectWidths(xLabelWidths(_paint(standard), _size), expectedXLabelWidths(standard, 'MMM d'));
+      expectWidths(xLabelWidths(_paint(zoom), _size), expectedXLabelWidths(zoom, 'EEE ha'));
+    });
+
+    test('the Σ total fill follows graphData.settings.cumulative', () {
+      final total = pkCurve('Total Androgens', 300);
+      final withSigma = pkData(
+        curves: [total, pkCurve('Testosterone', 300)],
+        maxMg: 330,
+        settings: pkSettings(cumulative: true),
+      );
+      expect(paintedCumulativeFill(_paint(withSigma)), isTrue);
+      final withoutSigma = pkData(curves: [total, pkCurve('Testosterone', 300)], maxMg: 330);
+      expect(paintedCumulativeFill(_paint(withoutSigma)), isFalse);
+    });
+
+    test('"% of peak" follows graphData.settings.normalized', () {
+      final marker = [InjectionMarkerData(0.3, 150, false, 0xFF5DC59C, 'Testosterone')];
+      final absolute = pkData(curves: [pkCurve('Testosterone', 300)], markers: marker, maxMg: 330);
+      final normalized = pkData(
+        curves: [pkCurve('Testosterone', 300)],
+        markers: marker,
+        maxMg: 330,
+        settings: pkSettings(normalized: true),
+      );
+
+      final absCalls = _paint(absolute);
+      expectWidths(leftYLabelWidths(absCalls, _size), [for (final t in ['0', '100', '200', '300', '400']) tickTextWidth(t)]);
+      expect(paintedCircles(absCalls).single.dy, closeTo(_chartHeight * (1 - 150 / 400), 0.01));
+
+      final normCalls = _paint(normalized);
+      expectWidths(leftYLabelWidths(normCalls, _size), [for (final t in ['0%', '25%', '50%', '75%', '100%']) tickTextWidth(t)]);
+      expect(paintedCircles(normCalls).single.dy, closeTo(_chartHeight / 2, 0.01)); // 150 / own peak 300
     });
   });
 
@@ -136,12 +134,12 @@ void main() {
     });
 
     test('markers and curves scale against the nice max', () {
-      final data = _data(
-        curves: [_curve('Testosterone', 300)],
+      final data = pkData(
+        curves: [pkCurve('Testosterone', 300)],
         markers: [InjectionMarkerData(0.3, 100, false, 0xFF5DC59C, 'Testosterone')],
         maxMg: 330, // → axis max 400
       );
-      final circle = _circles(_paint(data, _settings())).single;
+      final circle = paintedCircles(_paint(data)).single;
       expect(circle.dy, closeTo(_chartHeight * (1 - 100 / 400), 0.01));
     });
   });

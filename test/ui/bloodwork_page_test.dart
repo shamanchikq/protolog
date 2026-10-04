@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:protolog_tracker/models.dart';
+import 'package:protolog_tracker/ui/theme.dart';
 import 'package:protolog_tracker/ui/views/bloodwork_page.dart';
 
 BloodworkEntry _e(String id, String marker, DateTime date, double value, String unit) =>
@@ -110,7 +111,7 @@ void main() {
     expect(find.text('120 pmol/L'), findsWidgets);
   });
 
-  testWidgets('PK overlay pill appears with injections and toggles cleanly', (tester) async {
+  testWidgets('PK overlay pill appears with injections and toggles the overlay drawing', (tester) async {
     const testE = CompoundDefinition(
       id: 'test_e', base: 'Testosterone', ester: 'Enanthate',
       type: CompoundType.steroid, graphType: GraphType.curve,
@@ -131,12 +132,43 @@ void main() {
     ];
     await pump(tester, injections: injections);
     expect(find.text('PK overlay'), findsOneWidget);
+
+    // The trend chart (Total T, May 1 → Jul 1; both doses fall inside it).
+    final trend = find.byWidgetPredicate(
+        (w) => w is CustomPaint && '${w.painter.runtimeType}' == '_TrendPainter');
+    expect(trend, findsOneWidget);
+    final testColor = AppTheme.compoundColor('Testosterone')!;
+    final bpcColor = AppTheme.compoundColor('BPC-157')!;
+    // Lane strips vary in alpha with activity; compare RGB only.
+    bool isBpcLane(Symbol method, List<dynamic> args) =>
+        method == #drawRect &&
+        ((args[1] as Paint).color.toARGB32() & 0xFFFFFF) == (bpcColor.toARGB32() & 0xFFFFFF);
+
+    // Off: only the warm marker line is stroked — no curve, no lanes.
+    expect(tester.renderObject(trend), paintsExactlyCountTimes(#drawPath, 1));
+    expect(tester.renderObject(trend), paints..path(color: AppTheme.warm));
+    expect(tester.renderObject(trend), paintsExactlyCountTimes(#drawRect, 0));
+
     await tester.tap(find.text('PK overlay'));
     await tester.pump();
     expect(tester.takeException(), isNull);
+    // On: the Testosterone curve (fill + stroke, in its palette color)
+    // behind the marker line, plus BPC-157 activity strips.
+    expect(
+      tester.renderObject(trend),
+      paints
+        ..path(color: testColor.withValues(alpha: 0.08))
+        ..path(color: testColor.withValues(alpha: 0.55))
+        ..path(color: AppTheme.warm),
+    );
+    expect(tester.renderObject(trend), paintsExactlyCountTimes(#drawPath, 3));
+    expect(tester.renderObject(trend), paints..something(isBpcLane));
+
     await tester.tap(find.text('PK overlay')); // toggle back off
     await tester.pump();
     expect(tester.takeException(), isNull);
+    expect(tester.renderObject(trend), paintsExactlyCountTimes(#drawPath, 1));
+    expect(tester.renderObject(trend), paintsExactlyCountTimes(#drawRect, 0));
   });
 
   testWidgets('initialMarker preselects; + Add saves through the dialog and fires onChanged',

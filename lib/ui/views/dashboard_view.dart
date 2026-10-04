@@ -8,8 +8,9 @@ import '../widgets/pk_chart_card.dart';
 import '../widgets/swimlane_card.dart';
 
 /// The Today tab: active-load hero, PK chart, peptide/ancillary swimlanes
-/// and the latest lab results. A plain view over MainScreen's state.
-class DashboardView extends StatelessWidget {
+/// and the latest lab results. A view over MainScreen's state; its only own
+/// state is the swimlane memo (E2).
+class DashboardView extends StatefulWidget {
   const DashboardView({
     super.key,
     required this.injections,
@@ -17,6 +18,7 @@ class DashboardView extends StatelessWidget {
     required this.graphData,
     required this.settings,
     required this.colorResolver,
+    this.injectionsRevision = 0,
     required this.now,
     required this.onSettingsChanged,
     required this.onAddBloodwork,
@@ -30,8 +32,15 @@ class DashboardView extends StatelessWidget {
   final Future<ComputedGraphData>? graphData;
   final GraphSettings settings;
 
-  /// Live base → display color (see MainScreen's resolver).
+  /// Live base → display color (see MainScreen's resolver). Pass the same
+  /// function until the catalogue changes: the chart repaints and the
+  /// swimlanes resample whenever it's a different one.
   final Color Function(String base) colorResolver;
+
+  /// The owner's change counter for [injections], which it mutates in place
+  /// (so neither identity nor length reveals an edited dose). Together they
+  /// decide when the swimlanes must resample.
+  final int injectionsRevision;
 
   /// The instant every card is drawn for.
   final DateTime now;
@@ -43,7 +52,49 @@ class DashboardView extends StatelessWidget {
   final ValueChanged<BloodworkEntry> onOpenBloodwork;
 
   @override
+  State<DashboardView> createState() => _DashboardViewState();
+}
+
+class _DashboardViewState extends State<DashboardView> {
+  /// "Now" may lag by up to this before the swimlanes are redrawn for it:
+  /// their today line and current levels don't visibly move in less.
+  static const _swimlaneNowTolerance = Duration(minutes: 1);
+
+  // E2: SwimlaneCard samples every lane's Bateman curve while building, so
+  // it gets a new widget only when its inputs change. Handing Flutter the
+  // identical instance otherwise (a chart range pill, a reminder or lab
+  // change, a permission refresh) skips its subtree entirely.
+  SwimlaneCard? _swimlanes;
+  int _swimlanesLength = 0;
+  int _swimlanesRevision = 0;
+
+  SwimlaneCard _swimlaneCard() {
+    final w = widget;
+    final cached = _swimlanes;
+    if (cached != null &&
+        identical(cached.injections, w.injections) &&
+        _swimlanesLength == w.injections.length &&
+        _swimlanesRevision == w.injectionsRevision &&
+        identical(cached.colorResolver, w.colorResolver) &&
+        w.now.difference(cached.now).abs() < _swimlaneNowTolerance) {
+      return cached;
+    }
+    _swimlanesLength = w.injections.length;
+    _swimlanesRevision = w.injectionsRevision;
+    return _swimlanes = SwimlaneCard(
+      injections: w.injections,
+      now: w.now,
+      colorResolver: w.colorResolver,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final injections = widget.injections;
+    final now = widget.now;
+    final colorResolver = widget.colorResolver;
+    final settings = widget.settings;
+    final onSettingsChanged = widget.onSettingsChanged;
     final load = activeInjectableLoad(injections: injections, now: now);
     final totalActive = load.fold<double>(0.0, (s, e) => s + e.activeMg);
     final breakdown = (load.toList()..sort((a, b) => b.activeMg.compareTo(a.activeMg)))
@@ -70,31 +121,23 @@ class DashboardView extends StatelessWidget {
           ),
           const SizedBox(height: 18),
           FutureBuilder<ComputedGraphData>(
-            future: graphData,
+            future: widget.graphData,
             builder: (context, snapshot) => PKChartCard(
               graphData: snapshot.data,
               settings: settings,
               colorResolver: colorResolver,
-              onRangeChanged: (range) => onSettingsChanged(GraphSettings(
-                normalized: settings.normalized,
-                cumulative: settings.cumulative,
-                showPeptides: settings.showPeptides,
-                timeRange: range,
-              )),
+              onRangeChanged: (range) =>
+                  onSettingsChanged(settings.copyWith(timeRange: range)),
               onSettingsChanged: onSettingsChanged,
             ),
           ),
           const SizedBox(height: 18),
-          SwimlaneCard(
-            injections: injections,
-            now: now,
-            colorResolver: colorResolver,
-          ),
+          _swimlaneCard(),
           const SizedBox(height: 18),
           BloodworkCard(
-            entries: bloodwork,
-            onCreate: onAddBloodwork,
-            onTap: onOpenBloodwork,
+            entries: widget.bloodwork,
+            onCreate: widget.onAddBloodwork,
+            onTap: widget.onOpenBloodwork,
           ),
         ],
       ),

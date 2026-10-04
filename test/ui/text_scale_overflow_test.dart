@@ -61,18 +61,16 @@ ComputedGraphData _graph() {
   final start = DateTime(2026, 9, 5);
   final end = DateTime(2026, 11, 7, 23, 59);
   return ComputedGraphData(
+    settings: const GraphSettings(normalized: false, cumulative: false, timeRange: 'standard'),
     curves: [
       CurveData('Testosterone', 0xFF5DC59C, false, const [Offset(0, 0), Offset(0.5, 300), Offset(1, 100)]),
       CurveData('Oxandrolone', 0xFFC9B062, true, const [Offset(0, 0), Offset(0.4, 30), Offset(1, 0)]),
     ],
-    peptideLanes: const [],
-    laneLabels: const [],
     maxMg: 330,
     maxOralMg: 36,
     startDate: start,
     endDate: end,
     totalDurationMs: end.difference(start).inMilliseconds,
-    laneCount: 0,
     injectionMarkers: const [],
   );
 }
@@ -102,7 +100,7 @@ void main() {
           PKChartCard(
             graphData: _graph(),
             settings: const GraphSettings(
-              normalized: false, cumulative: false, showPeptides: false, timeRange: 'standard',
+              normalized: false, cumulative: false, timeRange: 'standard',
             ),
             onRangeChanged: (_) {},
             onSettingsChanged: (_) {},
@@ -215,7 +213,7 @@ void main() {
         PKChartCard(
           graphData: _graph(),
           settings: const GraphSettings(
-            normalized: false, cumulative: false, showPeptides: false, timeRange: 'standard',
+            normalized: false, cumulative: false, timeRange: 'standard',
           ),
           onRangeChanged: (_) {},
           onSettingsChanged: (_) {},

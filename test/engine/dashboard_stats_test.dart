@@ -207,16 +207,4 @@ void main() {
       expect(entries, isEmpty);
     });
   });
-
-  group('statRelevanceWindowDays', () {
-    test('floors at 30 days for short half-lives and event compounds', () {
-      expect(statRelevanceWindowDays(0.1), 30.0);
-      expect(statRelevanceWindowDays(3.0), 30.0); // 3*8=24 < 30
-    });
-
-    test('uses halfLife*8 for long esters', () {
-      expect(statRelevanceWindowDays(5.0), 40.0);
-      expect(statRelevanceWindowDays(21.0), 168.0); // Test Undecanoate
-    });
-  });
 }

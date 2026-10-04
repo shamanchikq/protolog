@@ -1,5 +1,8 @@
+import 'dart:math' as math;
+
 import '../models.dart';
 import '../data.dart';
+import 'calendar.dart';
 import 'compute_engine.dart';
 
 /// Date of the last dose of (base, ester) actually taken — at or before
@@ -36,22 +39,38 @@ DateTime? _latestDoseFor(
 /// "4h ago" when <24h, "Nd ago" otherwise, "—" for null. Always integer.
 /// A future date (a planned dose) reads "in 5h" / "in 2d" — at least
 /// "in 1h" — never a negative age.
+///
+/// Days are counted on the wall clock ([_wallClockDaysBetween]), not as
+/// 24 h blocks, so a 23 h or 25 h DST day doesn't make "Nd ago" off by one.
 String formatUsedAgo(DateTime? when, {DateTime? now}) {
   if (when == null) return '—';
   final n = now ?? DateTime.now();
   if (when.isAfter(n)) {
     final ahead = when.difference(n);
     if (ahead.inHours < 24) return 'in ${ahead.inHours < 1 ? 1 : ahead.inHours}h';
-    return 'in ${ahead.inDays}d';
+    return 'in ${math.max(1, _wallClockDaysBetween(n, when))}d';
   }
   final diff = n.difference(when);
   if (diff.inHours < 24) {
     final h = diff.inHours;
     return '${h}h ago';
   }
-  final d = diff.inDays;
-  return '${d}d ago';
+  // ≥ 24 h elapsed is at least a day, even when a 25 h fall-back day keeps
+  // the wall clock short of a full one.
+  return '${math.max(1, _wallClockDaysBetween(when, n))}d ago';
 }
+
+/// Whole days from [from] to a later [to] as the wall clock counts them:
+/// the calendar days between their dates ([calendarDaysBetween]), less one
+/// when [to]'s time of day hasn't yet reached [from]'s. DST-safe.
+int _wallClockDaysBetween(DateTime from, DateTime to) {
+  final days = calendarDaysBetween(from, to);
+  return _timeOfDayMicros(to) < _timeOfDayMicros(from) ? days - 1 : days;
+}
+
+int _timeOfDayMicros(DateTime d) =>
+    (((d.hour * 60 + d.minute) * 60 + d.second) * 1000 + d.millisecond) * 1000 +
+    d.microsecond;
 
 /// True when the most-recent injection of `compound` (matched by base+ester)
 /// is within its PK-relevance window — the shared [relevanceWindowDays] rule
@@ -342,11 +361,6 @@ String _typeLabel(CompoundType t) {
       return 'Ancillary';
   }
 }
-
-/// True when `c` is a built-in (library) compound rather than a user-created
-/// custom. Built-ins keep `isCustom == false` even after the user edits their
-/// PK params (the edit is stored as a shadowing override in userCompounds).
-bool isBuiltIn(CompoundDefinition c) => !c.isCustom;
 
 /// BASE_LIBRARY map key of the built-in with this exact (base, ester), or
 /// null when there is none.

@@ -4,7 +4,12 @@ import '../theme.dart';
 import 'pk_graph_painter.dart';
 
 class PKChartCard extends StatelessWidget {
+  /// The latest computed chart, or null before the first one. It may lag
+  /// [settings] while a recompute is pending; the chart is drawn with the
+  /// settings it was computed with (`graphData.settings`, B40).
   final ComputedGraphData? graphData;
+
+  /// The live selection: drives the range / mode pills only.
   final GraphSettings settings;
   final ValueChanged<String> onRangeChanged;
   final ValueChanged<GraphSettings> onSettingsChanged;
@@ -53,23 +58,15 @@ class PKChartCard extends StatelessWidget {
                 _ModePill(
                   label: '% of peak',
                   active: settings.normalized,
-                  onTap: () => onSettingsChanged(GraphSettings(
-                    normalized: !settings.normalized,
-                    cumulative: settings.cumulative,
-                    showPeptides: settings.showPeptides,
-                    timeRange: settings.timeRange,
-                  )),
+                  onTap: () => onSettingsChanged(
+                      settings.copyWith(normalized: !settings.normalized)),
                 ),
                 const SizedBox(width: 6),
                 _ModePill(
                   label: 'Σ total',
                   active: settings.cumulative,
-                  onTap: () => onSettingsChanged(GraphSettings(
-                    normalized: settings.normalized,
-                    cumulative: !settings.cumulative,
-                    showPeptides: settings.showPeptides,
-                    timeRange: settings.timeRange,
-                  )),
+                  onTap: () => onSettingsChanged(
+                      settings.copyWith(cumulative: !settings.cumulative)),
                 ),
               ],
             ),
@@ -88,14 +85,12 @@ class PKChartCard extends StatelessWidget {
                             child: CustomPaint(
                               painter: PKGraphPainter(
                                 graphData: graphData!,
-                                settings: settings,
-                                skipPeptides: true,
                                 colorResolver: colorResolver ?? AppTheme.compoundColor,
                               ),
                             ),
                           ),
                         ),
-                        if (!graphData!.curves.any((c) => c.baseName != 'Total Androgens'))
+                        if (!graphData!.hasDoseCurves)
                           Positioned.fill(
                             // Inset to the plot area (painter pads 45 left, 20 right/bottom).
                             left: 45,

@@ -2,6 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:protolog_tracker/services/custom_sites_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/fakes.dart';
+
 void main() {
   const store = CustomSitesStore();
 
@@ -61,7 +63,8 @@ void main() {
 
   test('save writes both routes as JSON string lists', () async {
     SharedPreferences.setMockInitialValues({});
-    await store.save(const CustomSites(im: ['Lat L'], subQ: ['Love handle', 'Arm L']));
+    expect(await store.save(const CustomSites(im: ['Lat L'], subQ: ['Love handle', 'Arm L'])),
+        isTrue);
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('customSitesIM'), '["Lat L"]');
     expect(prefs.getString('customSitesSubQ'), '["Love handle","Arm L"]');
@@ -105,5 +108,26 @@ void main() {
     expect(matchingSite('Lat L', sites), 'Lat L');
     expect(matchingSite('Quad', sites), isNull);
     expect(matchingSite('', sites), isNull);
+  });
+
+  group('save reports a failed write instead of ignoring it', () {
+    const sites = CustomSites(im: ['Lat L'], subQ: ['Arm L']);
+
+    test('a refused write (setString false) is false', () async {
+      final prefs = await FlakyPrefs.withValues({}, refuse: {CustomSitesStore.subQKey});
+      final s = CustomSitesStore(prefs: () async => prefs);
+      expect(await s.save(sites), isFalse);
+      expect(prefs.writes, [CustomSitesStore.imKey, CustomSitesStore.subQKey]);
+    });
+
+    test('a throwing write is false, not an error', () async {
+      final prefs = await FlakyPrefs.withValues({}, throwOn: {CustomSitesStore.imKey});
+      expect(await CustomSitesStore(prefs: () async => prefs).save(sites), isFalse);
+    });
+
+    test('load reads through the same prefs', () async {
+      final prefs = await FlakyPrefs.withValues({'customSitesIM': '["Pec R"]'});
+      expect((await CustomSitesStore(prefs: () async => prefs).load()).im, ['Pec R']);
+    });
   });
 }

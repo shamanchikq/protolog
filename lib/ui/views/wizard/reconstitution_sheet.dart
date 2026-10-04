@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import '../../../models.dart';
 import '../../../utils.dart';
 import '../../../engine/dose_math.dart';
+import '../../../engine/injection_draft.dart';
 import '../../theme.dart';
+import 'wizard_widgets.dart';
 
 /// Opens the reconstitution calculator (amount per vial + diluent volume →
 /// concentration). Resolves to the concentration (per mL, in
@@ -67,10 +69,13 @@ class _ReconstitutionSheetState extends State<ReconstitutionSheet> {
     // At U100, 100 IU = 1 mL.
     final volMl = _volUnit == 'IU' ? mlFromSyringeUnits(volRaw) : volRaw;
     final conc = (mg > 0 && volMl > 0) ? (mg / volMl) : 0.0;
+    // N5: a result over the limit is shown but can't be used.
+    final tooHigh = isConcentrationTooHigh(conc);
+    final usable = conc > 0 && !tooHigh;
     // The "X per 10 IU" line is the syringe-reading hint, only useful when
     // the dose unit is mass (mcg). IU-native compounds dose in IU directly.
     // Expressed in the dose unit so it reads the same as the Amount field.
-    final per10 = (widget.isPeptide && widget.massUnitLabel == 'mg')
+    final per10 = (usable && widget.isPeptide && widget.massUnitLabel == 'mg')
         ? doseForVolume(
             volumeMl: mlFromSyringeUnits(10),
             concentration: conc,
@@ -144,22 +149,23 @@ class _ReconstitutionSheetState extends State<ReconstitutionSheet> {
                       const SizedBox(height: 4),
                       Text(iuLine, style: AppTheme.sans(size: 11, color: AppTheme.fgMute)),
                     ],
+                    if (tooHigh) ConcentrationTooHighNote(unitLabel: '${widget.massUnitLabel}/mL'),
                   ],
                 ),
               ),
               const SizedBox(height: 16),
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: conc > 0 ? () => Navigator.of(context).pop(conc) : null,
+                onTap: usable ? () => Navigator.of(context).pop(conc) : null,
                 child: Container(
                   alignment: Alignment.center,
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  color: conc > 0 ? AppTheme.accent : AppTheme.surface2,
+                  color: usable ? AppTheme.accent : AppTheme.surface2,
                   child: Text('Use this',
                       style: AppTheme.sans(
                           size: 13,
                           weight: FontWeight.w600,
-                          color: conc > 0 ? AppTheme.bg : AppTheme.fgDim,
+                          color: usable ? AppTheme.bg : AppTheme.fgDim,
                           letterSpacing: 0.3)),
                 ),
               ),

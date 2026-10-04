@@ -67,4 +67,20 @@ void main() {
       expect(parseFlexibleDouble('0.125'), 0.125);
     });
   });
+
+  group('formatDate', () {
+    final d = DateTime(2026, 6, 2, 15, 7); // a Tuesday
+
+    test('the patterns the app uses', () {
+      expect(formatDate(d, 'yyyy-MM-dd'), '2026-06-02');
+      expect(formatDate(d, 'MMM d'), 'Jun 2');
+      expect(formatDate(d, 'EEE ha'), 'Tue 3PM');
+      expect(formatDate(DateTime(2026, 6, 1, 0, 30), 'EEE ha'), 'Mon 12AM');
+      expect(formatDate(DateTime(2026, 6, 1, 12), 'EEE ha'), 'Mon 12PM');
+    });
+
+    test('an unknown pattern falls back to toString (no dd/MM mislabel)', () {
+      expect(formatDate(d, 'MM/dd HH:mm'), d.toString());
+    });
+  });
 }

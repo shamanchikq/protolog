@@ -18,18 +18,16 @@ double niceAxisMax(double max, {int ticks = 4}) {
   return step * magnitude * ticks;
 }
 
+/// Paints a [ComputedGraphData] using the settings it was computed with
+/// (`graphData.settings`: range, "% of peak", Σ total) — deliberately not
+/// the live selection, which may be newer than the data while a recompute
+/// is pending (B40).
 class PKGraphPainter extends CustomPainter {
   final ComputedGraphData graphData;
-  final GraphSettings settings;
-  final bool skipPeptides;
   final Color? Function(String baseName)? colorResolver;
-  final double peptideLaneHeight = 24.0;
-  final double leftLabelAreaWidth = 60.0;
 
   PKGraphPainter({
     required this.graphData,
-    required this.settings,
-    this.skipPeptides = false,
     this.colorResolver,
   });
 
@@ -40,23 +38,21 @@ class PKGraphPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final laneCount = skipPeptides ? 0 : graphData.laneLabels.length;
-    final topAreaHeight = skipPeptides ? 0.0 : math.max(40.0, (laneCount * peptideLaneHeight) + 20.0);
-    final graphHeight = size.height - topAreaHeight;
+    final settings = graphData.settings;
     final paddingLeft = 45.0;
     final paddingRight = 20.0;
     final paddingBottom = 20.0;
     final chartWidth = size.width - paddingLeft - paddingRight;
-    final chartHeight = graphHeight - paddingBottom;
+    final chartHeight = size.height - paddingBottom;
 
     final textPainter = TextPainter(textDirection: TextDirection.ltr);
 
-    // Value curves (the cumulative "Total Androgens" fill only exists on top
-    // of them). No curves → nothing to put on a y axis.
-    final hasCurves = graphData.curves.any((c) => c.baseName != 'Total Androgens');
-    // The engine floors maxOralMg to ≥ 6 even without orals, so the right
-    // axis keys off an actual oral curve rather than that value.
-    final hasOral = graphData.curves.any((c) => c.isOral);
+    // Dose curves (the Σ total fill only exists on top of them). No curves
+    // → nothing to put on a y axis.
+    final hasCurves = graphData.hasDoseCurves;
+    // maxOralMg is floored even without orals, so the right axis keys off
+    // an actual oral curve rather than that value (B36).
+    final hasOral = graphData.hasOralCurve;
     final leftMax = niceAxisMax(graphData.maxMg);
     final oralMax = niceAxisMax(graphData.maxOralMg);
     // "% of peak": every curve (and its markers) scales to its own max.
@@ -70,43 +66,6 @@ class PKGraphPainter extends CustomPainter {
         normMax[curve.baseName] = m > 0 ? m : 1.0;
       }
     }
-
-    if (!skipPeptides) {
-      final laneBgPaint = Paint()..color = const Color(0xFF0F172A).withValues(alpha: 0.5);
-      final RRect laneRect = RRect.fromRectAndRadius(Rect.fromLTWH(paddingLeft, 0, chartWidth, topAreaHeight), const Radius.circular(4));
-      canvas.drawRRect(laneRect, laneBgPaint);
-
-      for (int i = 0; i < graphData.laneLabels.length; i++) {
-        final name = graphData.laneLabels[i];
-        final colorValue = graphData.peptideLanes.firstWhere((l) => l.baseName == name, orElse: () => PeptideLaneData(name, 0xFF999999, 0, 0, 0, GraphType.event)).colorValue;
-        textPainter.text = TextSpan(text: name, style: TextStyle(color: Color(colorValue), fontSize: 9, fontWeight: FontWeight.bold));
-        textPainter.layout();
-        textPainter.paint(canvas, Offset(paddingLeft + 5, 5.0 + (i * peptideLaneHeight) + 2));
-      }
-
-      canvas.save();
-      canvas.clipRRect(laneRect);
-
-      for (var lane in graphData.peptideLanes) {
-        final x = paddingLeft + (lane.startPct * chartWidth);
-        final y = 5.0 + (lane.laneIndex * peptideLaneHeight);
-        final w = lane.durationPct * chartWidth;
-
-        if (x + w < paddingLeft || x > size.width) continue;
-
-        if (lane.type == GraphType.activeWindow) {
-          final rect = Rect.fromLTWH(x, y + 14, w, 6);
-          final paint = Paint()..shader = LinearGradient(colors: [lane.color.withValues(alpha: 0.95), lane.color.withValues(alpha: 0.45), lane.color.withValues(alpha: 0.12), lane.color.withValues(alpha: 0.0)], stops: const [0.0, 0.25, 0.5, 1.0]).createShader(rect);
-          canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(2)), paint);
-        } else {
-          canvas.drawCircle(Offset(x, y + 17), 3, Paint()..color = lane.color);
-        }
-      }
-      canvas.restore();
-    }
-
-    canvas.save();
-    canvas.translate(0, topAreaHeight);
 
     // Horizontal grid: solid baseline at y=chartHeight, dashed elsewhere.
     final gridPaintSolid = Paint()..color = AppTheme.border..strokeWidth = 1..style = PaintingStyle.stroke;
@@ -142,7 +101,7 @@ class PKGraphPainter extends CustomPainter {
 
 
     for (var curve in graphData.curves) {
-      if (curve.baseName == 'Total Androgens' && !settings.cumulative) continue;
+      if (curve.isTotal && !settings.cumulative) continue;
       final path = Path();
       if (curve.points.isNotEmpty) {
         final double maxY = settings.normalized ? normMax[curve.baseName]! : (curve.isOral ? oralMax : leftMax);
@@ -155,7 +114,7 @@ class PKGraphPainter extends CustomPainter {
           path.lineTo(x, y);
         }
       }
-      if (curve.baseName == 'Total Androgens') {
+      if (curve.isTotal) {
         path.lineTo(paddingLeft + chartWidth, chartHeight);
         path.lineTo(paddingLeft, chartHeight);
         path.close();
@@ -231,7 +190,6 @@ class PKGraphPainter extends CustomPainter {
       textPainter.paint(canvas, Offset(x - textPainter.width / 2, chartHeight + 6));
     }
 
-    canvas.restore();
     textPainter.dispose();
   }
 
@@ -256,7 +214,5 @@ class PKGraphPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant PKGraphPainter oldDelegate) =>
       oldDelegate.graphData != graphData ||
-      oldDelegate.settings != settings ||
-      oldDelegate.skipPeptides != skipPeptides ||
       oldDelegate.colorResolver != colorResolver;
 }

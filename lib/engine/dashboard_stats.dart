@@ -1,14 +1,5 @@
-import 'dart:math' as math;
-
 import '../models.dart';
 import 'compute_engine.dart';
-
-/// Days a compound's dashboard stat card stays visible after its latest dose.
-/// Floor of 30 days preserves "Nd ago" cards for short-lived/event compounds;
-/// halfLife × 8 keeps long esters (e.g. Test Undecanoate, t½ 21d) visible
-/// while still pharmacologically active.
-double statRelevanceWindowDays(double halfLife) => math.max(
-    30.0, (isUsableHalfLife(halfLife) ? halfLife : 0.0) * relevanceHalfLives);
 
 /// One row of the LoadHero breakdown: an injectable base and its summed
 /// active level at a point in time.
