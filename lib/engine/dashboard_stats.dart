@@ -7,8 +7,8 @@ import 'compute_engine.dart';
 /// Floor of 30 days preserves "Nd ago" cards for short-lived/event compounds;
 /// halfLife × 8 keeps long esters (e.g. Test Undecanoate, t½ 21d) visible
 /// while still pharmacologically active.
-double statRelevanceWindowDays(double halfLife) =>
-    math.max(30.0, halfLife * 8);
+double statRelevanceWindowDays(double halfLife) => math.max(
+    30.0, (isUsableHalfLife(halfLife) ? halfLife : 0.0) * relevanceHalfLives);
 
 /// One row of the LoadHero breakdown: an injectable base and its summed
 /// active level at a point in time.
@@ -39,6 +39,8 @@ List<ActiveLoadEntry> activeInjectableLoad({
         inj.snapshot.type != CompoundType.oral) {
       continue;
     }
+    // Legacy non-finite records get no (0 mg, "recently dosed") row.
+    if (!isModelableInjection(inj)) continue;
     final diffDays = now.difference(inj.date).inSeconds / 86400.0;
     if (diffDays < 0) continue; // future injection
 
@@ -46,17 +48,8 @@ List<ActiveLoadEntry> activeInjectableLoad({
     final prev = latest[base];
     if (prev == null || inj.date.isAfter(prev.date)) latest[base] = inj;
 
-    final hl = inj.snapshot.halfLife > 0.05 ? inj.snapshot.halfLife : 1.0;
-    if (diffDays > hl * 8) continue; // fully decayed
-    totals[base] = (totals[base] ?? 0) +
-        calculateActiveLevel(
-          inj.dosage,
-          diffDays,
-          hl,
-          inj.snapshot.timeToPeak,
-          inj.snapshot.ratio,
-          inj.snapshot.ester,
-        );
+    // 0 once fully decayed (past relevanceWindowDays).
+    totals[base] = (totals[base] ?? 0) + injectionLevelAt(inj, diffDays);
   }
 
   final out = <ActiveLoadEntry>[];
@@ -94,16 +87,7 @@ double averageActiveMgOverRange({
     double instant = 0.0;
     for (final inj in filtered) {
       final diffDays = t.difference(inj.date).inSeconds / 86400.0;
-      if (diffDays < 0) continue;
-      if (diffDays > inj.snapshot.halfLife * 8) continue;
-      instant += calculateActiveLevel(
-        inj.dosage,
-        diffDays,
-        inj.snapshot.halfLife,
-        inj.snapshot.timeToPeak,
-        inj.snapshot.ratio,
-        inj.snapshot.ester,
-      );
+      instant += injectionLevelAt(inj, diffDays);
     }
     sum += instant;
   }
@@ -120,16 +104,7 @@ double currentActiveMg({
   for (final inj in injections) {
     if (inj.snapshot.type != type) continue;
     final diffDays = now.difference(inj.date).inSeconds / 86400.0;
-    if (diffDays < 0) continue;
-    if (diffDays > inj.snapshot.halfLife * 8) continue;
-    total += calculateActiveLevel(
-      inj.dosage,
-      diffDays,
-      inj.snapshot.halfLife,
-      inj.snapshot.timeToPeak,
-      inj.snapshot.ratio,
-      inj.snapshot.ester,
-    );
+    total += injectionLevelAt(inj, diffDays);
   }
   return total;
 }
@@ -168,16 +143,7 @@ List<double> sampleLaneIntensity({
     double v = 0.0;
     for (final inj in injections) {
       final diffDays = t.difference(inj.date).inSeconds / 86400.0;
-      if (diffDays < 0) continue;
-      if (diffDays > inj.snapshot.halfLife * 8) continue;
-      v += calculateActiveLevel(
-        inj.dosage,
-        diffDays,
-        inj.snapshot.halfLife,
-        inj.snapshot.timeToPeak,
-        inj.snapshot.ratio,
-        inj.snapshot.ester,
-      );
+      v += injectionLevelAt(inj, diffDays);
     }
     out[i] = v;
   }

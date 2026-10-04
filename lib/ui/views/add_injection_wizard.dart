@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../models.dart';
 import '../../data.dart';
 import '../../utils.dart';
+import '../../engine/dose_math.dart';
 import '../../engine/reminder_schedule.dart';
 import '../theme.dart';
 
@@ -529,23 +530,33 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
   }
 
   void _enterStep2(CompoundDefinition c) {
-    // BASE_LIBRARY is the source of truth for type and unit. If `c` is a stale
-    // user-stored copy (e.g. from before a model categorization change), the
-    // library version's type/unit take precedence. We keep the user's
-    // concentration override though, since that's per-user data.
-    CompoundDefinition canon = c;
+    // BASE_LIBRARY is the source of truth for type and native unit. A
+    // user-stored copy can be stale: it may predate a categorization change
+    // (HCG used to be an ancillary), and older versions materialized it with
+    // whatever unit was picked on its first log (any of mg/mcg/IU). So the
+    // library's type/unit decide the route and IU-nativeness. Everything that
+    // is genuinely per-user comes from the user's copy: PK edits (shown in the
+    // chip; that copy is what Confirm freezes into the snapshot), the
+    // concentration, and a preferred dose unit. True customs have no library
+    // row, so their current stored record is the canon.
+    CompoundDefinition? userOverride;
+    for (final u in widget.userCompounds) {
+      if (u.base == c.base && u.ester == c.ester) {
+        userOverride = u;
+        break;
+      }
+    }
+    CompoundDefinition canon = userOverride ?? c;
     for (final v in BASE_LIBRARY.values) {
       if (v.base == c.base && v.ester == c.ester) {
         canon = v;
         break;
       }
     }
-    final userOverride = widget.userCompounds.firstWhere(
-      (u) => u.base == c.base && u.ester == c.ester,
-      orElse: () => canon,
-    );
-    final effective = canon.copyWith(
-      concentration: userOverride.concentration ?? canon.concentration,
+    final effective = (userOverride ?? canon).copyWith(
+      type: canon.type,
+      unit: canon.unit,
+      concentration: userOverride?.concentration ?? canon.concentration,
     );
     // Find prior injection for pre-fill
     final matches = widget.injections
@@ -553,14 +564,22 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
         .toList()
       ..sort((a, b) => b.date.compareTo(a.date));
     final last = matches.isNotEmpty ? matches.first : null;
+    // Amount and unit come from the same source — the last log, else the
+    // user's preferred unit with no amount — so a dose logged as 0.25 mg is
+    // never re-offered as 0.25 mcg. IU-native compounds (HCG, HGH) only
+    // offer IU; other compounds use the mass segment [mg, mcg].
+    final prefill = resolveDosePrefill(
+      nativeUnit: canon.unit,
+      preferredUnit: userOverride?.unit,
+      lastDose: last?.dosage,
+      lastUnit: last?.snapshot.unit,
+    );
     setState(() {
       _selectedCompound = effective;
       _lastForCompound = last;
-      // IU is shown only for compounds whose stored unit is iu (HCG, HGH, etc.).
-      // Other compounds use the mass segment [mg, mcg].
-      _unit = effective.unit;
+      _unit = prefill.unit;
       _mode = 'direct';
-      _doseText = last != null ? _trimZero(last.dosage) : '';
+      _doseText = prefill.dose != null ? _trimZero(prefill.dose!) : '';
       _doseController.text = _doseText;
       _volumeText = '';
       _volumeController.text = '';
@@ -602,7 +621,9 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
   bool get _isAncillary => _selectedCompound?.type == CompoundType.ancillary;
   bool get _isPeptide => _selectedCompound?.type == CompoundType.peptide;
   // "IU-native" compounds (HCG, HGH, etc.) — their stored unit is iu and
-  // their vial concentration is IU/mL rather than mg/mL.
+  // their vial concentration is IU/mL rather than mg/mL. Every other compound
+  // stores mg/mL, even when dosed in mcg — conversions go through
+  // engine/dose_math.dart, which applies the mg↔mcg factor.
   bool get _isIuNative => _selectedCompound?.unit == Unit.iu;
   String get _concentrationUnit => _isIuNative ? 'IU/mL' : 'mg/mL';
   // "Pill form" = anything taken orally (orals + any ancillary). Hides the
@@ -652,15 +673,21 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
 
   Widget _buildDoseDirect(CompoundDefinition c) {
     final dose = parseFlexibleDouble(_doseText) ?? 0;
-    final conc = _concentrationDraft;
+    final ml = dose > 0
+        ? volumeForDose(
+            dose: dose,
+            concentration: _concentrationDraft,
+            unit: _unit,
+            iuConcentration: _isIuNative,
+          )
+        : null;
     String? hint;
-    if (conc != null && conc > 0 && dose > 0) {
-      final ml = dose / conc;
+    if (ml != null) {
       // U100 syringe-reading hint only adds value for mass-dosed peptides;
       // IU-native compounds are already dosed in IU so the equivalent is the
       // dose itself.
       if (_unit == Unit.mcg) {
-        final iu = ml * 100;
+        final iu = syringeUnitsFromMl(ml);
         hint = '≈ ${ml.toStringAsFixed(2)} mL · ${iu.toStringAsFixed(1)} IU';
       } else {
         hint = '≈ ${ml.toStringAsFixed(2)} mL';
@@ -705,9 +732,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
             label: 'Unit',
             child: _Seg<Unit>(
               value: _unit,
-              options: _isIuNative
-                  ? const [Unit.iu]
-                  : const [Unit.mg, Unit.mcg],
+              options: doseUnitOptions(c.unit),
               labelOf: (u) => u.name,
               onChange: (u) => setState(() => _unit = u),
               mono: true,
@@ -723,14 +748,23 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
     final volumeRaw = parseFlexibleDouble(_volumeText) ?? 0;
     // Convert the user-entered volume to mL using the U100 standard
     // (100 IU = 1 mL) when they're inputting in IU.
-    final volumeMl = (_isPeptide && _volumeInputUnit == 'IU') ? volumeRaw / 100.0 : volumeRaw;
-    final computedDose = (conc != null && conc > 0) ? volumeMl * conc : 0.0;
+    final volumeMl = (_isPeptide && _volumeInputUnit == 'IU')
+        ? mlFromSyringeUnits(volumeRaw)
+        : volumeRaw;
+    // Null when the concentration is unset (or can't express _unit).
+    final dose = doseForVolume(
+      volumeMl: volumeMl,
+      concentration: conc,
+      unit: _unit,
+      iuConcentration: _isIuNative,
+    );
+    final computedDose = dose ?? 0.0;
     String volumeHint = '';
-    if (conc != null && conc > 0 && volumeRaw > 0) {
+    if (dose != null && volumeRaw > 0) {
       if (_unit == Unit.mcg) {
         // Mass-dosed peptide: show the syringe-reading IU equivalent.
         final mlPart = _trimZero(volumeMl);
-        final iuPart = (volumeMl * 100).toStringAsFixed(1);
+        final iuPart = syringeUnitsFromMl(volumeMl).toStringAsFixed(1);
         if (_volumeInputUnit == 'IU') {
           volumeHint = '= ${_trimZero(computedDose)} ${_unit.name} · $mlPart mL';
         } else {
@@ -884,6 +918,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
         initialMgPerVial: null,
         initialVolume: null,
         isPeptide: _isPeptideUnit,
+        doseUnit: _unit,
         massUnitLabel: _isIuNative ? 'IU' : 'mg',
       ),
     );
@@ -1616,6 +1651,9 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
     }
 
     // Find or materialize the user compound; bake in the latest concentration.
+    // The compound keeps its own unit: the unit picked here belongs to this
+    // log only (it goes into the snapshot below), so logging in another unit
+    // neither reverts a Compound Editor choice nor flags a built-in as edited.
     final existing = widget.userCompounds.firstWhere(
       (c) => c.base == picked.base && c.ester == picked.ester,
       orElse: () => CompoundDefinition(
@@ -1628,7 +1666,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
         defaultHalfLife: picked.defaultHalfLife,
         timeToPeak: picked.timeToPeak,
         ratio: picked.ratio,
-        unit: _unit,
+        unit: picked.unit,
         colorValue: picked.colorValue,
         isCustom: picked.isCustom,
         concentration: _concentrationDraft ?? picked.concentration,
@@ -1637,12 +1675,10 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
     final isAlreadyUser = widget.userCompounds.any((c) => c.id == existing.id);
     CompoundDefinition compDef;
     if (isAlreadyUser) {
-      // Existing user compound — write back the new concentration / unit if changed.
-      if (existing.concentration != _concentrationDraft || existing.unit != _unit) {
-        compDef = existing.copyWith(
-          concentration: _concentrationDraft ?? existing.concentration,
-          unit: _unit,
-        );
+      // Existing user compound — write back the new concentration if changed.
+      final draft = _concentrationDraft;
+      if (draft != null && draft != existing.concentration) {
+        compDef = existing.copyWith(concentration: draft);
         widget.addUserCompound(compDef);
       } else {
         compDef = existing;
@@ -1658,7 +1694,7 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
       compoundId: compDef.id,
       date: fullDate,
       dosage: doseVal,
-      snapshot: compDef,
+      snapshot: compDef.copyWith(unit: _unit),
       site: (showSite && _site.isNotEmpty) ? _site : null,
       notes: _notes.trim().isEmpty ? null : _notes.trim(),
     ), _matchingReminder != null && _advanceReminder);
@@ -1786,11 +1822,13 @@ class _ReconstitutionSheet extends StatefulWidget {
   final double? initialMgPerVial;
   final double? initialVolume;
   final bool isPeptide;
+  final Unit doseUnit; // the wizard's selected dose unit
   final String massUnitLabel; // 'mg' for mass-dosed, 'IU' for IU-native
   const _ReconstitutionSheet({
     required this.initialMgPerVial,
     required this.initialVolume,
     required this.isPeptide,
+    required this.doseUnit,
     this.massUnitLabel = 'mg',
   });
 
@@ -1817,12 +1855,22 @@ class _ReconstitutionSheetState extends State<_ReconstitutionSheet> {
     final mg = parseFlexibleDouble(_mg.text) ?? 0;
     final volRaw = parseFlexibleDouble(_vol.text) ?? 0;
     // At U100, 100 IU = 1 mL.
-    final volMl = _volUnit == 'IU' ? volRaw / 100.0 : volRaw;
+    final volMl = _volUnit == 'IU' ? mlFromSyringeUnits(volRaw) : volRaw;
     final conc = (mg > 0 && volMl > 0) ? (mg / volMl) : 0.0;
     // The "X per 10 IU" line is the syringe-reading hint, only useful when
     // the dose unit is mass (mcg). IU-native compounds dose in IU directly.
-    final iuLine = (widget.isPeptide && widget.massUnitLabel == 'mg' && conc > 0)
-        ? '≈ ${(conc * 0.1).toStringAsFixed(2)} mg per 10 IU'
+    // Expressed in the dose unit so it reads the same as the Amount field.
+    final per10 = (widget.isPeptide && widget.massUnitLabel == 'mg')
+        ? doseForVolume(
+            volumeMl: mlFromSyringeUnits(10),
+            concentration: conc,
+            unit: widget.doseUnit,
+            iuConcentration: false,
+          )
+        : null;
+    final iuLine = per10 != null
+        ? '≈ ${per10.toStringAsFixed(widget.doseUnit == Unit.mcg ? 0 : 2)} '
+            '${widget.doseUnit.name} per 10 IU'
         : null;
     return SafeArea(
       top: false,

@@ -1,5 +1,21 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:protolog_tracker/data.dart';
 import 'package:protolog_tracker/engine/compute_engine.dart';
+
+/// Time (days) of the curve's maximum, sampled finely over [0, horizon].
+double _peakTime(double Function(double t) level, double horizon, {int steps = 4000}) {
+  var bestT = 0.0;
+  var best = -1.0;
+  for (int i = 0; i <= steps; i++) {
+    final t = horizon * i / steps;
+    final v = level(t);
+    if (v > best) {
+      best = v;
+      bestT = t;
+    }
+  }
+  return bestT;
+}
 
 void main() {
   group('calculateActiveLevel half-life guards', () {
@@ -19,6 +35,134 @@ void main() {
       final v = calculateActiveLevel(150, 2.0, -3, 1.5, 0.72, 'Enanthate');
       expect(v.isFinite, isTrue);
       expect(v, greaterThanOrEqualTo(0));
+    });
+
+    test('non-finite half-lives contribute nothing (finite, zero)', () {
+      for (final hl in [double.nan, double.infinity, double.negativeInfinity, 0.0, -3.0]) {
+        for (final t in [0.0, 0.01, 0.5, 2.0, 30.0]) {
+          final v = calculateActiveLevel(150, t, hl, 1.5, 0.72, 'Enanthate');
+          expect(v.isFinite, isTrue, reason: 'hl=$hl t=$t');
+          expect(v, 0.0, reason: 'hl=$hl t=$t');
+        }
+      }
+    });
+
+    test('non-finite dose / tmax / ratio / time never leak NaN or Infinity', () {
+      final cases = <List<double>>[
+        [double.nan, 2.0, 4.5, 1.5, 0.72],
+        [double.infinity, 2.0, 4.5, 1.5, 0.72],
+        [150, double.nan, 4.5, 1.5, 0.72],
+        [150, double.infinity, 4.5, 1.5, 0.72],
+        [150, 2.0, 4.5, double.nan, 0.72],
+        [150, 2.0, 4.5, double.infinity, 0.72],
+        [150, 2.0, 4.5, 1.5, double.nan],
+        [150, 2.0, 4.5, 1.5, double.infinity],
+      ];
+      for (final c in cases) {
+        final v = calculateActiveLevel(c[0], c[1], c[2], c[3], c[4], 'Enanthate');
+        expect(v.isFinite, isTrue, reason: '$c');
+        expect(v, greaterThanOrEqualTo(0), reason: '$c');
+      }
+    });
+
+    test('extremely small valid half-lives stay finite', () {
+      for (final hl in [1e-3, 1e-6, 1e-12, 1e-300]) {
+        for (final t in [0.0, 1e-6, 0.001, 0.02, 1.0]) {
+          final v = calculateActiveLevel(100, t, hl, 0.02, 1.0, 'Suspension');
+          expect(v.isFinite, isTrue, reason: 'hl=$hl t=$t');
+          expect(v, greaterThanOrEqualTo(0), reason: 'hl=$hl t=$t');
+        }
+      }
+    });
+  });
+
+  group('Testosterone Suspension (t½ 0.05 d boundary, A5)', () {
+    final susp = BASE_LIBRARY['Testosterone Suspension']!;
+    double level(double t) => calculateActiveLevel(
+        100, t, susp.halfLife, susp.timeToPeak, susp.ratio, susp.ester);
+
+    test('library entry is the 0.05 d boundary case', () {
+      expect(susp.halfLife, 0.05);
+      expect(susp.timeToPeak, 0.02);
+    });
+
+    test('modelled with its own half-life: ≈0 one day after the dose', () {
+      expect(level(1.0), lessThan(0.01));
+      expect(level(2.0), lessThan(1e-6));
+    });
+
+    test('peaks near its time-to-peak with a sensible height', () {
+      final tPeak = _peakTime(level, 0.2);
+      expect(tPeak, closeTo(0.02, 0.003));
+      final peak = level(tPeak);
+      expect(peak, greaterThan(50));
+      expect(peak, lessThan(100));
+    });
+
+    test('half-life just above and below the old 0.05 floor is honoured', () {
+      // The old guard replaced any t½ ≤ 0.05 with 1.0, so 0.04 decayed far
+      // slower than 0.06. Now the shorter half-life decays faster.
+      final a = calculateActiveLevel(100, 0.3, 0.04, 0.02, 1.0, 'Suspension');
+      final b = calculateActiveLevel(100, 0.3, 0.06, 0.02, 1.0, 'Suspension');
+      expect(a, lessThan(b));
+      expect(a, lessThan(1.0));
+    });
+  });
+
+  group('_solveKa bracket for large elimination rates', () {
+    test('ka above the old fixed 100/d bracket still reproduces tmax', () {
+      // t½ 0.06 d, tmax 0.015 d needs ka ≈ 200/d; the old bracket capped ka
+      // at 100/d, which moved the peak out to ≈0.024 d.
+      double level(double t) => calculateActiveLevel(100, t, 0.06, 0.015, 1.0, 'X');
+      final tPeak = _peakTime(level, 0.1);
+      expect(tPeak, closeTo(0.015, 0.001));
+      expect(level(tPeak), greaterThan(50));
+    });
+
+    test('ke above 100/d (t½ 0.005 d) gives a finite, fast-clearing curve', () {
+      double level(double t) => calculateActiveLevel(100, t, 0.005, 0.02, 1.0, 'X');
+      for (final t in [0.0, 0.001, 0.005, 0.02, 0.1]) {
+        expect(level(t).isFinite, isTrue, reason: 't=$t');
+        expect(level(t), greaterThanOrEqualTo(0), reason: 't=$t');
+      }
+      expect(level(0.005), greaterThan(0));
+      expect(level(0.5), lessThan(1e-6));
+    });
+
+    test('tmax ≤ 0.01 still absorbs faster than a short half-life eliminates', () {
+      // Instant-absorption shortcut must not hand back ka < ke, which would
+      // turn the curve absorption-limited (flip-flop) and stretch its tail.
+      double level(double t) => calculateActiveLevel(100, t, 0.001, 0.005, 1.0, 'X');
+      expect(level(0.05), lessThan(1e-6));
+      expect(level(0.0005).isFinite, isTrue);
+    });
+  });
+
+  group('effectiveHalfLife / relevanceWindowDays', () {
+    test('single esters use their own half-life × 8', () {
+      expect(relevanceWindowDays(BASE_LIBRARY['Testosterone Suspension']!), closeTo(0.4, 1e-12));
+      expect(relevanceWindowDays(BASE_LIBRARY['Testosterone Cypionate']!), 40.0);
+      expect(relevanceWindowDays(BASE_LIBRARY['Oxandrolone']!), closeTo(3.2, 1e-12));
+    });
+
+    test('blends cover their longest component, not the snapshot t½', () {
+      final sust = BASE_LIBRARY['Sustanon 250']!;
+      final triTren = BASE_LIBRARY['Tri-Tren']!;
+      final longestSust = SUSTANON_BLEND.map((c) => c['halfLife']!).reduce((a, b) => a > b ? a : b);
+      final longestTren = TREN_BLEND.map((c) => c['halfLife']!).reduce((a, b) => a > b ? a : b);
+      expect(effectiveHalfLife(sust), longestSust);
+      expect(effectiveHalfLife(triTren), longestTren);
+      expect(relevanceWindowDays(triTren), longestTren * 8); // 84 d, not 7×8
+      // Blend math ignores the snapshot t½, so a corrupt one doesn't matter.
+      expect(relevanceWindowDays(triTren.copyWith(halfLife: double.nan)), longestTren * 8);
+    });
+
+    test('invalid half-lives have no relevance window', () {
+      final cyp = BASE_LIBRARY['Testosterone Cypionate']!;
+      for (final hl in [0.0, -1.0, double.nan, double.infinity, double.negativeInfinity]) {
+        expect(effectiveHalfLife(cyp.copyWith(halfLife: hl)), 0.0, reason: 'hl=$hl');
+        expect(relevanceWindowDays(cyp.copyWith(halfLife: hl)), 0.0, reason: 'hl=$hl');
+      }
     });
   });
 }

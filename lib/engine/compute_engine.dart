@@ -4,9 +4,15 @@ import '../models.dart';
 import '../data.dart';
 
 double _solveKa(double ke, double tmax) {
-  if (tmax <= 0.01) return 100.0;
+  // The ka that reproduces tmax can sit far above a fixed 100/d when the
+  // half-life is short (Suspension: ke ≈ 13.9/d → ka ≈ 123/d; t½ < 0.007 d
+  // puts ke itself above 100), so the upper bracket scales with ke. The
+  // "instant absorption" shortcut uses the same floor so ka never drops
+  // below ke (which would turn the curve absorption-limited).
+  final double high0 = math.max(100.0, 50.0 * ke);
+  if (tmax <= 0.01) return high0;
   double low = ke + 0.001;
-  double high = 100.0;
+  double high = high0;
   double mid = 0.0;
   for (int i = 0; i < 20; i++) {
     mid = (low + high) / 2;
@@ -21,34 +27,31 @@ double _solveKa(double ke, double tmax) {
 }
 
 double _calculateBatemanValue(double dose, double t, double halfLife, double tmax, double ratio) {
-  if (t < 0) return 0.0;
-  // Same floor as _getActiveStats: a non-positive/near-zero half-life would
-  // make ke infinite and poison the curve with NaN (math.max keeps NaN).
-  if (halfLife <= 0.05) halfLife = 1.0;
+  if (!(t >= 0) || t.isInfinite) return 0.0; // also rejects NaN
+  // Only genuinely unusable input is rejected: a non-finite or non-positive
+  // half-life has no elimination rate, so the dose contributes nothing rather
+  // than an invented curve. Short but valid half-lives (Testosterone
+  // Suspension, t½ 0.05 d) are modelled as given.
+  if (!isUsableHalfLife(halfLife)) return 0.0;
+  // Legacy non-finite dose / tmax / yield: no contribution (a NaN tmax would
+  // otherwise bisect to a meaningless but finite ka).
+  if (!dose.isFinite || !tmax.isFinite || !ratio.isFinite) return 0.0;
   double effectiveDose = dose * ratio;
   double ke = math.log(2) / halfLife;
   double ka = _solveKa(ke, tmax);
   double term1 = (effectiveDose * ka) / (ka - ke);
   double term2 = math.exp(-ke * t) - math.exp(-ka * t);
-  return math.max(0.0, term1 * term2);
+  final value = term1 * term2;
+  // ka ≈ ke or absurd magnitudes can still overflow; math.max keeps NaN.
+  if (!value.isFinite) return 0.0;
+  return math.max(0.0, value);
 }
 
 double calculateActiveLevel(double dosage, double diffDays, double halfLife, double timeToPeak, double ratio, String esterName) {
-  if (esterName.contains('Sustanon')) {
+  final blend = blendComponentsFor(esterName);
+  if (blend != null) {
     double level = 0;
-    for (var comp in SUSTANON_BLEND) {
-      level += _calculateBatemanValue(
-        dosage * comp['fraction']!,
-        diffDays,
-        comp['halfLife']!,
-        comp['timeToPeak']!,
-        comp['ratio']!,
-      );
-    }
-    return level;
-  } else if (esterName.contains('Tri-Tren')) {
-    double level = 0;
-    for (var comp in TREN_BLEND) {
+    for (var comp in blend) {
       level += _calculateBatemanValue(
         dosage * comp['fraction']!,
         diffDays,
@@ -60,6 +63,66 @@ double calculateActiveLevel(double dosage, double diffDays, double halfLife, dou
     return level;
   }
   return _calculateBatemanValue(dosage, diffDays, halfLife, timeToPeak, ratio);
+}
+
+/// Blend components for a blend ester ("Sustanon (Mix)", "Tri-Tren (Mix)"),
+/// or null for a single ester. Same match as [calculateActiveLevel].
+List<Map<String, double>>? blendComponentsFor(String esterName) {
+  if (esterName.contains('Sustanon')) return SUSTANON_BLEND;
+  if (esterName.contains('Tri-Tren')) return TREN_BLEND;
+  return null;
+}
+
+/// True when [halfLife] can drive the Bateman model: finite and > 0.
+bool isUsableHalfLife(double halfLife) => halfLife.isFinite && halfLife > 0;
+
+/// Half-lives after which a dose counts as fully decayed (≈0.4 % left).
+const double relevanceHalfLives = 8.0;
+
+/// The half-life (days) that actually governs how long a dose of [c] stays
+/// active. Blends are modelled from their components (the snapshot t½ is
+/// ignored by [calculateActiveLevel]), so they use the longest component.
+/// 0 when the half-life is unusable — such doses contribute nothing.
+double effectiveHalfLife(CompoundDefinition c) {
+  final blend = blendComponentsFor(c.ester);
+  if (blend != null) {
+    return blend.map((comp) => comp['halfLife']!).reduce(math.max);
+  }
+  return isUsableHalfLife(c.halfLife) ? c.halfLife : 0.0;
+}
+
+/// Days after a dose of [c] during which it still contributes:
+/// [effectiveHalfLife] × [relevanceHalfLives]. The single relevance rule for
+/// the chart, LoadHero, trend delta, lanes and protocol membership.
+double relevanceWindowDays(CompoundDefinition c) =>
+    effectiveHalfLife(c) * relevanceHalfLives;
+
+/// False for a logged dose whose numbers can't be modelled — non-finite
+/// dosage / time-to-peak / yield, or an unusable half-life (legacy or
+/// corrupt data from before input validation). Such doses are skipped by the
+/// chart and dashboard stats instead of crashing or drawing flat lines.
+bool isModelableInjection(Injection inj) =>
+    inj.dosage.isFinite &&
+    inj.snapshot.timeToPeak.isFinite &&
+    inj.snapshot.ratio.isFinite &&
+    effectiveHalfLife(inj.snapshot) > 0;
+
+/// Active level of one logged dose [diffDays] after it was taken, under the
+/// single relevance rule: 0 before the dose and once past
+/// [relevanceWindowDays]. Every surface (chart, LoadHero, trend, lanes)
+/// samples through this so they agree on when a dose stops counting.
+double injectionLevelAt(Injection inj, double diffDays) {
+  if (!(diffDays >= 0)) return 0.0;
+  if (!isModelableInjection(inj)) return 0.0;
+  if (diffDays > relevanceWindowDays(inj.snapshot)) return 0.0;
+  return calculateActiveLevel(
+    inj.dosage,
+    diffDays,
+    inj.snapshot.halfLife,
+    inj.snapshot.timeToPeak,
+    inj.snapshot.ratio,
+    inj.snapshot.ester,
+  );
 }
 
 CompoundDefinition? lookupLibraryDef(String base, String ester) {
@@ -86,10 +149,14 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
   final totalDurationMs = endDate.difference(startDate).inMilliseconds;
   final startMs = startDate.millisecondsSinceEpoch;
 
+  // Non-modelable legacy records (non-finite numbers) are skipped entirely:
+  // no flat curve, marker or lane, and nothing that can throw in the isolate.
   final relevantInjections = injections.where((i) {
+    if (!isModelableInjection(i)) return false;
     final injTime = i.date.millisecondsSinceEpoch;
-    final windowMs = (i.snapshot.halfLife * 8 * 86400000).toInt();
-    return injTime <= endDate.millisecondsSinceEpoch && (injTime >= startMs || (startMs - injTime) < windowMs);
+    if (injTime > endDate.millisecondsSinceEpoch) return false;
+    if (injTime >= startMs) return true;
+    return (startMs - injTime) / 86400000.0 <= relevanceWindowDays(i.snapshot);
   }).toList();
 
   final curveInjections = relevantInjections.where((i) => i.snapshot.type == CompoundType.steroid || i.snapshot.type == CompoundType.oral).toList();
@@ -104,7 +171,7 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
     // curves. This keeps past lanes stable when a compound's library entry is
     // edited; retroactive changes are applied explicitly via rewriteSnapshots.
     final graphType = inj.snapshot.graphType;
-    final halfLife = inj.snapshot.halfLife;
+    final halfLife = effectiveHalfLife(inj.snapshot);
 
     final msSinceStart = inj.date.millisecondsSinceEpoch - startMs;
     final startPct = msSinceStart / totalDurationMs;
@@ -147,12 +214,7 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
 
       for (var inj in baseInjections) {
         final diffMs = currentTime - inj.date.millisecondsSinceEpoch;
-        if (diffMs >= 0) {
-          final diffDays = diffMs / 86400000.0;
-          level += calculateActiveLevel(
-              inj.dosage, diffDays, inj.snapshot.halfLife, inj.snapshot.timeToPeak, inj.snapshot.ratio, inj.snapshot.ester
-          );
-        }
+        level += injectionLevelAt(inj, diffMs / 86400000.0);
       }
       tempPoints[base]!.add(Offset(timePct, level));
 
@@ -174,10 +236,7 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
       double level = 0;
       for (var other in baseInjs) {
         final diffMs = inj.date.millisecondsSinceEpoch - other.date.millisecondsSinceEpoch;
-        if (diffMs >= 0) {
-          level += calculateActiveLevel(other.dosage, diffMs / 86400000.0,
-              other.snapshot.halfLife, other.snapshot.timeToPeak, other.snapshot.ratio, other.snapshot.ester);
-        }
+        level += injectionLevelAt(other, diffMs / 86400000.0);
       }
       injectionMarkers.add(InjectionMarkerData(pct, level, inj.snapshot.type == CompoundType.oral, inj.snapshot.colorValue, inj.snapshot.base));
     }
@@ -191,9 +250,7 @@ Future<ComputedGraphData> calculateGraphData(IsolateInput input) async {
       final timePct = (currentTime - startMs) / totalDurationMs;
       for(var inj in curveInjections.where((i) => i.snapshot.type == CompoundType.steroid)) {
         final diffMs = currentTime - inj.date.millisecondsSinceEpoch;
-        if (diffMs >= 0) {
-          totalLevel += calculateActiveLevel(inj.dosage, diffMs/86400000.0, inj.snapshot.halfLife, inj.snapshot.timeToPeak, inj.snapshot.ratio, inj.snapshot.ester);
-        }
+        totalLevel += injectionLevelAt(inj, diffMs / 86400000.0);
       }
       totalPoints.add(Offset(timePct, totalLevel));
       dailyMaxTotal = math.max(dailyMaxTotal, totalLevel);

@@ -35,6 +35,8 @@ import 'ui/views/reminder_editor_page.dart';
 import 'engine/reminder_schedule.dart';
 import 'engine/log_serde.dart';
 import 'engine/backup.dart';
+import 'engine/record_validation.dart';
+import 'engine/stored_data.dart';
 
 // --- Entry Point ---
 void main() {
@@ -141,9 +143,24 @@ class _MainScreenState extends State<MainScreen> {
 
   // Cancellation always sweeps this many ids per reminder, regardless of the
   // reminder's *current* mode/slot count — a mode switch must not orphan ids
-  // scheduled under the previous shape. (Custom mode realistically uses at
-  // most 7 slots; interval mode uses _kIntervalOccurrences.)
-  static const int _kMaxNotificationIdsPerReminder = 64;
+  // scheduled under the previous shape. (Interval mode uses
+  // _kIntervalOccurrences; custom mode's layout is customSlotIdOffset.)
+  static const int _kMaxNotificationIdsPerReminder = kNotificationIdsPerReminder;
+
+  // All notification work runs one job at a time: a reminder's cancel sweep
+  // must finish before its new schedule goes out, or the sweep (64 sequential
+  // calls) can wipe ids the schedule just created. The chain starts with
+  // plugin init, so no job runs before the plugin and tz.local are ready.
+  Future<void> _notifChain = Future.value();
+  bool _notificationsReady = false;
+
+  // Collections persisted as JSON lists, loaded through decodeStoredList.
+  static const _kDataKeys = ['injections', 'compounds', 'reminders', 'bloodwork'];
+
+  // Keys whose stored contents this session hasn't accounted for yet —
+  // neither loaded nor set aside verbatim. Saves skip them, so a failed or
+  // partial load can never overwrite data the app couldn't read (A7).
+  final Set<String> _unsafeKeys = {..._kDataKeys};
 
   // Set when a notification tap arrives before _loadData has finished
   // (cold start); processed at the end of _loadData.
@@ -157,43 +174,61 @@ class _MainScreenState extends State<MainScreen> {
     _bootstrap();
   }
 
-  // The plugin must be initialized and tz.local set before _loadData
-  // reschedules reminders, so the two steps are awaited in sequence.
+  // Notification init and data load are independent, so a plugin failure
+  // (or hang) can never keep the app on the spinner (A7). Rescheduling still
+  // happens with the plugin initialized and tz.local set: it queues on
+  // _notifChain, which starts with init.
   Future<void> _bootstrap() async {
-    await _initNotifications();
+    _notifChain = _initNotifications();
     await _loadData();
+    _rescheduleAllReminders();
+    _notifChain.then((_) {
+      if (!_notificationsReady) {
+        _snack("Notifications couldn't start — reminders won't fire this session",
+            color: AppTheme.warn);
+      }
+    });
   }
 
+  /// Never throws: on failure _notificationsReady stays false and every
+  /// queued notification job becomes a no-op.
   Future<void> _initNotifications() async {
-    tz.initializeTimeZones();
     try {
-      final info = await FlutterTimezone.getLocalTimezone();
-      tz.setLocalLocation(tz.getLocation(info.identifier));
+      tz.initializeTimeZones();
+      try {
+        final info = await FlutterTimezone.getLocalTimezone();
+        tz.setLocalLocation(tz.getLocation(info.identifier));
+      } catch (_) {
+        // tz.local stays UTC: one-shots still fire at the right instant; only
+        // weekly repeats lose wall-clock anchoring until the next app launch.
+      }
+      const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const iosSettings = DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: true,
+      );
+      const initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
+      await _notificationsPlugin.initialize(
+        initSettings,
+        onDidReceiveNotificationResponse: (resp) =>
+            _handleNotificationTap(resp.payload, actionId: resp.actionId),
+      );
+      _notificationsReady = true;
     } catch (_) {
-      // tz.local stays UTC: one-shots still fire at the right instant; only
-      // weekly repeats lose wall-clock anchoring until the next app launch.
+      return;
     }
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const iosSettings = DarwinInitializationSettings(
-      requestAlertPermission: true,
-      requestBadgePermission: true,
-      requestSoundPermission: true,
-    );
-    const initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
-    await _notificationsPlugin.initialize(
-      initSettings,
-      onDidReceiveNotificationResponse: (resp) =>
-          _handleNotificationTap(resp.payload, actionId: resp.actionId),
-    );
 
     // App launched by tapping a notification while terminated.
-    final launch = await _notificationsPlugin.getNotificationAppLaunchDetails();
-    if (launch?.didNotificationLaunchApp ?? false) {
-      _handleNotificationTap(
-        launch!.notificationResponse?.payload,
-        actionId: launch.notificationResponse?.actionId,
-      );
-    }
+    try {
+      final launch = await _notificationsPlugin.getNotificationAppLaunchDetails();
+      if (launch?.didNotificationLaunchApp ?? false) {
+        _handleNotificationTap(
+          launch!.notificationResponse?.payload,
+          actionId: launch.notificationResponse?.actionId,
+        );
+      }
+    } catch (_) {}
 
     // Request POST_NOTIFICATIONS permission after the first frame,
     // so the Activity is fully ready to show the system dialog.
@@ -228,7 +263,8 @@ class _MainScreenState extends State<MainScreen> {
     }
     if (match == null) return;
     if (actionId == 'skip') {
-      _skipReminder(match);
+      // Skip the occurrence this notification announced, not the next one.
+      _skipReminder(match, fromNotification: true);
       _snack('Skipped ${match.compoundBase} — rescheduled', color: AppTheme.surface2);
       return;
     }
@@ -239,7 +275,12 @@ class _MainScreenState extends State<MainScreen> {
 
   /// Lab Sheet-styled snackbar. `color` is the background; `dark` switches the
   /// text to bg-on-light for warm/light backgrounds.
-  void _snack(String message, {Color color = AppTheme.surface2, bool dark = false}) {
+  void _snack(
+    String message, {
+    Color color = AppTheme.surface2,
+    bool dark = false,
+    Duration duration = const Duration(seconds: 4),
+  }) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(
@@ -247,50 +288,75 @@ class _MainScreenState extends State<MainScreen> {
         style: AppTheme.sans(size: 12, color: dark ? AppTheme.bg : AppTheme.fg),
       ),
       backgroundColor: color,
+      duration: duration,
     ));
   }
 
+  /// Tolerant load (A7): each collection decodes record by record, and the
+  /// spinner always clears. Whatever couldn't be read is set aside verbatim
+  /// under an `<key>_unreadable_<millis>` key before anything can save over
+  /// it, and the user is told.
   Future<void> _loadData() async {
-    final prefs = await SharedPreferences.getInstance();
+    var skipped = 0;
+    final unreadable = <String>[];
+    var loadFailed = false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // A non-string value under a data key (never written by the app) is
+      // handled like unreadable text.
+      final raw = <String, String?>{
+        for (final k in _kDataKeys)
+          k: switch (prefs.get(k)) { null => null, final String v => v, final v => '$v' },
+      };
 
-    // Load Injections
-    final injString = prefs.getString('injections');
-    if (injString != null) {
-      final List<dynamic> jsonList = jsonDecode(injString);
-      injections = jsonList.map((j) => Injection.fromJson(j)).toList();
-    }
+      final inj = decodeStoredList(raw['injections'], Injection.fromJson,
+          isValid: isValidInjection);
+      final comp = decodeStoredList(raw['compounds'], CompoundDefinition.fromJson,
+          isValid: isValidCompound);
+      final bw = decodeStoredList(raw['bloodwork'], BloodworkEntry.fromJson,
+          isValid: isValidBloodwork);
+      final rem = decodeStoredList(raw['reminders'], Reminder.fromJson,
+          isValid: isValidReminder);
 
-    // Load Compounds
-    final compString = prefs.getString('compounds');
-    if (compString != null) {
-      final List<dynamic> jsonList = jsonDecode(compString);
-      userCompounds = jsonList.map((j) => CompoundDefinition.fromJson(j)).toList();
-    } else {
-      userCompounds = List.from(INITIAL_COMPOUNDS);
-    }
+      // Nothing has been written yet. Set aside every lossy collection's raw
+      // text first; a key whose copy can't be written stays unsafe (never
+      // saved this session).
+      for (final (key, res) in <(String, DecodedRecords<Object?>)>[
+        ('injections', inj), ('compounds', comp), ('bloodwork', bw), ('reminders', rem),
+      ]) {
+        if (res.lossy) {
+          if (!await _setAside(prefs, key, raw[key]!)) continue;
+          skipped += res.skipped;
+          if (res.unreadable) unreadable.add(key);
+        }
+        _unsafeKeys.remove(key);
+      }
 
-    // Load Bloodwork
-    final bwString = prefs.getString('bloodwork');
-    if (bwString != null) {
-      final List<dynamic> jsonList = jsonDecode(bwString);
-      bloodwork = jsonList.map((j) => BloodworkEntry.fromJson(j)).toList();
-    }
+      injections = inj.items;
+      userCompounds = raw['compounds'] == null ? List.from(INITIAL_COMPOUNDS) : comp.items;
+      bloodwork = bw.items;
+      reminders = rem.items;
 
-    // Load Reminders
-    final remString = prefs.getString('reminders');
-    if (remString != null) {
-      final List<dynamic> jsonList = jsonDecode(remString);
-      reminders = jsonList.map((j) => Reminder.fromJson(j)).toList();
       // Freeze notification-id seeds for reminders saved before the seed
       // existed, while id.hashCode still matches what was scheduled.
-      if (jsonList.any((j) => j['notificationSeed'] == null)) {
-        _saveReminders();
-      }
+      if (reminders.any((r) => r.notificationSeed == null)) _saveReminders();
+    } catch (_) {
+      loadFailed = true;
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
-    _rescheduleAllReminders(); // fire-and-forget
-
-    setState(() => _loading = false);
+    if (!mounted) return;
     _refreshGraph();
+
+    final problem = loadFailed
+        ? "Couldn't load saved data — nothing was changed. Restart to retry."
+        : _unsafeKeys.isNotEmpty
+            ? "Some saved data couldn't be read or set aside — changes to "
+                "${_unsafeKeys.join(', ')} won't be saved this session."
+            : _loadLossMessage(skipped, unreadable);
+    if (problem != null) {
+      _snack(problem, color: AppTheme.warn, duration: const Duration(seconds: 10));
+    }
 
     if (_pendingNotificationPayload != null) {
       final p = _pendingNotificationPayload;
@@ -301,10 +367,41 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  static String? _loadLossMessage(int skipped, List<String> unreadable) {
+    final parts = [
+      if (skipped > 0) '$skipped saved ${skipped == 1 ? 'entry' : 'entries'}',
+      if (unreadable.isNotEmpty) 'saved ${unreadable.join(' and ')}',
+    ];
+    if (parts.isEmpty) return null;
+    return "Couldn't read ${parts.join(' or ')}. The original data was kept "
+        'aside — nothing was deleted.';
+  }
+
+  /// Copies [raw] to `<key>_unreadable_<millis>` unless an identical copy is
+  /// already there from an earlier launch. True once the data is safe.
+  Future<bool> _setAside(SharedPreferences prefs, String key, String raw) async {
+    try {
+      final prefix = unreadableKeyPrefix(key);
+      for (final k in prefs.getKeys()) {
+        if (k.startsWith(prefix) && prefs.get(k) == raw) return true;
+      }
+      return await prefs.setString(unreadableKey(key, DateTime.now()), raw);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Persists one collection, unless its stored contents were never
+  /// accounted for at load (see _unsafeKeys).
+  void _store(SharedPreferences prefs, String key, List<Object?> json) {
+    if (_unsafeKeys.contains(key)) return;
+    prefs.setString(key, jsonEncode(json));
+  }
+
   Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
-    prefs.setString('injections', jsonEncode(injections.map((e) => e.toJson()).toList()));
-    prefs.setString('compounds', jsonEncode(userCompounds.map((e) => e.toJson()).toList()));
+    _store(prefs, 'injections', injections.map((e) => e.toJson()).toList());
+    _store(prefs, 'compounds', userCompounds.map((e) => e.toJson()).toList());
   }
 
   void _refreshGraph() {
@@ -313,23 +410,37 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  Future<void> _rescheduleAllReminders() async {
-    for (final r in reminders) {
-      if (r.enabled) {
+  /// Queues [job] behind all pending notification work (including plugin
+  /// init). A failing job never blocks the ones after it; if init failed,
+  /// jobs are skipped.
+  Future<void> _enqueueNotif(Future<void> Function() job) {
+    final run = _notifChain.then<void>((_) async {
+      if (_notificationsReady) await job();
+    });
+    _notifChain = run.catchError((Object _) {});
+    return _notifChain;
+  }
+
+  /// Cancel-then-schedule for one reminder (cancel only if it's disabled).
+  Future<void> _rescheduleReminder(Reminder r) => _enqueueNotif(() async {
         await _cancelReminder(r);
-        await _scheduleReminder(r);
-      }
+        if (r.enabled) await _scheduleReminder(r);
+      });
+
+  void _rescheduleAllReminders() {
+    for (final r in reminders) {
+      if (r.enabled) _rescheduleReminder(r);
     }
   }
 
   Future<void> _saveReminders() async {
     final prefs = await SharedPreferences.getInstance();
-    prefs.setString('reminders', jsonEncode(reminders.map((r) => r.toJson()).toList()));
+    _store(prefs, 'reminders', reminders.map((r) => r.toJson()).toList());
   }
 
   Future<void> _saveBloodwork() async {
     final prefs = await SharedPreferences.getInstance();
-    prefs.setString('bloodwork', jsonEncode(bloodwork.map((b) => b.toJson()).toList()));
+    _store(prefs, 'bloodwork', bloodwork.map((b) => b.toJson()).toList());
   }
 
   Future<void> _scheduleReminder(Reminder reminder) async {
@@ -387,26 +498,37 @@ class _MainScreenState extends State<MainScreen> {
       }
     }
 
-    if (reminder.scheduleMode == 'custom' && reminder.customSlots.isNotEmpty) {
-      // Schedule one weekly-repeating notification per custom slot. Wall-clock
-      // arithmetic happens in tz.local so the slot time survives DST shifts.
+    if (reminder.scheduleMode == 'custom') {
+      // One weekly-repeating notification per slot — except a slot whose next
+      // occurrence was acknowledged (Skip / logged dose), which gets weekly
+      // one-shots until a later reschedule (see customSlotPlans; A3). The
+      // engine's wall-clock dates are rebuilt in tz.local so the slot time
+      // survives DST.
       final nowTz = tz.TZDateTime.from(now, tz.local);
-      for (int i = 0; i < reminder.customSlots.length; i++) {
-        final slot = reminder.customSlots[i];
-        var next = tz.TZDateTime(tz.local, nowTz.year, nowTz.month, nowTz.day, slot.hour, slot.minute);
-        // Advance to the next strictly-future occurrence of the slot weekday
-        while (next.weekday != slot.weekday || !next.isAfter(nowTz)) {
-          next = tz.TZDateTime(tz.local, next.year, next.month, next.day + 1, slot.hour, slot.minute);
+      final base = reminder.notificationIdBase;
+      for (final plan in customSlotPlans(reminder, now)) {
+        final slot = reminder.customSlots[plan.slotIndex];
+        tz.TZDateTime wall(DateTime d) =>
+            tz.TZDateTime(tz.local, d.year, d.month, d.day, slot.hour, slot.minute);
+        if (plan.repeatsWeekly) {
+          await schedule(base + customSlotIdOffset(plan.slotIndex),
+              wall(plan.fireTimes.first), DateTimeComponents.dayOfWeekAndTime);
+          continue;
         }
-        await schedule(reminder.notificationIdBase + i + 1, next, DateTimeComponents.dayOfWeekAndTime);
+        for (int w = 0; w < plan.fireTimes.length; w++) {
+          final when = wall(plan.fireTimes[w]);
+          // Only possible if tz.local isn't the device zone (lookup failed).
+          if (!when.isAfter(nowTz)) continue;
+          await schedule(base + customSlotIdOffset(plan.slotIndex, oneShot: w), when, null);
+        }
       }
     } else {
       // Interval mode: schedule the next few one-shots (fractional spacing
       // drifts the time-of-day, so no repeating matchDateTimeComponents).
-      var cursor = nextOccurrence(reminder, now);
-      for (int i = 0; i < _kIntervalOccurrences; i++) {
-        await schedule(reminder.notificationIdBase + i, tz.TZDateTime.from(cursor, tz.local), null);
-        cursor = cursor.add(Duration(milliseconds: (reminder.intervalDays * 86400000).round()));
+      // A corrupt interval yields none rather than throwing.
+      final times = intervalOccurrences(reminder, now, _kIntervalOccurrences);
+      for (int i = 0; i < times.length; i++) {
+        await schedule(reminder.notificationIdBase + i, tz.TZDateTime.from(times[i], tz.local), null);
       }
     }
 
@@ -483,10 +605,22 @@ class _MainScreenState extends State<MainScreen> {
     final raw = prefs.getString(key);
     if (raw == null) return const [];
     try {
-      return (jsonDecode(raw) as List).cast<String>();
+      return (jsonDecode(raw) as List).whereType<String>().toList();
     } catch (_) {
       return const [];
     }
+  }
+
+  /// Raw text set aside by a lossy load (see _setAside), keyed by prefs key.
+  Map<String, String> _setAsideData(SharedPreferences prefs) {
+    final out = <String, String>{};
+    for (final k in prefs.getKeys()) {
+      final v = prefs.get(k);
+      if (v is String && _kDataKeys.any((d) => k.startsWith(unreadableKeyPrefix(d)))) {
+        out[k] = v;
+      }
+    }
+    return out;
   }
 
   /// F1: full-state backup — everything SharedPreferences holds, as one
@@ -501,6 +635,7 @@ class _MainScreenState extends State<MainScreen> {
         customSitesIM: _readSites(prefs, 'customSitesIM'),
         customSitesSubQ: _readSites(prefs, 'customSitesSubQ'),
         bloodwork: bloodwork,
+        unreadable: _setAsideData(prefs),
       );
       final dir = await getTemporaryDirectory();
       final d = DateTime.now();
@@ -553,9 +688,17 @@ class _MainScreenState extends State<MainScreen> {
           res.changedReminders +
           res.newBloodwork +
           newSites;
+      // Malformed / invalid entries in the file are left out (A7).
+      final invalid = data.skipped == 0
+          ? null
+          : '${data.skipped} invalid ${data.skipped == 1 ? 'entry' : 'entries'} in the file';
       if (changes == 0) {
-        _snack('Backup matches current data — nothing to merge',
-            color: AppTheme.warm, dark: true);
+        _snack(
+            invalid == null
+                ? 'Backup matches current data — nothing to merge'
+                : 'Nothing new to merge — $invalid ${data.skipped == 1 ? 'was' : 'were'} skipped',
+            color: AppTheme.warm,
+            dark: true);
         return;
       }
 
@@ -570,6 +713,7 @@ class _MainScreenState extends State<MainScreen> {
             '${res.newInjections} new logs, ${res.changedCompounds} compound '
             'updates, ${res.changedReminders} reminder updates, '
             '${res.newBloodwork} lab results, $newSites new sites. '
+            '${invalid == null ? '' : '$invalid will be skipped. '}'
             'Existing data is never deleted.',
             style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5),
           ),
@@ -599,7 +743,7 @@ class _MainScreenState extends State<MainScreen> {
       await _saveBloodwork();
       await prefs.setString('customSitesIM', jsonEncode(res.customSitesIM));
       await prefs.setString('customSitesSubQ', jsonEncode(res.customSitesSubQ));
-      await _rescheduleAllReminders();
+      _rescheduleAllReminders();
       _refreshGraph();
       _snack('Backup merged', color: AppTheme.accentDeep);
     } catch (e) {
@@ -670,16 +814,19 @@ class _MainScreenState extends State<MainScreen> {
     _refreshGraph();
 
     if (advanceReminder) {
+      var changed = false;
       for (int i = 0; i < reminders.length; i++) {
         final r = reminders[i];
         if (r.enabled && r.compoundBase == inj.snapshot.base && r.compoundEster == inj.snapshot.ester) {
-          await _cancelReminder(r);
           final updated = advanceAfterDose(r, inj.date);
+          // A back-dated dose leaves the schedule alone (A4).
+          if (identical(updated, r)) continue;
           reminders[i] = updated;
-          await _scheduleReminder(updated);
+          changed = true;
+          _rescheduleReminder(updated);
         }
       }
-      _saveReminders();
+      if (changed) _saveReminders();
     }
   }
 
@@ -837,7 +984,7 @@ class _MainScreenState extends State<MainScreen> {
         onSave: _upsertReminder,
         onDelete: editing != null
             ? () {
-                _cancelReminder(editing);
+                _enqueueNotif(() => _cancelReminder(editing));
                 setState(() => reminders.removeWhere((x) => x.id == editing.id));
                 _saveReminders();
               }
@@ -856,8 +1003,7 @@ class _MainScreenState extends State<MainScreen> {
       }
     });
     _saveReminders();
-    _cancelReminder(r);
-    if (r.enabled) _scheduleReminder(r);
+    _rescheduleReminder(r);
   }
 
   void _toggleReminderEnabled(Reminder r) {
@@ -867,22 +1013,21 @@ class _MainScreenState extends State<MainScreen> {
       if (i >= 0) reminders[i] = updated;
     });
     _saveReminders();
-    if (updated.enabled) {
-      _scheduleReminder(updated);
-    } else {
-      _cancelReminder(updated);
-    }
+    _rescheduleReminder(updated);
   }
 
-  void _skipReminder(Reminder r) {
-    final updated = advanceAfterSkip(r, now: DateTime.now());
+  void _skipReminder(Reminder r, {bool fromNotification = false}) {
+    final now = DateTime.now();
+    final updated = fromNotification
+        ? advanceAfterNotificationSkip(r, now: now)
+        : advanceAfterSkip(r, now: now);
+    if (identical(updated, r)) return;
     setState(() {
       final i = reminders.indexWhere((x) => x.id == r.id);
       if (i >= 0) reminders[i] = updated;
     });
     _saveReminders();
-    _cancelReminder(updated);
-    if (updated.enabled) _scheduleReminder(updated);
+    _rescheduleReminder(updated);
   }
 
   DateTime _calendarSelectedDay = DateTime.now();

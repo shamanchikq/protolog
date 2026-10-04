@@ -28,6 +28,10 @@ String capitalize(String s) {
 }
 
 /// Parses user-typed numbers accepting both '.' and ',' as the decimal
-/// separator (EU keyboards emit commas on decimal keypads). Null if invalid.
-double? parseFlexibleDouble(String text) =>
-    double.tryParse(text.trim().replaceAll(',', '.'));
+/// separator (EU keyboards emit commas on decimal keypads). Null if invalid
+/// or non-finite ("Infinity", "NaN", "1e999") — those pass `> 0` checks but
+/// make `jsonEncode` throw on save and break the PK math.
+double? parseFlexibleDouble(String text) {
+  final v = double.tryParse(text.trim().replaceAll(',', '.'));
+  return v != null && v.isFinite ? v : null;
+}

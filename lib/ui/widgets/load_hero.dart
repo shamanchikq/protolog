@@ -67,22 +67,33 @@ class _PaperPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final whole = total.floor();
-    final frac = ((total - whole) * 10).round().clamp(0, 9);
+    // Non-finite values (legacy bad data) render as "—" rather than throwing
+    // in floor()/round() during build. total * 10 must be finite too.
+    final showTotal = total.isFinite && (total * 10).isFinite;
+    // Round once to tenths, then split, so 12.96 reads 13.0 (not 12.9).
+    final totalTenths = showTotal ? (total * 10).round() : 0;
+    final whole = totalTenths ~/ 10;
+    final frac = totalTenths.remainder(10).abs();
+    final showDelta = delta.isFinite && (delta * 10).isFinite;
+    // Arrow and sign follow the displayed (rounded) delta, so a value in
+    // (−0.05, 0) reads "→ +0.0" rather than "−0.0".
+    final deltaTenths = showDelta ? (delta * 10).round() : 0;
 
     String arrow;
     Color arrowColor;
-    if (delta >= 0.05) {
+    if (deltaTenths > 0) {
       arrow = '↗';
       arrowColor = AppTheme.accentDeep;
-    } else if (delta <= -0.05) {
+    } else if (deltaTenths < 0) {
       arrow = '↘';
       arrowColor = AppTheme.warn;
     } else {
       arrow = '→';
       arrowColor = AppTheme.paperInk.withValues(alpha: 0.55);
     }
-    final deltaStr = '${delta >= 0 ? '+' : '−'}${delta.abs().toStringAsFixed(1)}';
+    final deltaStr = showDelta
+        ? '${deltaTenths < 0 ? '−' : '+'}${(deltaTenths.abs() / 10).toStringAsFixed(1)}'
+        : '—';
 
     // Padding grows a little with scale so the content breathes inside a taller card.
     final padV = 16.0 + (scale - 1.0) * 10.0;
@@ -110,7 +121,7 @@ class _PaperPanel extends StatelessWidget {
                 textBaseline: TextBaseline.alphabetic,
                 children: [
                   Text(
-                    '$whole',
+                    showTotal ? '$whole' : '—',
                     style: AppTheme.serif(
                       size: 48 * scale,
                       weight: FontWeight.w500,
@@ -119,15 +130,16 @@ class _PaperPanel extends StatelessWidget {
                       height: 1,
                     ),
                   ),
-                  Text(
-                    '.$frac',
-                    style: AppTheme.serif(
-                      size: 28 * scale,
-                      weight: FontWeight.w400,
-                      color: AppTheme.paperInk.withValues(alpha: 0.5),
-                      height: 1,
+                  if (showTotal)
+                    Text(
+                      '.$frac',
+                      style: AppTheme.serif(
+                        size: 28 * scale,
+                        weight: FontWeight.w400,
+                        color: AppTheme.paperInk.withValues(alpha: 0.5),
+                        height: 1,
+                      ),
                     ),
-                  ),
                   SizedBox(width: 4 * scale),
                   Text(
                     'mg',
@@ -238,7 +250,8 @@ class _BreakdownRow extends StatelessWidget {
                 style: AppTheme.sans(size: 11),
               ),
             ),
-            Text(row.valueMg.toStringAsFixed(0), style: AppTheme.mono(size: 11)),
+            Text(row.valueMg.isFinite ? row.valueMg.toStringAsFixed(0) : '—',
+                style: AppTheme.mono(size: 11)),
           ],
         ),
         const SizedBox(height: 4),
@@ -248,7 +261,8 @@ class _BreakdownRow extends StatelessWidget {
             children: [
               Container(color: AppTheme.surface2),
               FractionallySizedBox(
-                widthFactor: row.shareOfTotal.clamp(0.0, 1.0),
+                // NaN.clamp() yields 1.0 — a non-finite share draws no bar.
+                widthFactor: row.shareOfTotal.isFinite ? row.shareOfTotal.clamp(0.0, 1.0) : 0.0,
                 child: Container(color: row.color),
               ),
             ],

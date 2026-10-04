@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:protolog_tracker/models.dart';
 import 'package:protolog_tracker/engine/backup.dart';
@@ -191,6 +192,144 @@ void main() {
       );
       expect(res.customSitesIM, ['Quad sweep L', 'Pec R']);
       expect(res.customSitesSubQ, ['Navel L']);
+    });
+  });
+
+  group('decodeBackup drops invalid records (A7)', () {
+    String envelope(Map<String, Object?> sections) => jsonEncode({
+          'app': 'protolog',
+          'schemaVersion': 1,
+          'injections': [],
+          'compounds': [],
+          'reminders': [],
+          'customSitesIM': [],
+          'customSitesSubQ': [],
+          ...sections,
+        });
+    Map<String, dynamic> json(Reminder r) => jsonDecode(jsonEncode(r.toJson()));
+
+    test('a clean file skips nothing', () {
+      final data = decodeBackup(encodeBackup(
+        injections: [_inj('i1')],
+        compounds: [_testE],
+        reminders: [_rem('r1')],
+        customSitesIM: ['Delt L'],
+        customSitesSubQ: [],
+      ))!;
+      expect(data.skipped, 0);
+    });
+
+    test('a weekday-0 reminder is dropped (its slot loop hung every launch)', () {
+      final bad = json(_rem('bad'))
+        ..['scheduleMode'] = 'custom'
+        ..['customSlots'] = [
+          {'weekday': 0, 'hour': 8, 'minute': 0},
+        ];
+      final data = decodeBackup(envelope({
+        'reminders': [_rem('ok').toJson(), bad],
+      }))!;
+      expect(data.reminders.map((r) => r.id), ['ok']);
+      expect(data.skipped, 1);
+    });
+
+    test('interval reminders with a zero, negative or absurd interval are dropped', () {
+      final data = decodeBackup(envelope({
+        'reminders': [
+          json(_rem('zero'))..['intervalDays'] = 0,
+          json(_rem('neg'))..['intervalDays'] = -3.5,
+          json(_rem('huge'))..['intervalDays'] = 1e6,
+          json(_rem('hour'))..['hour'] = 24,
+          _rem('ok').toJson(),
+        ],
+      }))!;
+      expect(data.reminders.map((r) => r.id), ['ok']);
+      expect(data.skipped, 4);
+    });
+
+    test('records with non-finite numbers are dropped, so later saves keep working', () {
+      // jsonEncode can't write Infinity, so splice 1e999 into the text.
+      final text = encodeBackup(
+        injections: [_inj('inf', mg: 123.25), _inj('ok')],
+        compounds: [_testE.copyWith(id: 'hl', halfLife: 7.25)],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        bloodwork: [
+          BloodworkEntry(
+            id: 'bw', date: DateTime(2026, 7, 1), marker: 'E2',
+            value: 42.125, unit: 'pmol/L',
+          ),
+        ],
+        exportedAt: DateTime(2026, 7, 1), // keep the spliced numbers unique
+      )
+          .replaceFirst('123.25', '1e999')
+          .replaceFirst('7.25', '-1e999')
+          .replaceFirst('42.125', '1e999');
+      final data = decodeBackup(text)!;
+      expect(data.injections.map((i) => i.id), ['ok']);
+      expect(data.compounds, isEmpty);
+      expect(data.bloodwork, isEmpty);
+      expect(data.skipped, 3);
+
+      final res = mergeBackup(
+        injections: [],
+        compounds: [],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        incoming: data,
+      );
+      expect(() => jsonEncode(res.injections.map((e) => e.toJson()).toList()),
+          returnsNormally);
+    });
+
+    test('a malformed record costs only itself, not the whole file', () {
+      final data = decodeBackup(envelope({
+        'injections': [_inj('ok').toJson(), {'id': 'no-date'}, 'junk', null],
+      }))!;
+      expect(data.injections.map((i) => i.id), ['ok']);
+      expect(data.skipped, 3);
+    });
+
+    test('non-string custom sites are dropped', () {
+      final data = decodeBackup(envelope({
+        'customSitesIM': ['Delt L', 3, null],
+      }))!;
+      expect(data.customSitesIM, ['Delt L']);
+      expect(data.skipped, 2);
+    });
+
+    test('a section that is not a list still rejects the file', () {
+      expect(decodeBackup(envelope({'reminders': {'id': 'x'}})), isNull);
+      expect(decodeBackup(envelope({'customSitesIM': 'Delt L'})), isNull);
+    });
+  });
+
+  group('set-aside unreadable data', () {
+    test('rides along in the backup file; restore ignores it', () {
+      final text = encodeBackup(
+        injections: [],
+        compounds: [],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+        unreadable: {'reminders_unreadable_1': '[{"id":'},
+      );
+      expect((jsonDecode(text) as Map)['unreadable'], {'reminders_unreadable_1': '[{"id":'});
+      final data = decodeBackup(text)!;
+      expect(data.reminders, isEmpty);
+      expect(data.skipped, 0);
+    });
+
+    test('is omitted when there is none', () {
+      final text = encodeBackup(
+        injections: [],
+        compounds: [],
+        reminders: [],
+        customSitesIM: [],
+        customSitesSubQ: [],
+      );
+      expect((jsonDecode(text) as Map).containsKey('unreadable'), isFalse);
     });
   });
 }

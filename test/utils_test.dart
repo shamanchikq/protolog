@@ -22,5 +22,18 @@ void main() {
     test('returns null for empty', () {
       expect(parseFlexibleDouble(''), isNull);
     });
+
+    test('rejects non-finite values (would break jsonEncode on save)', () {
+      expect(parseFlexibleDouble('Infinity'), isNull);
+      expect(parseFlexibleDouble('-Infinity'), isNull);
+      expect(parseFlexibleDouble('1e999'), isNull);
+      expect(parseFlexibleDouble('-1e999'), isNull);
+      expect(parseFlexibleDouble('NaN'), isNull);
+    });
+
+    test('still accepts padded comma decimals and exponents', () {
+      expect(parseFlexibleDouble(' 3,5 '), 3.5);
+      expect(parseFlexibleDouble('1e3'), 1000.0);
+    });
   });
 }

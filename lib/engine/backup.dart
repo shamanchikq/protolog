@@ -1,5 +1,7 @@
 import 'dart:convert';
 import '../models.dart';
+import 'record_validation.dart';
+import 'stored_data.dart';
 
 /// Full-state backup serde + merge. The envelope is versioned so future
 /// schema changes can migrate instead of rejecting old files.
@@ -13,6 +15,10 @@ class BackupData {
   final List<String> customSitesSubQ;
   final List<BloodworkEntry> bloodwork;
 
+  /// Entries in the file that were malformed or failed validation and were
+  /// left out (shown in the restore preview).
+  final int skipped;
+
   const BackupData({
     required this.injections,
     required this.compounds,
@@ -20,6 +26,7 @@ class BackupData {
     required this.customSitesIM,
     required this.customSitesSubQ,
     this.bloodwork = const [],
+    this.skipped = 0,
   });
 }
 
@@ -56,6 +63,7 @@ String encodeBackup({
   required List<String> customSitesIM,
   required List<String> customSitesSubQ,
   List<BloodworkEntry> bloodwork = const [],
+  Map<String, String> unreadable = const {},
   DateTime? exportedAt,
 }) {
   return jsonEncode({
@@ -68,11 +76,18 @@ String encodeBackup({
     'customSitesIM': customSitesIM,
     'customSitesSubQ': customSitesSubQ,
     'bloodwork': bloodwork.map((e) => e.toJson()).toList(),
+    // Raw stored text the app set aside at load because it couldn't read it
+    // (A7) — carried out for manual recovery; restore ignores it.
+    if (unreadable.isNotEmpty) 'unreadable': unreadable,
   });
 }
 
 /// Returns null for anything that isn't a ProtoLog backup (bad JSON, foreign
-/// envelope, newer schema than this build understands, malformed entries).
+/// envelope, newer schema than this build understands, a section that isn't
+/// a list). Individual entries that are malformed or fail semantic
+/// validation (record_validation.dart) are dropped and counted in
+/// [BackupData.skipped] rather than rejecting the file: the good data stays
+/// restorable, and the file itself is never modified.
 BackupData? decodeBackup(String text) {
   try {
     final root = jsonDecode(text);
@@ -81,18 +96,40 @@ BackupData? decodeBackup(String text) {
     final version = root['schemaVersion'];
     if (version is! int || version > backupSchemaVersion) return null;
 
-    List<T> parseList<T>(String key, T Function(Map<String, dynamic>) fromJson) =>
-        ((root[key] as List?) ?? const [])
-            .map((e) => fromJson(e as Map<String, dynamic>))
-            .toList();
+    var skipped = 0;
+    List<T> records<T>(
+      String key,
+      T Function(Map<String, dynamic>) fromJson,
+      bool Function(T) isValid,
+    ) {
+      final res = decodeRecords(root[key] ?? const [], fromJson, isValid: isValid);
+      if (res.unreadable) throw FormatException('"$key" is not a list');
+      skipped += res.skipped;
+      return res.items;
+    }
 
+    List<String> sites(String key) {
+      final list = root[key] ?? const [];
+      if (list is! List) throw FormatException('"$key" is not a list');
+      final out = list.whereType<String>().toList();
+      skipped += list.length - out.length;
+      return out;
+    }
+
+    final injections = records('injections', Injection.fromJson, isValidInjection);
+    final compounds = records('compounds', CompoundDefinition.fromJson, isValidCompound);
+    final reminders = records('reminders', Reminder.fromJson, isValidReminder);
+    final bloodwork = records('bloodwork', BloodworkEntry.fromJson, isValidBloodwork);
+    final sitesIM = sites('customSitesIM');
+    final sitesSubQ = sites('customSitesSubQ');
     return BackupData(
-      injections: parseList('injections', Injection.fromJson),
-      compounds: parseList('compounds', CompoundDefinition.fromJson),
-      reminders: parseList('reminders', Reminder.fromJson),
-      customSitesIM: ((root['customSitesIM'] as List?) ?? const []).cast<String>(),
-      customSitesSubQ: ((root['customSitesSubQ'] as List?) ?? const []).cast<String>(),
-      bloodwork: parseList('bloodwork', BloodworkEntry.fromJson),
+      injections: injections,
+      compounds: compounds,
+      reminders: reminders,
+      customSitesIM: sitesIM,
+      customSitesSubQ: sitesSubQ,
+      bloodwork: bloodwork,
+      skipped: skipped,
     );
   } catch (_) {
     return null;

@@ -1,5 +1,6 @@
 import '../models.dart';
 import '../data.dart';
+import 'compute_engine.dart';
 
 /// Most-recent injection date for (base, ester), or null when none.
 DateTime? lastInjectionFor({
@@ -32,8 +33,10 @@ String formatUsedAgo(DateTime? when, {DateTime? now}) {
 }
 
 /// True when the most-recent injection of `compound` (matched by base+ester)
-/// is within its PK-relevance window. Window = halfLife * 8 days; falls back
-/// to 7 days when halfLife <= 0 (event-only compounds).
+/// is within its PK-relevance window — the shared [relevanceWindowDays] rule
+/// (effective half-life × 8; blends use their longest component). Falls back
+/// to 7 days when the half-life is unusable (≤ 0 / non-finite), so a logged
+/// compound still lists even though it has no modelled contribution.
 bool isInProtocol({
   required CompoundDefinition compound,
   required List<Injection> injections,
@@ -46,7 +49,8 @@ bool isInProtocol({
   );
   if (last == null) return false;
   final n = now ?? DateTime.now();
-  final windowDays = compound.halfLife > 0 ? compound.halfLife * 8 : 7.0;
+  final pkWindow = relevanceWindowDays(compound);
+  final windowDays = pkWindow > 0 ? pkWindow : 7.0;
   final ageDays = n.difference(last).inSeconds / 86400.0;
   return ageDays <= windowDays;
 }
