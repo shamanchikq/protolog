@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ backup rules (audit D3). See the comment on <application> in AndroidManifest.xml.
+
+     cloud-backup: every storage domain excluded, so nothing (dose log, bloodwork, reminders,
+     settings) is ever uploaded to Google's backup servers. allowBackup="false" already disables
+     cloud backup; this keeps it off even if that attribute is changed later.
+
+     device-transfer: intentionally omitted, which means "transfer everything". A device-to-device
+     transfer is started by the user while setting up a new phone and stays local. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
+    </cloud-backup>
+</data-extraction-rules>

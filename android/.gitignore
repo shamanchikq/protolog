@@ -1,5 +1,8 @@
 gradle-wrapper.jar
 /.gradle
+# Gradle 9 problems report (android/build/reports/problems) and Kotlin daemon session data
+/build/
+.kotlin/
 /captures/
 /gradlew
 /gradlew.bat

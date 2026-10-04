@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar / notification small icon (audit D7): a capped vial, part-filled.
+     Android draws small icons as an alpha mask, so this must stay white-on-transparent
+     (the full-colour launcher icon renders as a white square).
+     Referenced only from Dart by name ('ic_stat_protolog'); res/raw/keep.xml stops the
+     release resource shrinker from removing it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Crimp cap -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7,1H17A1,1 0 0 1 18,2V4A1,1 0 0 1 17,5H7A1,1 0 0 1 6,4V2A1,1 0 0 1 7,1Z" />
+    <!-- Body: rounded-bottom outline, cut-out headspace, solid liquid below it -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M7,6.5H17V20A3,3 0 0 1 14,23H10A3,3 0 0 1 7,20Z M9,8.5V12.5H15V8.5Z" />
+</vector>
