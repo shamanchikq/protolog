@@ -352,7 +352,7 @@ class LocalNotificationsBackend implements NotificationBackend {
     );
     const initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
     await _plugin.initialize(
-      initSettings,
+      settings: initSettings,
       onDidReceiveNotificationResponse: (resp) => onTap(resp.payload, resp.actionId),
     );
   }
@@ -429,16 +429,15 @@ class LocalNotificationsBackend implements NotificationBackend {
       return;
     }
     await _plugin.zonedSchedule(
-      n.id,
-      n.title,
-      n.body,
-      when,
-      _details,
+      id: n.id,
+      title: n.title,
+      body: n.body,
+      scheduledDate: when,
+      notificationDetails: _details,
       androidScheduleMode: exact
           ? AndroidScheduleMode.exactAllowWhileIdle
           : AndroidScheduleMode.inexactAllowWhileIdle,
       payload: n.payload,
-      uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
       matchDateTimeComponents: n.repeatsWeekly ? DateTimeComponents.dayOfWeekAndTime : null,
     );
   }
@@ -448,5 +447,5 @@ class LocalNotificationsBackend implements NotificationBackend {
       {for (final p in await _plugin.pendingNotificationRequests()) p.id};
 
   @override
-  Future<void> cancel(int id) => _plugin.cancel(id);
+  Future<void> cancel(int id) => _plugin.cancel(id: id);
 }
