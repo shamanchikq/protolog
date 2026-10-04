@@ -103,7 +103,7 @@ double tickTextWidth(String text) {
   final tp = TextPainter(
     text: TextSpan(
       text: text,
-      style: AppTheme.mono(color: AppTheme.fgDim, size: 9, weight: FontWeight.w400),
+      style: AppTheme.mono(color: AppTheme.fgDimText, size: 9, weight: FontWeight.w400),
     ),
     textDirection: TextDirection.ltr,
   )..layout();

@@ -9,6 +9,7 @@ import 'package:protolog_tracker/main.dart';
 import 'package:protolog_tracker/models.dart';
 import 'package:protolog_tracker/services/app_store.dart';
 import 'package:protolog_tracker/services/backup_io.dart';
+import 'package:protolog_tracker/ui/theme.dart';
 import 'package:protolog_tracker/ui/views/add_injection_wizard.dart';
 import 'package:protolog_tracker/ui/views/calendar_page.dart';
 import 'package:protolog_tracker/ui/views/compound_detail_page.dart';
@@ -415,6 +416,10 @@ void main() {
     await _settle(tester);
 
     expect(find.textContaining("Couldn't save your latest change"), findsOneWidget);
+    // Dark ink on the warn background: light text there is only 2.6:1.
+    expect(
+        tester.widget<Text>(find.textContaining("Couldn't save your latest change")).style?.color,
+        AppTheme.bg);
     expect(prefs.writes, contains('reminders'));
     expect(DateTime.parse(_storedReminder(prefs)['anchorDate'] as String), anchor);
   });

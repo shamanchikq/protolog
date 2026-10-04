@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../theme.dart';
+import 'lab_tap.dart';
+import 'tap_target.dart';
 
 enum ShellTab { today, calendar, library, reminders }
 
@@ -23,22 +25,25 @@ class ProtoLogShell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.bg,
-      body: SafeArea(
-        child: Stack(
-          children: [
-            Column(
-              children: [
-                _TopBar(active: activeTab, onChange: onTabChanged),
-                Expanded(child: body),
-              ],
-            ),
-            if (onFabPressed != null)
-              Positioned(
-                right: 18,
-                bottom: 18,
-                child: _Fab(onPressed: onFabPressed!, label: fabLabel),
+      // Every tab body and page in the shell gets 48 dp touch targets.
+      body: TapTargetScope(
+        child: SafeArea(
+          child: Stack(
+            children: [
+              Column(
+                children: [
+                  _TopBar(active: activeTab, onChange: onTabChanged),
+                  Expanded(child: body),
+                ],
               ),
-          ],
+              if (onFabPressed != null)
+                Positioned(
+                  right: 18,
+                  bottom: 18,
+                  child: _Fab(onPressed: onFabPressed!, label: fabLabel),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -86,7 +91,10 @@ class _TopBar extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              Text('protolog', style: AppTheme.sans(size: 16, weight: FontWeight.w600, letterSpacing: -0.3)),
+              Semantics(
+                header: true,
+                child: Text('protolog', style: AppTheme.sans(size: 16, weight: FontWeight.w600, letterSpacing: -0.3)),
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -123,9 +131,10 @@ class _Tab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return LabTap(
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
+      selected: active,
+      inMutuallyExclusiveGroup: true,
       child: Container(
         padding: const EdgeInsets.only(top: 10, bottom: 12),
         decoration: BoxDecoration(
@@ -158,9 +167,10 @@ class _Fab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasLabel = label != null && label!.isNotEmpty;
-    return GestureDetector(
+    return LabTap(
       onTap: onPressed,
-      behavior: HitTestBehavior.opaque,
+      // The "+" glyph isn't spoken: just "Log dose".
+      label: hasLabel ? label : 'Add',
       child: Container(
         height: hasLabel ? 52 : 56,
         width: hasLabel ? null : 56,

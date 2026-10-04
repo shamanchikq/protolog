@@ -156,7 +156,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         color: AppTheme.warn,
         duration: const Duration(seconds: 8),
         action: SnackBarAction(
-            label: 'Allow', textColor: AppTheme.fg, onPressed: _requestNotificationPermission));
+            label: 'Allow', textColor: AppTheme.bg, onPressed: _requestNotificationPermission));
   }
 
   /// Asks the OS again (the snackbar's and the Reminders banner's button).
@@ -297,8 +297,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     });
   }
 
-  /// Lab Sheet-styled snackbar. `color` is the background; `dark` switches the
-  /// text to bg-on-light for warm/light backgrounds.
+  /// Lab Sheet-styled snackbar. `color` is the background; text switches to
+  /// bg ink on light backgrounds (warm, warn) so it stays readable — fg on
+  /// warn is only 2.6:1 — and `dark` forces that.
   void _snack(
     String message, {
     Color color = AppTheme.surface2,
@@ -307,10 +308,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     SnackBarAction? action,
   }) {
     if (!mounted) return;
+    final darkText = dark || color.computeLuminance() > 0.2;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(
         message,
-        style: AppTheme.sans(size: 12, color: dark ? AppTheme.bg : AppTheme.fg),
+        style: AppTheme.sans(size: 12, color: darkText ? AppTheme.bg : AppTheme.fg),
       ),
       backgroundColor: color,
       duration: duration,

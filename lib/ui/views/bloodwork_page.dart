@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import '../../models.dart';
 import '../../engine/bloodwork_stats.dart';
@@ -5,6 +7,9 @@ import '../format.dart';
 import '../theme.dart';
 import '../widgets/lab_primitives.dart';
 import '../widgets/bloodwork_editor_dialog.dart';
+import '../widgets/lab_tap.dart';
+import '../widgets/pk_graph_painter.dart' show chartTextScaler;
+import '../widgets/tap_target.dart';
 
 /// Full bloodwork page (F6 rework): per-marker trend chart in the marker's
 /// own units plus the complete history with deltas. Owns a working copy of
@@ -186,194 +191,205 @@ class _BloodworkPageState extends State<BloodworkPage> {
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 18, 14, 0),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Bloodwork',
-                          style: AppTheme.serif(
-                            size: 26,
-                            weight: FontWeight.w500,
-                            color: AppTheme.fg,
-                            letterSpacing: -0.5,
-                            height: 1,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          '${_entries.length} result${_entries.length == 1 ? '' : 's'}'
-                          '${markers.isNotEmpty ? ' · ${markers.length} marker${markers.length == 1 ? '' : 's'}' : ''}',
-                          style: AppTheme.sans(
-                            size: 11,
-                            color: AppTheme.fgMute,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  LabPill(
-                    label: '+ Add',
-                    primary: true,
-                    onTap: () => _openEditor(),
-                  ),
-                  const SizedBox(width: 6),
-                  LabPill(
-                    label: 'Close',
-                    onTap: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            SizedBox(
-              height: 30,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                children: [
-                  for (final m in markers) ...[
-                    LabPill(
-                      label: m,
-                      active: m == _selected,
-                      onTap: () => setState(() {
-                        _selected = m;
-                        _unit = null;
-                      }),
-                    ),
-                    const SizedBox(width: 6),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            Expanded(
-              child: _entries.isEmpty
-                  ? Center(
-                      child: Text(
-                        'No lab results yet.',
-                        style: AppTheme.sans(size: 12, color: AppTheme.fgDim),
-                      ),
-                    )
-                  : ListView(
-                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 24),
-                      children: [
-                        // Trend chart in the marker's own units.
-                        Container(
-                          decoration: BoxDecoration(
-                            color: AppTheme.surface,
-                            border: Border.all(
-                              color: AppTheme.border,
-                              width: 1,
+      body: TapTargetScope(
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 18, 14, 0),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Bloodwork',
+                            style: AppTheme.serif(
+                              size: 26,
+                              weight: FontWeight.w500,
+                              color: AppTheme.fg,
+                              letterSpacing: -0.5,
+                              height: 1,
                             ),
                           ),
-                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      '${_selected ?? ''}  ·  $unit',
-                                      style: AppTheme.sans(
-                                        size: 11,
-                                        color: AppTheme.fgMute,
+                          const SizedBox(height: 6),
+                          Text(
+                            '${_entries.length} result${_entries.length == 1 ? '' : 's'}'
+                            '${markers.isNotEmpty ? ' · ${markers.length} marker${markers.length == 1 ? '' : 's'}' : ''}',
+                            style: AppTheme.sans(
+                              size: 11,
+                              color: AppTheme.fgMute,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    LabPill(
+                      label: '+ Add',
+                      primary: true,
+                      onTap: () => _openEditor(),
+                    ),
+                    const SizedBox(width: 6),
+                    LabPill(
+                      label: 'Close',
+                      onTap: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: 30,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  children: [
+                    for (final m in markers) ...[
+                      LabPill(
+                        label: m,
+                        active: m == _selected,
+                        onTap: () => setState(() {
+                          _selected = m;
+                          _unit = null;
+                        }),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              Expanded(
+                child: _entries.isEmpty
+                    ? Center(
+                        child: Text(
+                          'No lab results yet.',
+                          style: AppTheme.sans(size: 12, color: AppTheme.fgDimText),
+                        ),
+                      )
+                    : ListView(
+                        padding: const EdgeInsets.fromLTRB(14, 0, 14, 24),
+                        children: [
+                          // Trend chart in the marker's own units.
+                          Container(
+                            decoration: BoxDecoration(
+                              color: AppTheme.surface,
+                              border: Border.all(
+                                color: AppTheme.border,
+                                width: 1,
+                              ),
+                            ),
+                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '${_selected ?? ''}  ·  $unit',
+                                        style: AppTheme.sans(
+                                          size: 11,
+                                          color: AppTheme.fgMute,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  if (canOverlay)
-                                    LabPill(
-                                      label: 'PK overlay',
-                                      active: _showPk,
-                                      onTap: () =>
-                                          setState(() => _showPk = !_showPk),
-                                    ),
-                                ],
-                              ),
-                              if (units.length > 1) ...[
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Mixed units — plotting one at a time',
-                                  style: AppTheme.sans(
-                                    size: 10,
-                                    color: AppTheme.fgDim,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Wrap(
-                                  spacing: 6,
-                                  runSpacing: 6,
-                                  children: [
-                                    for (final u in units)
+                                    if (canOverlay)
                                       LabPill(
-                                        label: u,
-                                        active: unitKey(u) == unitKey(unit),
-                                        onTap: () => setState(() => _unit = u),
+                                        label: 'PK overlay',
+                                        active: _showPk,
+                                        onTap: () =>
+                                            setState(() => _showPk = !_showPk),
                                       ),
                                   ],
                                 ),
-                              ],
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                height: 160,
-                                width: double.infinity,
-                                child: history.length < 2
-                                    ? Center(
-                                        child: Text(
-                                          history.length == 1
-                                              ? '${formatLabValue(history.first.value)} $unit — one draw so far; trends appear with the next one.'
-                                              : 'No draws for this marker.',
-                                          style: AppTheme.sans(
-                                            size: 11,
-                                            color: AppTheme.fgDim,
+                                if (units.length > 1) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Mixed units — plotting one at a time',
+                                    style: AppTheme.sans(
+                                      size: 10,
+                                      color: AppTheme.fgDimText,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 6,
+                                    children: [
+                                      for (final u in units)
+                                        LabPill(
+                                          label: u,
+                                          active: unitKey(u) == unitKey(unit),
+                                          onTap: () => setState(() => _unit = u),
+                                        ),
+                                    ],
+                                  ),
+                                ],
+                                const SizedBox(height: 8),
+                                SizedBox(
+                                  height: 160,
+                                  width: double.infinity,
+                                  child: history.length < 2
+                                      ? Center(
+                                          child: Text(
+                                            history.length == 1
+                                                ? '${formatLabValue(history.first.value)} $unit — one draw so far; trends appear with the next one.'
+                                                : 'No draws for this marker.',
+                                            style: AppTheme.sans(
+                                              size: 11,
+                                              color: AppTheme.fgDimText,
+                                            ),
+                                          ),
+                                        )
+                                      : Semantics(
+                                          container: true,
+                                          label: bloodworkTrendSemanticsLabel(
+                                            history,
+                                            unit: unit,
+                                            overlay: pkCurves.isNotEmpty || pkLanes.isNotEmpty,
+                                          ),
+                                          child: CustomPaint(
+                                            painter: _TrendPainter(
+                                              history: history,
+                                              pkCurves: pkCurves,
+                                              lanes: pkLanes,
+                                              textScaler: chartTextScaler(context),
+                                            ),
                                           ),
                                         ),
-                                      )
-                                    : CustomPaint(
-                                        painter: _TrendPainter(
-                                          history: history,
-                                          pkCurves: pkCurves,
-                                          lanes: pkLanes,
-                                        ),
-                                      ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        // Full history for the selected marker, newest first.
-                        Container(
-                          decoration: BoxDecoration(
-                            color: AppTheme.surface,
-                            border: Border.all(
-                              color: AppTheme.border,
-                              width: 1,
+                                ),
+                              ],
                             ),
                           ),
-                          child: Column(
-                            children: [
-                              for (int i = allHistory.length - 1; i >= 0; i--)
-                                _historyRow(
-                                  allHistory[i],
-                                  first: i == allHistory.length - 1,
-                                ),
-                            ],
+                          const SizedBox(height: 18),
+                          // Full history for the selected marker, newest first.
+                          Container(
+                            decoration: BoxDecoration(
+                              color: AppTheme.surface,
+                              border: Border.all(
+                                color: AppTheme.border,
+                                width: 1,
+                              ),
+                            ),
+                            child: Column(
+                              children: [
+                                for (int i = allHistory.length - 1; i >= 0; i--)
+                                  _historyRow(
+                                    allHistory[i],
+                                    first: i == allHistory.length - 1,
+                                  ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-            ),
-          ],
+                        ],
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -384,8 +400,8 @@ class _BloodworkPageState extends State<BloodworkPage> {
     final deltaStr = prev == null ? '' : formatLabDelta(e.value, prev.value);
     // Neutral: direction isn't universally good or bad across markers.
     const deltaColor = AppTheme.fgMute;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
+    return LabTap(
+      hint: 'Edit lab result',
       onTap: () => _openEditor(editing: e),
       child: Container(
         decoration: BoxDecoration(
@@ -419,6 +435,21 @@ class _BloodworkPageState extends State<BloodworkPage> {
   }
 }
 
+/// What a screen reader says for the trend chart, e.g. "Total T trend,
+/// 3 draws: 30 nmol/L on May 1 to 38.5 nmol/L on Jul 1."
+String bloodworkTrendSemanticsLabel(List<BloodworkEntry> history,
+    {required String unit, bool overlay = false}) {
+  if (history.isEmpty) return '';
+  final first = history.first, last = history.last;
+  String reading(BloodworkEntry e) =>
+      '${formatLabValue(e.value)} $unit'.trim();
+  final b = StringBuffer('${first.marker} trend, ${history.length} draws: '
+      '${reading(first)} on ${formatMonthDay(first.date)} to '
+      '${reading(last)} on ${formatMonthDay(last.date)}.');
+  if (overlay) b.write(' With modeled compound levels behind it.');
+  return b.toString();
+}
+
 /// Time-proportional line chart of one marker's history in its own units.
 /// Optionally layers per-compound modeled curves (shared 0..1 scale, like
 /// the main PK chart) and thin peptide/ancillary activity lanes behind the
@@ -427,10 +458,15 @@ class _TrendPainter extends CustomPainter {
   final List<BloodworkEntry> history; // oldest first, length >= 2
   final List<(Color, List<double>)> pkCurves; // normalized, shared scale
   final List<(Color, List<double>)> lanes; // per-base activity strips
+
+  /// The system text scale for the value and date labels (capped, see
+  /// chartTextScaler).
+  final TextScaler textScaler;
   _TrendPainter({
     required this.history,
     this.pkCurves = const [],
     this.lanes = const [],
+    this.textScaler = TextScaler.noScaling,
   });
 
   @override
@@ -531,7 +567,7 @@ class _TrendPainter extends CustomPainter {
     canvas.drawPath(path, line);
 
     final dot = Paint()..color = AppTheme.warm;
-    final tp = TextPainter(textDirection: TextDirection.ltr);
+    final tp = TextPainter(textDirection: TextDirection.ltr, textScaler: textScaler);
     for (final e in history) {
       final p = pos(e);
       canvas.drawCircle(p, 3, dot);
@@ -544,7 +580,8 @@ class _TrendPainter extends CustomPainter {
         canvas,
         Offset(
           (p.dx - tp.width / 2).clamp(0, size.width - tp.width),
-          p.dy - 14,
+          // Above the dot; taller (large) text lifts clear of it.
+          p.dy - math.max(14.0, tp.height + 2),
         ),
       );
     }
@@ -554,14 +591,14 @@ class _TrendPainter extends CustomPainter {
       final p = pos(e);
       tp.text = TextSpan(
         text: formatMonthDay(e.date),
-        style: AppTheme.mono(size: 8, color: AppTheme.fgDim),
+        style: AppTheme.mono(size: 8, color: AppTheme.fgDimText),
       );
       tp.layout();
       tp.paint(
         canvas,
         Offset(
           (p.dx - tp.width / 2).clamp(0, size.width - tp.width),
-          size.height - 11,
+          size.height - math.max(11.0, tp.height),
         ),
       );
     }
@@ -570,5 +607,8 @@ class _TrendPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _TrendPainter old) =>
-      old.history != history || old.pkCurves != pkCurves || old.lanes != lanes;
+      old.history != history ||
+      old.pkCurves != pkCurves ||
+      old.lanes != lanes ||
+      old.textScaler != textScaler;
 }

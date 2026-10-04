@@ -13,11 +13,26 @@ class AppTheme {
   static const borderSoft = Color(0xFF1B1E25);
   static const fg = Color(0xFFECECEC);
   static const fgMute = Color(0xFF9AA0A8);
+
+  /// Decorative dim: borders, dividers, chevrons, disabled controls. Too
+  /// faint for text (~2.8–3.2:1 on the dark surfaces) — use [fgDimText].
   static const fgDim = Color(0xFF5C626C);
+
+  /// The dimmest readable text: ≥ 4.5:1 (WCAG AA) on [bg], [surface] and
+  /// [surface2] — microlabels, hints, chart ticks, empty states (C3).
+  static const fgDimText = Color(0xFF80868F);
   static const accent = Color(0xFF7DD3D0);
   static const accentDeep = Color(0xFF3A6F6D);
   static const warm = Color(0xFFE0B870);
   static const warn = Color(0xFFD27A6B);
+
+  /// Secondary ink on [paper] (≈ [paperInk] at 65 %), ≥ 4.5:1 — small labels
+  /// and units on the LoadHero (C3).
+  static const paperInkMute = Color(0xFF665F55);
+
+  /// [warn] darkened (same hue) to ≥ 4.5:1 on [paper], for the LoadHero's
+  /// falling-trend arrow (C3).
+  static const warnOnPaper = Color(0xFFAC4634);
 
   // Per-compound redesign colors. Keyed by base name (case-insensitive lookup).
   // Returns null when the base name isn't in the override list — callers

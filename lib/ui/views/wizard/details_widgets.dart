@@ -3,6 +3,7 @@ import '../../../models.dart';
 import '../../format.dart';
 import '../../theme.dart';
 import 'wizard_widgets.dart';
+import '../../widgets/lab_tap.dart';
 
 /// Header of the details step: "Step 2 of 2 / Dose & time" with Back, or
 /// "Editing logged dose / Edit dose" with Cancel in edit mode.
@@ -24,7 +25,7 @@ class DetailsHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(isEdit ? 'Editing logged dose' : 'Step 2 of 2',
-                  style: AppTheme.sans(size: 11, color: AppTheme.fgDim)),
+                  style: AppTheme.sans(size: 11, color: AppTheme.fgDimText)),
               const SizedBox(height: 4),
               Text(isEdit ? 'Edit dose' : 'Dose & time',
                   style: AppTheme.serif(
@@ -32,8 +33,7 @@ class DetailsHeader extends StatelessWidget {
             ],
           ),
         ),
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
+        LabTap(
           onTap: onBack,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -113,13 +113,13 @@ class SelectedCompoundChip extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text('t½ ${c.halfLife.toStringAsFixed(1)}d · $concPart',
-                    style: AppTheme.sans(size: 11, color: AppTheme.fgDim)),
+                    style: AppTheme.sans(size: 11, color: AppTheme.fgDimText)),
               ],
             ),
           ),
           if (onChange != null)
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
+            LabTap(
+              label: 'Change compound',
               onTap: onChange,
               child: Text('Change',
                   style: AppTheme.sans(size: 11, color: AppTheme.accent)),
@@ -176,7 +176,7 @@ class NotesSection extends StatelessWidget {
               contentPadding: EdgeInsets.zero,
               border: InputBorder.none,
               hintText: 'Add a note…',
-              hintStyle: AppTheme.sans(size: 13, color: AppTheme.fgDim),
+              hintStyle: AppTheme.sans(size: 13, color: AppTheme.fgDimText),
             ),
           ),
         ),

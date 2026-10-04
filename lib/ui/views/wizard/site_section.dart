@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../../../services/custom_sites_store.dart';
 import '../../theme.dart';
 import 'wizard_widgets.dart';
+import '../../widgets/fixed_grid.dart';
+import '../../widgets/lab_tap.dart';
 
 /// Intramuscular sites (steroids).
 const builtInSitesIM = <String>[
@@ -66,21 +68,16 @@ class SiteSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         WizardSectionTitle('Site', meta: lastSite != null ? 'last: $lastSite' : null),
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
+        FixedGrid(
           itemCount: cellCount,
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
-            mainAxisSpacing: 6,
-            crossAxisSpacing: 6,
-            childAspectRatio: 3.2,
-          ),
+          crossAxisCount: 3,
+          mainAxisSpacing: 6,
+          crossAxisSpacing: 6,
+          childAspectRatio: 3.2,
           itemBuilder: (_, i) {
             if (i == cellCount - 1) {
               // Add-site tile
-              return GestureDetector(
-                behavior: HitTestBehavior.opaque,
+              return LabTap(
                 onTap: onAddSite,
                 child: Container(
                   alignment: Alignment.center,
@@ -89,14 +86,15 @@ class SiteSection extends StatelessWidget {
                   ),
                   child: Text('+ Add site',
                       style: AppTheme.sans(
-                          size: 11.5, weight: FontWeight.w500, color: AppTheme.fgDim)),
+                          size: 11.5, weight: FontWeight.w500, color: AppTheme.fgDimText)),
                 ),
               );
             }
             final s = sites[i];
             final active = s == selected;
-            return GestureDetector(
-              behavior: HitTestBehavior.opaque,
+            return LabTap(
+              selected: active,
+              hint: removableSites.contains(s) ? 'Long-press to remove' : null,
               onTap: () => onSelect(active ? '' : s),
               onLongPress: removableSites.contains(s) ? () => onRemoveSite(s) : null,
               child: Container(

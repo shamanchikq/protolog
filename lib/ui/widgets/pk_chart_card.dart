@@ -1,7 +1,47 @@
 import 'package:flutter/material.dart';
 import '../../models.dart';
 import '../theme.dart';
+import 'lab_tap.dart';
 import 'pk_graph_painter.dart';
+
+/// The PK chart's range pills: (range key, pill label, days back, days
+/// ahead). The spans mirror the engine's windows (computeGraphData) — a test
+/// keeps them in step — and are spoken / shown on long-press, because the
+/// swimlane card's pills of the same name cover other spans.
+const pkChartRanges = <(String, String, int, int)>[
+  ('zoom', '7d', 7, 7),
+  ('standard', '28d', 28, 35),
+  ('cycle', 'Cycle', 90, 30),
+  ('year', '1y', 365, 30),
+];
+
+/// "28 days back, 35 ahead".
+String rangeSpanLabel(int daysBack, int daysAhead) =>
+    '$daysBack ${daysBack == 1 ? 'day' : 'days'} back, $daysAhead ahead';
+
+/// What a screen reader says for the chart itself: its span, the compounds
+/// drawn and the display modes — e.g. "Pharmacokinetics chart, 28 days back,
+/// 35 ahead. Testosterone, Oxandrolone (oral)."
+String pkChartSemanticsLabel(ComputedGraphData? data) {
+  if (data == null) return 'Pharmacokinetics chart, loading';
+  final s = data.settings;
+  final range = pkChartRanges.where((r) => r.$1 == s.timeRange).firstOrNull;
+  final b = StringBuffer('Pharmacokinetics chart');
+  if (range != null) b.write(', ${rangeSpanLabel(range.$3, range.$4)}');
+  b.write('. ');
+  if (!data.hasDoseCurves) {
+    b.write('No injectable or oral doses in this range.');
+    return b.toString();
+  }
+  b.write([
+    for (final c in data.curves)
+      if (!c.isTotal) c.isOral ? '${c.baseName} (oral)' : c.baseName,
+  ].join(', '));
+  b.write('.');
+  if (s.normalized) b.write(' Each curve as a percentage of its peak.');
+  if (s.cumulative) b.write(' With the summed total.');
+  return b.toString();
+}
 
 class PKChartCard extends StatelessWidget {
   /// The latest computed chart, or null before the first one. It may lag
@@ -46,7 +86,10 @@ class PKChartCard extends StatelessWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               runSpacing: 6,
               children: [
-                Text('Pharmacokinetics', style: AppTheme.sans(size: 13, weight: FontWeight.w600)),
+                Semantics(
+                  header: true,
+                  child: Text('Pharmacokinetics', style: AppTheme.sans(size: 13, weight: FontWeight.w600)),
+                ),
                 _RangePills(active: settings.timeRange, onChange: onRangeChanged),
               ],
             ),
@@ -64,6 +107,7 @@ class PKChartCard extends StatelessWidget {
                 const SizedBox(width: 6),
                 _ModePill(
                   label: 'Σ total',
+                  semanticLabel: 'Summed total',
                   active: settings.cumulative,
                   onTap: () => onSettingsChanged(
                       settings.copyWith(cumulative: !settings.cumulative)),
@@ -73,44 +117,56 @@ class PKChartCard extends StatelessWidget {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 4, 14, 14),
-            child: graphData == null
-                ? const SizedBox(height: 240, child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
-                : SizedBox(
-                    height: 240,
-                    width: double.infinity,
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: RepaintBoundary(
-                            child: CustomPaint(
-                              painter: PKGraphPainter(
-                                graphData: graphData!,
-                                colorResolver: colorResolver ?? AppTheme.compoundColor,
-                              ),
-                            ),
-                          ),
-                        ),
-                        if (!graphData!.hasDoseCurves)
-                          Positioned.fill(
-                            // Inset to the plot area (painter pads 45 left, 20 right/bottom).
-                            left: 45,
-                            right: 20,
-                            bottom: 20,
-                            child: Center(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 12),
-                                child: Text(
-                                  'No injectable or oral doses in this range',
-                                  textAlign: TextAlign.center,
-                                  style: AppTheme.sans(size: 11, color: AppTheme.fgMute),
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
+            // One spoken summary instead of tick labels and markers.
+            child: Semantics(
+              container: true,
+              label: pkChartSemanticsLabel(graphData),
+              child: ExcludeSemantics(child: _chart(context)),
+            ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chart(BuildContext context) {
+    final data = graphData;
+    if (data == null) {
+      return const SizedBox(height: 240, child: Center(child: CircularProgressIndicator(strokeWidth: 2)));
+    }
+    return SizedBox(
+      height: 240,
+      width: double.infinity,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: RepaintBoundary(
+              child: CustomPaint(
+                painter: PKGraphPainter(
+                  graphData: data,
+                  colorResolver: colorResolver ?? AppTheme.compoundColor,
+                  textScaler: chartTextScaler(context),
+                ),
+              ),
+            ),
+          ),
+          if (!data.hasDoseCurves)
+            Positioned.fill(
+              // Inset to the plot area (painter pads 45 left, 20 right/bottom).
+              left: 45,
+              right: 20,
+              bottom: 20,
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(
+                    'No injectable or oral doses in this range',
+                    textAlign: TextAlign.center,
+                    style: AppTheme.sans(size: 11, color: AppTheme.fgMute),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -120,14 +176,17 @@ class PKChartCard extends StatelessWidget {
 /// Small toggle for the engine-side graph modes (normalized / cumulative).
 class _ModePill extends StatelessWidget {
   final String label;
+  final String? semanticLabel;
   final bool active;
   final VoidCallback onTap;
-  const _ModePill({required this.label, required this.active, required this.onTap});
+  const _ModePill({required this.label, this.semanticLabel, required this.active, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return LabTap(
       onTap: onTap,
+      toggled: active,
+      label: semanticLabel,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
@@ -141,7 +200,7 @@ class _ModePill extends StatelessWidget {
           label,
           style: AppTheme.sans(
             size: 10,
-            color: active ? AppTheme.accent : AppTheme.fgDim,
+            color: active ? AppTheme.accent : AppTheme.fgDimText,
             weight: active ? FontWeight.w600 : FontWeight.w400,
           ),
         ),
@@ -155,21 +214,17 @@ class _RangePills extends StatelessWidget {
   final ValueChanged<String> onChange;
   const _RangePills({required this.active, required this.onChange});
 
-  static const _ranges = <(String, String)>[
-    ('zoom', '7d'),
-    ('standard', '28d'),
-    ('cycle', 'Cycle'),
-    ('year', '1y'),
-  ];
-
   @override
   Widget build(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        for (final (id, label) in _ranges) ...[
-          GestureDetector(
+        for (final (id, label, back, ahead) in pkChartRanges) ...[
+          LabTap(
             onTap: () => onChange(id),
+            selected: active == id,
+            inMutuallyExclusiveGroup: true,
+            tooltip: rangeSpanLabel(back, ahead),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(

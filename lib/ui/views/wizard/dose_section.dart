@@ -6,6 +6,7 @@ import '../../../engine/injection_draft.dart';
 import '../../format.dart';
 import '../../theme.dart';
 import 'wizard_widgets.dart';
+import '../../widgets/lab_tap.dart';
 
 /// "Dose" section of the details step: Direct amount + unit, or By volume
 /// (concentration × volume, U-100 syringe readings for peptides). Pill-form
@@ -136,18 +137,21 @@ class DoseSection extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Expanded(
-                  child: TextField(
-                    controller: doseController,
-                    onChanged: onDoseChanged,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    cursorColor: AppTheme.accent,
-                    style: AppTheme.serif(
-                        size: 32, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.8, height: 1.1),
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      contentPadding: EdgeInsets.zero,
-                      border: InputBorder.none,
-                      hintText: '0',
+                  child: LabTextFieldTarget(
+                    label: 'Amount',
+                    child: TextField(
+                      controller: doseController,
+                      onChanged: onDoseChanged,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      cursorColor: AppTheme.accent,
+                      style: AppTheme.serif(
+                          size: 32, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.8, height: 1.1),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                        border: InputBorder.none,
+                        hintText: '0',
+                      ),
                     ),
                   ),
                 ),
@@ -244,21 +248,24 @@ class DoseSection extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Expanded(
-                  child: TextField(
-                    controller: concController,
-                    onChanged: (v) {
-                      final parsed = parseFlexibleDouble(v);
-                      onConcentrationChanged((parsed != null && parsed > 0) ? parsed : null);
-                    },
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    cursorColor: AppTheme.accent,
-                    style: AppTheme.serif(
-                        size: 28, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.6, height: 1.1),
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      contentPadding: EdgeInsets.zero,
-                      border: InputBorder.none,
-                      hintText: '0',
+                  child: LabTextFieldTarget(
+                    label: 'Concentration',
+                    child: TextField(
+                      controller: concController,
+                      onChanged: (v) {
+                        final parsed = parseFlexibleDouble(v);
+                        onConcentrationChanged((parsed != null && parsed > 0) ? parsed : null);
+                      },
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      cursorColor: AppTheme.accent,
+                      style: AppTheme.serif(
+                          size: 28, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.6, height: 1.1),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                        border: InputBorder.none,
+                        hintText: '0',
+                      ),
                     ),
                   ),
                 ),
@@ -281,23 +288,26 @@ class DoseSection extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Expanded(
-                    child: TextField(
-                      controller: volumeController,
-                      enabled: conc != null && conc > 0,
-                      onChanged: onVolumeChanged,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      cursorColor: AppTheme.accent,
-                      style: AppTheme.serif(
-                          size: 28,
-                          weight: FontWeight.w500,
-                          color: (conc != null && conc > 0) ? AppTheme.fg : AppTheme.fgDim,
-                          letterSpacing: -0.6,
-                          height: 1.1),
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        contentPadding: EdgeInsets.zero,
-                        border: InputBorder.none,
-                        hintText: '0',
+                    child: LabTextFieldTarget(
+                      label: 'Volume',
+                      child: TextField(
+                        controller: volumeController,
+                        enabled: conc != null && conc > 0,
+                        onChanged: onVolumeChanged,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        cursorColor: AppTheme.accent,
+                        style: AppTheme.serif(
+                            size: 28,
+                            weight: FontWeight.w500,
+                            color: (conc != null && conc > 0) ? AppTheme.fg : AppTheme.fgDim,
+                            letterSpacing: -0.6,
+                            height: 1.1),
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          contentPadding: EdgeInsets.zero,
+                          border: InputBorder.none,
+                          hintText: '0',
+                        ),
                       ),
                     ),
                   ),

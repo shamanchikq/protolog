@@ -7,6 +7,8 @@ import '../widgets/lab_primitives.dart';
 import '../../engine/calendar.dart';
 import '../../engine/reminder_schedule.dart';
 import '../../engine/library_stats.dart';
+import '../widgets/lab_tap.dart';
+import '../widgets/tap_target.dart';
 
 /// What saving the editor does to the reminder as it is *now*.
 ///
@@ -176,33 +178,35 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.bg,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _header(),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
-                children: [
-                  _label('Compound'),
-                  const SizedBox(height: 8),
-                  _base == null ? _compoundPicker() : _compoundChip(),
-                  const SizedBox(height: 18),
-                  LabSegmented<String>(
-                    value: _mode, options: const ['Interval', 'Custom days'],
-                    labelFor: (s) => s, onChange: (m) => setState(() => _mode = m),
-                  ),
-                  const SizedBox(height: 18),
-                  if (_mode == 'Interval') ..._intervalControls() else ..._customControls(),
-                  if (_base != null) ...[
+      body: TapTargetScope(
+        child: SafeArea(
+          child: Column(
+            children: [
+              _header(),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
+                  children: [
+                    _label('Compound'),
+                    const SizedBox(height: 8),
+                    _base == null ? _compoundPicker() : _compoundChip(),
                     const SizedBox(height: 18),
-                    _preview(),
+                    LabSegmented<String>(
+                      value: _mode, options: const ['Interval', 'Custom days'],
+                      labelFor: (s) => s, onChange: (m) => setState(() => _mode = m),
+                    ),
+                    const SizedBox(height: 18),
+                    if (_mode == 'Interval') ..._intervalControls() else ..._customControls(),
+                    if (_base != null) ...[
+                      const SizedBox(height: 18),
+                      _preview(),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-            _saveBar(),
-          ],
+              _saveBar(),
+            ],
+          ),
         ),
       ),
     );
@@ -221,9 +225,9 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              GestureDetector(
+              LabTap(
+                label: 'Back',
                 onTap: () => Navigator.of(context).pop(),
-                behavior: HitTestBehavior.opaque,
                 child: Container(
                   width: 34, height: 34,
                   decoration: BoxDecoration(border: Border.all(color: AppTheme.border, width: 1)),
@@ -231,9 +235,8 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
                 ),
               ),
               if (_editing && widget.onDelete != null)
-                GestureDetector(
+                LabTap(
                   onTap: _confirmDelete,
-                  behavior: HitTestBehavior.opaque,
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                     decoration: BoxDecoration(border: Border.all(color: AppTheme.warn, width: 1)),
@@ -243,7 +246,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
             ],
           ),
           const SizedBox(height: 12),
-          Text('Reminders · ${_editing ? 'edit' : 'new'}', style: AppTheme.sans(size: 11, color: AppTheme.fgDim)),
+          Text('Reminders · ${_editing ? 'edit' : 'new'}', style: AppTheme.sans(size: 11, color: AppTheme.fgDimText)),
           const SizedBox(height: 3),
           Text(_editing ? 'Edit reminder' : 'New reminder', style: AppTheme.serif(size: 24, weight: FontWeight.w500, letterSpacing: -0.5)),
         ],
@@ -251,7 +254,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
     );
   }
 
-  Widget _label(String s) => Text(s.toUpperCase(), style: AppTheme.sans(size: 9.5, color: AppTheme.fgDim, letterSpacing: 0.9));
+  Widget _label(String s) => Text(s.toUpperCase(), style: AppTheme.sans(size: 9.5, color: AppTheme.fgDimText, letterSpacing: 0.9));
 
   // ---- compound picker ----
   // The catalogue is cataloguedCompounds (same set and order as the Library
@@ -301,9 +304,9 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
         children: [
           Row(
             children: [
-              GestureDetector(
+              LabTap(
+                label: 'Back to all injectables',
                 onTap: () => setState(() => _drillBase = null),
-                behavior: HitTestBehavior.opaque,
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                   decoration: BoxDecoration(border: Border.all(color: AppTheme.border, width: 1)),
@@ -320,16 +323,15 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
             child: Column(
               children: [
                 for (final c in _catalogFor('Injectable', catalogue))
-                  GestureDetector(
+                  LabTap(
                     onTap: () => _select(c),
-                    behavior: HitTestBehavior.opaque,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(c.ester, style: AppTheme.sans(size: 13, weight: FontWeight.w500)),
-                          Text('›', style: AppTheme.sans(size: 16, color: AppTheme.fgDim)),
+                          ExcludeSemantics(child: Text('›', style: AppTheme.sans(size: 16, color: AppTheme.fgDim))),
                         ],
                       ),
                     ),
@@ -404,7 +406,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
     final esters = isInjectable ? _esterCount(c.base, catalogue) : 1;
     final multi = isInjectable && _drillBase == null && esters > 1;
     final color = _colorOf(c);
-    return GestureDetector(
+    return LabTap(
       onTap: () {
         if (multi) {
           setState(() => _drillBase = c.base);
@@ -412,7 +414,6 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
           _select(c);
         }
       },
-      behavior: HitTestBehavior.opaque,
       child: Container(
         padding: const EdgeInsets.fromLTRB(12, 11, 12, 12),
         decoration: BoxDecoration(
@@ -461,9 +462,9 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
               style: AppTheme.sans(size: 14, weight: FontWeight.w600, letterSpacing: -0.2),
             ),
           ),
-          GestureDetector(
+          LabTap(
+            label: 'Change compound',
             onTap: () => setState(() { _base = null; _ester = null; _drillBase = null; }),
-            behavior: HitTestBehavior.opaque,
             child: Text('Change', style: AppTheme.sans(size: 11, color: AppTheme.accent)),
           ),
         ],
@@ -482,7 +483,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
         decoration: BoxDecoration(color: AppTheme.surface, border: Border.all(color: AppTheme.border, width: 1)),
         child: Row(
           children: [
-            _stepBtn('−', () => setState(() => _interval = (_interval - 0.5).clamp(0.5, 90))),
+            _stepBtn('−', 'Shorter interval', () => setState(() => _interval = (_interval - 0.5).clamp(0.5, 90))),
             Expanded(
               child: Center(
                 child: Row(
@@ -497,7 +498,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
                 ),
               ),
             ),
-            _stepBtn('+', () => setState(() => _interval = (_interval + 0.5).clamp(0.5, 90))),
+            _stepBtn('+', 'Longer interval', () => setState(() => _interval = (_interval + 0.5).clamp(0.5, 90))),
           ],
         ),
       ),
@@ -521,9 +522,17 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   // Calendar days: a 24 h step loses or skips a date at DST.
-                  GestureDetector(onTap: () => setState(() => _anchorDay = addCalendarDays(_anchorDay, -1)), child: Text('‹', style: AppTheme.sans(size: 16, color: AppTheme.fgMute))),
+                  LabTap(
+                    onTap: () => setState(() => _anchorDay = addCalendarDays(_anchorDay, -1)),
+                    label: 'First dose a day earlier',
+                    child: Text('‹', style: AppTheme.sans(size: 16, color: AppTheme.fgMute)),
+                  ),
                   Expanded(child: Center(child: Text(relativeDayLabel(_anchorDay, widget.now), style: AppTheme.sans(size: 13, weight: FontWeight.w500)))),
-                  GestureDetector(onTap: () => setState(() => _anchorDay = addCalendarDays(_anchorDay, 1)), child: Text('›', style: AppTheme.sans(size: 16, color: AppTheme.fgMute))),
+                  LabTap(
+                    onTap: () => setState(() => _anchorDay = addCalendarDays(_anchorDay, 1)),
+                    label: 'First dose a day later',
+                    child: Text('›', style: AppTheme.sans(size: 16, color: AppTheme.fgMute)),
+                  ),
                 ],
               ),
             ),
@@ -533,9 +542,9 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
     ];
   }
 
-  Widget _stepBtn(String s, VoidCallback onTap) => GestureDetector(
+  Widget _stepBtn(String s, String label, VoidCallback onTap) => LabTap(
+        label: label,
         onTap: onTap,
-        behavior: HitTestBehavior.opaque,
         child: Container(
           width: 46,
           color: AppTheme.surface2,
@@ -608,7 +617,9 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
 
   Widget _dayToggle(int weekday, String letter) {
     final on = _dayTimes.containsKey(weekday);
-    return GestureDetector(
+    return LabTap(
+      selected: on,
+      label: weekdaysLong[weekday - 1],
       onTap: () => setState(() {
         if (on) {
           _dayTimes.remove(weekday);
@@ -616,7 +627,6 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
           _dayTimes[weekday] = const TimeOfDay(hour: 8, minute: 0);
         }
       }),
-      behavior: HitTestBehavior.opaque,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 11),
         decoration: BoxDecoration(
@@ -637,8 +647,9 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
           SizedBox(width: 44, child: Text(weekdaysShort[weekday - 1], style: AppTheme.sans(size: 12.5, weight: FontWeight.w500))),
           const SizedBox(width: 12),
           Expanded(
-            child: GestureDetector(
+            child: LabTap(
               key: ValueKey('slot-time-$weekday'),
+              label: '${weekdaysLong[weekday - 1]} time, ${formatHourMinute(t.hour, t.minute)}',
               onTap: () async {
                 final picked = await showTimePicker(
                   context: context,
@@ -647,7 +658,6 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
                 );
                 if (picked != null && mounted) setState(() => _dayTimes[weekday] = picked);
               },
-              behavior: HitTestBehavior.opaque,
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(border: Border.all(color: AppTheme.border, width: 1)),
@@ -669,7 +679,7 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
       ReminderState.overdue => (AppTheme.warn, 'Overdue'),
       ReminderState.due => (AppTheme.warm, 'Due'),
       ReminderState.on => (AppTheme.accent, 'On'),
-      ReminderState.paused => (AppTheme.fgDim, 'Paused'),
+      ReminderState.paused => (AppTheme.fgDimText, 'Paused'),
     };
     final doseLabel = '${relativeDayLabel(dose, widget.now)} · ${formatHourMinute(dose.hour, dose.minute)}';
     return Container(
@@ -703,14 +713,13 @@ class _ReminderEditorPageState extends State<ReminderEditorPage> {
         color: AppTheme.surface,
         border: Border(top: BorderSide(color: AppTheme.border, width: 1)),
       ),
-      child: GestureDetector(
+      child: LabTap(
         onTap: _canSave
             ? () {
                 widget.onSave(_buildReminder());
                 Navigator.of(context).pop();
               }
             : null,
-        behavior: HitTestBehavior.opaque,
         child: Opacity(
           opacity: _canSave ? 1 : 0.75,
           child: Container(

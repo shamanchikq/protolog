@@ -3,6 +3,7 @@ import '../../../models.dart';
 import '../../theme.dart';
 import 'compound_catalog.dart';
 import 'wizard_widgets.dart';
+import '../../widgets/lab_tap.dart';
 
 /// Step 1 of the add-injection wizard: header, search, type filters, Recent
 /// cards and the library list with the steroid base → ester drill-down.
@@ -116,13 +117,13 @@ class CompoundStep extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('Step 1 of 2',
-                  style: AppTheme.sans(size: 11, color: AppTheme.fgDim)),
+                  style: AppTheme.sans(size: 11, color: AppTheme.fgDimText)),
               const SizedBox(height: 4),
               Row(
                 children: [
                   if (selectedBase != null)
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
+                    LabTap(
+                      label: 'Back to all compounds',
                       onTap: () => onSelectBase(null),
                       child: Padding(
                         padding: const EdgeInsets.only(right: 6),
@@ -143,8 +144,7 @@ class CompoundStep extends StatelessWidget {
             ],
           ),
         ),
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
+        LabTap(
           onTap: onCancel,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -168,16 +168,18 @@ class CompoundStep extends StatelessWidget {
           Icon(Icons.search, size: 16, color: AppTheme.fgDim),
           const SizedBox(width: 10),
           Expanded(
-            child: TextField(
-              controller: searchController,
-              onChanged: onSearchChanged,
-              cursorColor: AppTheme.accent,
-              style: AppTheme.sans(size: 13, color: AppTheme.fg),
-              decoration: InputDecoration(
-                isDense: true,
-                border: InputBorder.none,
-                hintText: 'Search compounds',
-                hintStyle: AppTheme.sans(size: 13, color: AppTheme.fgDim),
+            child: LabTextFieldTarget(
+              child: TextField(
+                controller: searchController,
+                onChanged: onSearchChanged,
+                cursorColor: AppTheme.accent,
+                style: AppTheme.sans(size: 13, color: AppTheme.fg),
+                decoration: InputDecoration(
+                  isDense: true,
+                  border: InputBorder.none,
+                  hintText: 'Search compounds',
+                  hintStyle: AppTheme.sans(size: 13, color: AppTheme.fgDimText),
+                ),
               ),
             ),
           ),
@@ -254,8 +256,7 @@ class CompoundStep extends StatelessWidget {
     } else {
       sub = compound.type.name.toUpperCase();
     }
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
+    return LabTap(
       onTap: () => _onCompoundTap(compound),
       child: Container(
         padding: const EdgeInsets.all(12),
@@ -356,8 +357,7 @@ class CompoundStep extends StatelessWidget {
     final nameStr = (_targetType == CompoundType.steroid && selectedBase != null)
         ? c.ester
         : c.base;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
+    return LabTap(
       onTap: () => _onCompoundTap(c),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -395,7 +395,7 @@ class CompoundStep extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            Text('›', style: AppTheme.sans(size: 16, color: AppTheme.fgDim)),
+            ExcludeSemantics(child: Text('›', style: AppTheme.sans(size: 16, color: AppTheme.fgDim))),
           ],
         ),
       ),

@@ -4,6 +4,7 @@ import '../../models.dart';
 import '../format.dart';
 import '../theme.dart';
 import 'lab_primitives.dart';
+import 'lab_tap.dart';
 
 /// Dashboard card (F6): the latest draw of each marker, most recently drawn
 /// first, with its change vs the previous draw. Older draws live on the
@@ -69,7 +70,7 @@ class BloodworkCard extends StatelessWidget {
                     padding: const EdgeInsets.only(right: 8),
                     child: Text(
                       '+$hiddenMarkers more',
-                      style: AppTheme.mono(size: 10, color: AppTheme.fgDim),
+                      style: AppTheme.mono(size: 10, color: AppTheme.fgDimText),
                     ),
                   ),
                 LabPill(label: '+ Add', onTap: onCreate),
@@ -81,13 +82,12 @@ class BloodworkCard extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
               child: Text(
                 'No lab results yet — log draws to track trends per marker.',
-                style: AppTheme.sans(size: 12, color: AppTheme.fgDim),
+                style: AppTheme.sans(size: 12, color: AppTheme.fgDimText),
               ),
             )
           else
             for (int i = 0; i < visible.length; i++)
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
+              LabTap(
                 onTap: () => onTap(visible[i]),
                 child: Container(
                   decoration: BoxDecoration(

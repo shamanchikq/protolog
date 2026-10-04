@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme.dart';
+import 'lab_tap.dart';
 
 /// Pill button used for filter chips, header actions, secondary buttons.
 /// `primary` inverts to fg/bg with bold weight. `danger` paints warn-colored
@@ -41,25 +42,30 @@ class LabPill extends StatelessWidget {
             : active
                 ? AppTheme.fg
                 : AppTheme.border;
-    return Opacity(
-      opacity: disabled ? 0.45 : 1,
-      child: GestureDetector(
-        onTap: disabled ? null : onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-          decoration: BoxDecoration(color: bg, border: Border.all(color: bd, width: 1)),
-          child: Text(
-            label,
-            style: AppTheme.sans(
-              size: 11.5,
-              weight: active || primary ? FontWeight.w600 : FontWeight.w400,
-              color: fg,
-              letterSpacing: 0.1,
-            ),
-          ),
+    final pill = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      decoration: BoxDecoration(color: bg, border: Border.all(color: bd, width: 1)),
+      child: Text(
+        label,
+        style: AppTheme.sans(
+          size: 11.5,
+          weight: active || primary ? FontWeight.w600 : FontWeight.w400,
+          color: fg,
+          letterSpacing: 0.1,
         ),
       ),
+    );
+    return Opacity(
+      opacity: disabled ? 0.45 : 1,
+      // Without a handler (and not disabled) the pill is only the face of a
+      // control around it, e.g. a PopupMenuButton, which owns the semantics.
+      child: onTap == null && !disabled
+          ? pill
+          : LabTap(
+              onTap: disabled ? null : onTap,
+              selected: active ? true : null,
+              child: pill,
+            ),
     );
   }
 }
@@ -86,40 +92,40 @@ class LabField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Opacity(
-      opacity: disabled ? 0.45 : 1,
-      child: GestureDetector(
-        onTap: disabled ? null : onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: disabled ? Colors.transparent : AppTheme.surface,
-            border: Border.all(color: focused ? AppTheme.fg : AppTheme.border, width: 1),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    final box = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: disabled ? Colors.transparent : AppTheme.surface,
+        border: Border.all(color: focused ? AppTheme.fg : AppTheme.border, width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    label.toUpperCase(),
-                    style: AppTheme.sans(
-                      size: 9.5, color: AppTheme.fgDim, letterSpacing: 0.9,
-                    ),
-                  ),
-                  if (hint != null && hint!.isNotEmpty)
-                    Text(hint!,
-                      style: AppTheme.mono(size: 10, color: AppTheme.fgDim)),
-                ],
+              Text(
+                label.toUpperCase(),
+                style: AppTheme.sans(
+                  size: 9.5, color: AppTheme.fgDimText, letterSpacing: 0.9,
+                ),
               ),
-              const SizedBox(height: 4),
-              child,
+              if (hint != null && hint!.isNotEmpty)
+                Text(hint!,
+                  style: AppTheme.mono(size: 10, color: AppTheme.fgDimText)),
             ],
           ),
-        ),
+          const SizedBox(height: 4),
+          child,
+        ],
       ),
+    );
+    return Opacity(
+      opacity: disabled ? 0.45 : 1,
+      // A tappable field (a picker) reads as one button: "TIME 08:00".
+      child: onTap == null
+          ? box
+          : LabTap(onTap: disabled ? null : onTap, child: box),
     );
   }
 }
@@ -157,9 +163,10 @@ class LabSegmented<T> extends StatelessWidget {
 
   Widget _segment(T opt, int i) {
     final isSelected = opt == value;
-    return GestureDetector(
+    return LabTap(
       onTap: () => onChange(opt),
-      behavior: HitTestBehavior.opaque,
+      selected: isSelected,
+      inMutuallyExclusiveGroup: true,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 8),
         decoration: BoxDecoration(
@@ -208,45 +215,55 @@ class LabMetric extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.fromLTRB(
-        compact ? 11 : 12,
-        compact ? 10 : 12,
-        compact ? 11 : 12,
-        compact ? 9 : 11,
-      ),
-      decoration: BoxDecoration(
-        color: AppTheme.surface,
-        border: Border.all(color: AppTheme.border, width: 1),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label.toUpperCase(),
-            style: AppTheme.sans(size: 9, color: AppTheme.fgDim, letterSpacing: 1.1),
-          ),
-          const SizedBox(height: 6),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Text(
-                value,
-                style: AppTheme.mono(
-                  size: compact ? 17 : 20,
-                  weight: FontWeight.w500,
-                  color: AppTheme.fg,
-                  letterSpacing: -0.3,
-                ),
+    // One spoken node: "HALF-LIFE 4.5 d".
+    return MergeSemantics(
+      child: Container(
+        padding: EdgeInsets.fromLTRB(
+          compact ? 11 : 12,
+          compact ? 10 : 12,
+          compact ? 11 : 12,
+          compact ? 9 : 11,
+        ),
+        decoration: BoxDecoration(
+          color: AppTheme.surface,
+          border: Border.all(color: AppTheme.border, width: 1),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label.toUpperCase(),
+              style: AppTheme.sans(size: 9, color: AppTheme.fgDimText, letterSpacing: 1.1),
+            ),
+            const SizedBox(height: 6),
+            // Scales down (never up) when a long value ("0.083 d") or large
+            // system text would overflow a quarter-width tile.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text(
+                    value,
+                    style: AppTheme.mono(
+                      size: compact ? 17 : 20,
+                      weight: FontWeight.w500,
+                      color: AppTheme.fg,
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                  if (unit != null) ...[
+                    const SizedBox(width: 3),
+                    Text(unit!, style: AppTheme.sans(size: 10.5, color: AppTheme.fgMute)),
+                  ],
+                ],
               ),
-              if (unit != null) ...[
-                const SizedBox(width: 3),
-                Text(unit!, style: AppTheme.sans(size: 10.5, color: AppTheme.fgMute)),
-              ],
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }

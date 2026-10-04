@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:protolog_tracker/models.dart';
 import 'package:protolog_tracker/ui/theme.dart';
+import 'package:protolog_tracker/ui/views/compound_detail_page.dart';
 import 'package:protolog_tracker/ui/widgets/bloodwork_card.dart';
+import 'package:protolog_tracker/ui/widgets/lab_primitives.dart';
 import 'package:protolog_tracker/ui/widgets/load_hero.dart';
 import 'package:protolog_tracker/ui/widgets/pk_chart_card.dart';
 import 'package:protolog_tracker/ui/widgets/protolog_shell.dart';
@@ -55,6 +57,17 @@ const _ancillary = CompoundDefinition(
   id: 'ai', base: 'Anastrozole', ester: 'None',
   type: CompoundType.ancillary, graphType: GraphType.activeWindow,
   halfLife: 2, timeToPeak: 0.1, ratio: 1, unit: Unit.mg, colorValue: 0xFFD27A6B,
+);
+
+const _mcgPeptide = CompoundDefinition(
+  id: 'ipa', base: 'Ipamorelin', ester: 'None',
+  type: CompoundType.peptide, graphType: GraphType.activeWindow,
+  halfLife: 0.083, timeToPeak: 0.021, ratio: 1, unit: Unit.mcg, colorValue: 0xFFD27A6B,
+);
+const _bigYield = CompoundDefinition(
+  id: 'nan', base: 'Nandrolone', ester: 'Decanoate',
+  type: CompoundType.steroid, graphType: GraphType.curve,
+  halfLife: 14.5, timeToPeak: 2.75, ratio: 0.643, unit: Unit.mg, colorValue: 0xFF87BFE0,
 );
 
 ComputedGraphData _graph() {
@@ -158,6 +171,29 @@ void main() {
         expect(tester.takeException(), isNull);
       });
 
+      // The PK metric tiles: four LabMetrics in a row (overflowed ~1 px at
+      // 1.3× before).
+      for (final c in [_mcgPeptide, _bigYield]) {
+        testWidgets('compound detail metrics (${c.base})', (tester) async {
+          await _pumpAt(
+            tester,
+            CompoundDetailPage(
+              compound: c,
+              injections: const [],
+              onTabChanged: (_) {},
+              openEditor: (_) async => null,
+              onDelete: () {},
+              onLogInjection: (_) {},
+            ),
+            scale: scale,
+            dashboardPadding: false,
+            height: 1400,
+          );
+          expect(tester.takeException(), isNull);
+          expect(find.byType(LabMetric), findsNWidgets(4));
+        });
+      }
+
       testWidgets('tab bar', (tester) async {
         await _pumpAt(
           tester,
@@ -222,6 +258,37 @@ void main() {
       );
       expect(tester.getCenter(find.text('1y')).dy,
           closeTo(tester.getCenter(find.text('Pharmacokinetics')).dy, 1));
+    });
+
+    Future<void> pumpDetail(WidgetTester tester, CompoundDefinition c, double scale) => _pumpAt(
+          tester,
+          CompoundDetailPage(
+            compound: c,
+            injections: const [],
+            onTabChanged: (_) {},
+            openEditor: (_) async => null,
+            onDelete: () {},
+            onLogInjection: (_) {},
+          ),
+          scale: scale,
+          dashboardPadding: false,
+          height: 1400,
+        );
+
+    testWidgets('LabMetric values are not scaled when they fit', (tester) async {
+      await pumpDetail(tester, _bigYield, 1.0);
+      for (final v in ['14.5', '2.75', '64.3', 'mg']) {
+        final local = tester.getSize(find.text(v));
+        final global = tester.getRect(find.text(v));
+        expect(global.width, closeTo(local.width, 0.01), reason: v);
+      }
+    });
+
+    testWidgets('a long LabMetric value scales down to fit its tile', (tester) async {
+      await pumpDetail(tester, _mcgPeptide, 1.3);
+      final local = tester.getSize(find.text('0.083'));
+      final global = tester.getRect(find.text('0.083'));
+      expect(global.width, lessThan(local.width));
     });
 
     testWidgets('LoadHero number is not scaled when it fits', (tester) async {

@@ -6,6 +6,7 @@ import '../../../engine/injection_draft.dart';
 import '../../../engine/reminder_schedule.dart';
 import '../../format.dart';
 import '../../theme.dart';
+import '../../widgets/lab_tap.dart';
 
 /// "That's 10× your last dose (250 mcg)" / "That's 10× less than your last
 /// dose (250 mcg)" for a [ratio] from [unusualDoseRatio] against [last].
@@ -123,7 +124,7 @@ class WizardStickyBar extends StatelessWidget {
         Text(isEdit ? 'EDITING' : 'LOGGING',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: AppTheme.sans(size: 10, color: AppTheme.fgDim, letterSpacing: 0.6)),
+            style: AppTheme.sans(size: 10, color: AppTheme.fgDimText, letterSpacing: 0.6)),
         const SizedBox(height: 2),
         Text(
           hasDose
@@ -135,8 +136,7 @@ class WizardStickyBar extends StatelessWidget {
         ),
       ],
     );
-    final button = GestureDetector(
-      behavior: HitTestBehavior.opaque,
+    final button = LabTap(
       onTap: canSubmit ? onSubmit : null,
       child: Container(
         alignment: Alignment.center,
@@ -211,9 +211,10 @@ class ReminderBanner extends StatelessWidget {
               ],
             ),
           ),
-          GestureDetector(
+          LabTap(
+            checked: advance,
+            label: 'Advance reminder',
             onTap: onToggle,
-            behavior: HitTestBehavior.opaque,
             child: Row(
               children: [
                 Container(

@@ -5,6 +5,16 @@ import '../../utils.dart';
 import '../format.dart';
 import '../theme.dart';
 
+/// Largest system text scale the chart's tick labels follow: past it the
+/// labels would crowd the fixed plot insets (and the chart's summary is
+/// spoken anyway).
+const double maxChartTextScale = 1.3;
+
+/// The user's text scale for painted chart labels, capped at
+/// [maxChartTextScale].
+TextScaler chartTextScaler(BuildContext context) =>
+    MediaQuery.textScalerOf(context).clamp(maxScaleFactor: maxChartTextScale);
+
 /// [max] rounded up so the axis splits into [ticks] even, readable steps
 /// (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8 × 10ⁿ): 11 → 12 (0 3 6 9 12),
 /// 330 → 400. 1 for a non-positive or non-finite max.
@@ -26,9 +36,15 @@ class PKGraphPainter extends CustomPainter {
   final ComputedGraphData graphData;
   final Color? Function(String baseName)? colorResolver;
 
+  /// Scales the tick labels with the system text size (see
+  /// [chartTextScaler]). At 1.0× the plot insets are unchanged; taller
+  /// labels only deepen the bottom inset.
+  final TextScaler textScaler;
+
   PKGraphPainter({
     required this.graphData,
     this.colorResolver,
+    this.textScaler = TextScaler.noScaling,
   });
 
   Color _curveColor(CurveData curve) {
@@ -39,13 +55,23 @@ class PKGraphPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final settings = graphData.settings;
+    final textPainter = TextPainter(textDirection: TextDirection.ltr, textScaler: textScaler);
+    final tickStyle = AppTheme.mono(
+      color: AppTheme.fgDimText,
+      size: 9,
+      weight: FontWeight.w400,
+    );
+    final oralTickStyle = tickStyle.copyWith(color: AppTheme.warm);
+
     final paddingLeft = 45.0;
     final paddingRight = 20.0;
-    final paddingBottom = 20.0;
+    // Room for the date labels (6 px gap + label): 20 px until large text
+    // makes them taller.
+    textPainter.text = TextSpan(text: '0', style: tickStyle);
+    textPainter.layout();
+    final paddingBottom = math.max(20.0, 6 + textPainter.height + 2);
     final chartWidth = size.width - paddingLeft - paddingRight;
     final chartHeight = size.height - paddingBottom;
-
-    final textPainter = TextPainter(textDirection: TextDirection.ltr);
 
     // Dose curves (the Σ total fill only exists on top of them). No curves
     // → nothing to put on a y axis.
@@ -124,12 +150,6 @@ class PKGraphPainter extends CustomPainter {
       }
     }
 
-    final tickStyle = AppTheme.mono(
-      color: AppTheme.fgDim,
-      size: 9,
-      weight: FontWeight.w400,
-    );
-    final oralTickStyle = tickStyle.copyWith(color: AppTheme.warm);
     if (!hasCurves) {
       // Empty chart: no y scale to label (PKChartCard shows the message).
     } else if (!settings.normalized) {
@@ -214,5 +234,6 @@ class PKGraphPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant PKGraphPainter oldDelegate) =>
       oldDelegate.graphData != graphData ||
-      oldDelegate.colorResolver != colorResolver;
+      oldDelegate.colorResolver != colorResolver ||
+      oldDelegate.textScaler != textScaler;
 }

@@ -14,6 +14,7 @@ import 'wizard/reconstitution_sheet.dart';
 import 'wizard/site_section.dart';
 import 'wizard/sticky_bar.dart';
 import 'wizard/when_section.dart';
+import '../widgets/tap_target.dart';
 
 /// Full-screen flow for logging a dose: step 1 picks the compound
 /// (`wizard/compound_step.dart`), step 2 takes dose, time, site and notes.
@@ -346,15 +347,17 @@ class _AddInjectionWizardState extends State<AddInjectionWizard> {
       child: Scaffold(
         backgroundColor: AppTheme.bg,
         resizeToAvoidBottomInset: true,
-        body: SafeArea(
-          bottom: false,
-          child: Column(
-            children: [
-              Expanded(
-                child: _step == 1 ? _buildStep1() : _buildStep2(),
-              ),
-              if (_step == 2) _buildStickyBar(),
-            ],
+        body: TapTargetScope(
+          child: SafeArea(
+            bottom: false,
+            child: Column(
+              children: [
+                Expanded(
+                  child: _step == 1 ? _buildStep1() : _buildStep2(),
+                ),
+                if (_step == 2) _buildStickyBar(),
+              ],
+            ),
           ),
         ),
       ),

@@ -6,6 +6,8 @@ import '../../engine/compute_engine.dart';
 import '../../engine/dashboard_stats.dart';
 import '../format.dart';
 import '../theme.dart';
+import 'lab_tap.dart';
+import 'pk_chart_card.dart' show rangeSpanLabel;
 
 class SwimlaneCardLane {
   final CompoundDefinition compound;
@@ -18,7 +20,10 @@ class SwimlaneCardLane {
       (compound.graphType == GraphType.activeWindow || compound.type == CompoundType.ancillary);
 }
 
-/// Range key + (daysBack, daysFwd). Today cursor sits at daysBack/(daysBack+daysFwd).
+/// Range key + (daysBack, daysFwd, pill label). Today cursor sits at
+/// daysBack/(daysBack+daysFwd). The labels name the whole span; each pill's
+/// tooltip and spoken label give the split, since the PK chart's pills of
+/// the same name cover other spans.
 const _ranges = <String, (int, int, String)>{
   'zoom': (5, 2, '7d'),
   'standard': (21, 7, '28d'),
@@ -94,12 +99,24 @@ class _SwimlaneCardState extends State<SwimlaneCard> {
             daysBack: daysBack,
             daysFwd: daysFwd,
           ),
-          _AxisRow(
-            daysBack: daysBack,
-            daysFwd: daysFwd,
-            windowStart: windowStart,
-            windowEnd: windowEnd,
-            now: widget.now,
+          // Spoken once, instead of the axis ticks: span and lanes.
+          Semantics(
+            container: true,
+            label: swimlaneSemanticsLabel(
+              daysBack: daysBack,
+              daysAhead: daysFwd,
+              peptides: [for (final l in peptides) _laneName(l.compound)],
+              ancillaries: [for (final l in ancillaries) _laneName(l.compound)],
+            ),
+            child: ExcludeSemantics(
+              child: _AxisRow(
+                daysBack: daysBack,
+                daysFwd: daysFwd,
+                windowStart: windowStart,
+                windowEnd: windowEnd,
+                now: widget.now,
+              ),
+            ),
           ),
           if (peptides.isNotEmpty)
             _Group(
@@ -131,7 +148,7 @@ class _SwimlaneCardState extends State<SwimlaneCard> {
                 style: AppTheme.sans(size: 11, color: AppTheme.fgMute),
               ),
             ),
-          const _Legend(),
+          const ExcludeSemantics(child: _Legend()),
         ],
       ),
     );
@@ -167,14 +184,19 @@ class _Header extends StatelessWidget {
             crossAxisAlignment: WrapCrossAlignment.center,
             runSpacing: 6,
             children: [
-              Text('Peptides & ancillaries', style: AppTheme.sans(size: 13, weight: FontWeight.w600)),
+              Semantics(
+                header: true,
+                child: Text('Peptides & ancillaries', style: AppTheme.sans(size: 13, weight: FontWeight.w600)),
+              ),
               _RangePills(active: range, onChange: onRangeChanged),
             ],
           ),
           const SizedBox(height: 4),
-          Text(
-            '${daysBack}d back · ${daysFwd}d ahead',
-            style: AppTheme.mono(size: 10, color: AppTheme.fgMute, letterSpacing: 0.6),
+          ExcludeSemantics(
+            child: Text(
+              '${daysBack}d back · ${daysFwd}d ahead',
+              style: AppTheme.mono(size: 10, color: AppTheme.fgMute, letterSpacing: 0.6),
+            ),
           ),
         ],
       ),
@@ -193,8 +215,11 @@ class _RangePills extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         for (final entry in _ranges.entries) ...[
-          GestureDetector(
+          LabTap(
             onTap: () => onChange(entry.key),
+            selected: active == entry.key,
+            inMutuallyExclusiveGroup: true,
+            tooltip: rangeSpanLabel(entry.value.$1, entry.value.$2),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
@@ -345,20 +370,23 @@ class _Group extends StatelessWidget {
               label.toUpperCase(),
               style: AppTheme.sans(
                 size: 9.5,
-                color: AppTheme.fgDim,
+                color: AppTheme.fgDimText,
                 weight: FontWeight.w600,
                 letterSpacing: 1.2,
               ),
             ),
           ),
+          // One spoken node per lane: "BPC-157, 250 mcg · every 2d, 2d ago".
           for (final lane in lanes)
-            _LaneRow(
-              lane: lane,
-              windowStart: windowStart,
-              windowEnd: windowEnd,
-              totalDays: totalDays,
-              now: now,
-              colorResolver: colorResolver,
+            MergeSemantics(
+              child: _LaneRow(
+                lane: lane,
+                windowStart: windowStart,
+                windowEnd: windowEnd,
+                totalDays: totalDays,
+                now: now,
+                colorResolver: colorResolver,
+              ),
             ),
           const SizedBox(height: 6),
         ],
@@ -510,10 +538,7 @@ class _Label extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ester = lane.compound.ester;
-    final name = (ester.isEmpty || ester.toLowerCase() == 'none')
-        ? lane.compound.base
-        : '${lane.compound.base} $ester';
+    final name = _laneName(lane.compound);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -548,7 +573,7 @@ class _Label extends StatelessWidget {
             sub,
             overflow: TextOverflow.ellipsis,
             maxLines: 1,
-            style: AppTheme.sans(size: 9.5, color: AppTheme.fgDim, height: 1.1),
+            style: AppTheme.sans(size: 9.5, color: AppTheme.fgDimText, height: 1.1),
           ),
         ),
       ],
@@ -597,7 +622,7 @@ class _ValueColumn extends StatelessWidget {
       children: [
         Text(value, style: AppTheme.mono(size: 11, weight: FontWeight.w500)),
         const SizedBox(height: 2),
-        Text(unit, style: AppTheme.sans(size: 8.5, color: AppTheme.fgDim, letterSpacing: 0.3)),
+        Text(unit, style: AppTheme.sans(size: 8.5, color: AppTheme.fgDimText, letterSpacing: 0.3)),
       ],
     );
   }
@@ -738,6 +763,25 @@ class _Legend extends StatelessWidget {
       ),
     );
   }
+}
+
+/// "BPC-157" / "Testosterone Enanthate".
+String _laneName(CompoundDefinition c) =>
+    (c.ester.isEmpty || c.ester.toLowerCase() == 'none') ? c.base : '${c.base} ${c.ester}';
+
+/// What a screen reader says for the swimlanes: span and lanes, e.g.
+/// "21 days back, 7 ahead. Peptides: BPC-157. Ancillaries: Anastrozole."
+String swimlaneSemanticsLabel({
+  required int daysBack,
+  required int daysAhead,
+  required List<String> peptides,
+  required List<String> ancillaries,
+}) {
+  final b = StringBuffer('${rangeSpanLabel(daysBack, daysAhead)}.');
+  if (peptides.isEmpty && ancillaries.isEmpty) return b.toString();
+  if (peptides.isNotEmpty) b.write(' Peptides: ${peptides.join(', ')}.');
+  if (ancillaries.isNotEmpty) b.write(' Ancillaries: ${ancillaries.join(', ')}.');
+  return b.toString();
 }
 
 Duration _days(double days) => Duration(milliseconds: (days * Duration.millisecondsPerDay).round());

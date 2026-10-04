@@ -12,6 +12,7 @@ import '../widgets/lab_primitives.dart';
 import '../widgets/library_section.dart';
 import '../widgets/protolog_shell.dart';
 import 'compound_detail_page.dart' show confirmDeleteCompound;
+import '../widgets/lab_tap.dart';
 
 /// Upper bounds for typed PK values (N5). Huge finite input ("1e308") parses
 /// fine but overflows chart scaling; these are generous for any real
@@ -128,6 +129,12 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
     0xFFB5A8E0, // boldenone lavender
     0xFF87BFE0, // nandrolone light blue
     0xFF7DD3D0, // accent teal
+  ];
+
+  /// Spoken names of [_swatches], in order.
+  static const _swatchNames = <String>[
+    'Mint', 'Gold', 'Blue', 'Coral', 'Ochre',
+    'Pastel mint', 'Lavender', 'Light blue', 'Teal',
   ];
 
   @override
@@ -429,7 +436,7 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
                   _isBuiltInEdit
                       ? 'Library · built-in'
                       : 'Library · ${_editing ? "edit" : "new"}',
-                  style: AppTheme.sans(size: 11, color: AppTheme.fgDim)),
+                  style: AppTheme.sans(size: 11, color: AppTheme.fgDimText)),
               const SizedBox(height: 4),
               Text(
                 _editing ? 'Edit compound' : 'Custom compound',
@@ -441,7 +448,7 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
             ],
           ),
         ),
-        GestureDetector(
+        LabTap(
           onTap: () => _cancel(),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -499,13 +506,16 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
             label: 'Base name',
             hint: 'required',
             focused: true,
-            child: TextField(
-              key: const ValueKey('compound-editor-name'),
-              controller: _name,
-              style: AppTheme.serif(size: 22, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.4),
-              decoration: const InputDecoration(
-                isDense: true, border: InputBorder.none,
-                contentPadding: EdgeInsets.zero,
+            child: LabTextFieldTarget(
+              label: 'Base name',
+              child: TextField(
+                key: const ValueKey('compound-editor-name'),
+                controller: _name,
+                style: AppTheme.serif(size: 22, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.4),
+                decoration: const InputDecoration(
+                  isDense: true, border: InputBorder.none,
+                  contentPadding: EdgeInsets.zero,
+                ),
               ),
             ),
           ),
@@ -515,13 +525,16 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
             disabled: !needsEster,
             hint: needsEster ? null : 'steroids only',
             child: needsEster
-                ? TextField(
-                    key: const ValueKey('compound-editor-ester'),
-                    controller: _ester,
-                    style: AppTheme.serif(size: 18, weight: FontWeight.w500, color: AppTheme.fg),
-                    decoration: const InputDecoration(
-                      isDense: true, border: InputBorder.none,
-                      contentPadding: EdgeInsets.zero,
+                ? LabTextFieldTarget(
+                    label: 'Ester',
+                    child: TextField(
+                      key: const ValueKey('compound-editor-ester'),
+                      controller: _ester,
+                      style: AppTheme.serif(size: 18, weight: FontWeight.w500, color: AppTheme.fg),
+                      decoration: const InputDecoration(
+                        isDense: true, border: InputBorder.none,
+                        contentPadding: EdgeInsets.zero,
+                      ),
                     ),
                   )
                 : Text('—',
@@ -763,7 +776,7 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
             ),
           ),
           const SizedBox(width: 4),
-          Text(suffix, style: AppTheme.sans(size: 11, color: AppTheme.fgDim)),
+          Text(suffix, style: AppTheme.sans(size: 11, color: AppTheme.fgDimText)),
         ],
       ),
     );
@@ -795,14 +808,17 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
         textBaseline: TextBaseline.alphabetic,
         children: [
           Expanded(
-            child: TextField(
-              key: ValueKey('compound-editor-$fieldKey'),
-              controller: controller,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              style: AppTheme.serif(size: 22, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.4),
-              decoration: const InputDecoration(
-                isDense: true, border: InputBorder.none,
-                contentPadding: EdgeInsets.zero,
+            child: LabTextFieldTarget(
+              label: label,
+              child: TextField(
+                key: ValueKey('compound-editor-$fieldKey'),
+                controller: controller,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: AppTheme.serif(size: 22, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.4),
+                decoration: const InputDecoration(
+                  isDense: true, border: InputBorder.none,
+                  contentPadding: EdgeInsets.zero,
+                ),
               ),
             ),
           ),
@@ -821,9 +837,12 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
         spacing: 8,
         runSpacing: 8,
         children: [
-          for (final hex in _swatches)
-            GestureDetector(
+          for (final (i, hex) in _swatches.indexed)
+            LabTap(
               onTap: () => setState(() => _colorValue = hex),
+              label: '${_swatchNames[i]} lane color',
+              selected: _colorValue == hex,
+              inMutuallyExclusiveGroup: true,
               child: Container(
                 width: 30,
                 height: 30,
@@ -844,7 +863,7 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
   Widget _label(String text) {
     return Text(
       text.toUpperCase(),
-      style: AppTheme.sans(size: 9.5, color: AppTheme.fgDim, letterSpacing: 0.9),
+      style: AppTheme.sans(size: 9.5, color: AppTheme.fgDimText, letterSpacing: 0.9),
     );
   }
 
@@ -858,7 +877,7 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
       child: Row(
         children: [
           if (_isBuiltInEdit) ...[
-            GestureDetector(
+            LabTap(
               onTap: _resetToDefault,
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -874,7 +893,7 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
             ),
             const SizedBox(width: 8),
           ] else if (_editing) ...[
-            GestureDetector(
+            LabTap(
               onTap: widget.onDelete == null ? null : _confirmDelete,
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
@@ -891,7 +910,7 @@ class _CompoundEditorPageState extends State<CompoundEditorPage> {
             const SizedBox(width: 8),
           ],
           Expanded(
-            child: GestureDetector(
+            child: LabTap(
               onTap: _canSave ? _save : null,
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 12),

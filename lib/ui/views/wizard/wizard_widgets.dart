@@ -3,6 +3,7 @@ import '../../../engine/injection_draft.dart';
 import '../../../models.dart';
 import '../../format.dart';
 import '../../theme.dart';
+import '../../widgets/lab_tap.dart';
 
 // Small building blocks shared by both steps of the add-injection wizard.
 //
@@ -68,7 +69,7 @@ class WizardSectionTitle extends StatelessWidget {
           Text(title,
               style: AppTheme.sans(size: 11, weight: FontWeight.w500, color: AppTheme.fgMute, letterSpacing: 0.4)),
           if (meta != null)
-            Text(meta!, style: AppTheme.sans(size: 11, color: AppTheme.fgDim)),
+            Text(meta!, style: AppTheme.sans(size: 11, color: AppTheme.fgDimText)),
         ],
       ),
     );
@@ -85,8 +86,9 @@ class WizardPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
+    return LabTap(
+      selected: active,
+      inMutuallyExclusiveGroup: true,
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -140,7 +142,7 @@ class WizardField extends StatelessWidget {
               Flexible(
                 child: Text(label.toUpperCase(),
                     overflow: TextOverflow.ellipsis,
-                    style: AppTheme.sans(size: 10, color: AppTheme.fgDim, letterSpacing: 0.8)),
+                    style: AppTheme.sans(size: 10, color: AppTheme.fgDimText, letterSpacing: 0.8)),
               ),
               if (hint != null) ...[
                 const SizedBox(width: 6),
@@ -148,7 +150,7 @@ class WizardField extends StatelessWidget {
                   child: Text(hint!,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.end,
-                      style: AppTheme.mono(size: 10, color: AppTheme.fgDim)),
+                      style: AppTheme.mono(size: 10, color: AppTheme.fgDimText)),
                 ),
               ],
             ],
@@ -159,7 +161,7 @@ class WizardField extends StatelessWidget {
       ),
     );
     if (onTap == null) return body;
-    return GestureDetector(onTap: onTap, behavior: HitTestBehavior.opaque, child: body);
+    return LabTap(onTap: onTap, child: body);
   }
 }
 
@@ -190,8 +192,9 @@ class WizardSegmented<T> extends StatelessWidget {
           for (int i = 0; i < options.length; i++) ...[
             if (i > 0) Container(width: 1, color: AppTheme.border),
             Expanded(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
+              child: LabTap(
+                selected: options[i] == value,
+                inMutuallyExclusiveGroup: true,
                 onTap: () => onChange(options[i]),
                 child: Container(
                   alignment: Alignment.center,

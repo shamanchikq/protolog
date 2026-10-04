@@ -6,6 +6,7 @@ import '../theme.dart';
 import '../widgets/lab_primitives.dart';
 import '../widgets/library_section.dart';
 import '../widgets/protolog_shell.dart';
+import '../widgets/lab_tap.dart';
 
 class CompoundDetailPage extends StatefulWidget {
   final CompoundDefinition compound;
@@ -206,7 +207,8 @@ class _ActionBar extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        GestureDetector(
+        LabTap(
+          label: 'Back to Library',
           onTap: onBack,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -228,7 +230,7 @@ class _ActionBar extends StatelessWidget {
               isEdited ? 'BUILT-IN · EDITED' : 'BUILT-IN',
               style: AppTheme.sans(
                 size: 10,
-                color: isEdited ? AppTheme.warm : AppTheme.fgDim,
+                color: isEdited ? AppTheme.warm : AppTheme.fgDimText,
                 letterSpacing: 0.8,
               ),
             ),
@@ -439,7 +441,7 @@ class _HistorySection extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 18),
-          GestureDetector(
+          LabTap(
             onTap: onLogFirst,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
@@ -478,7 +480,7 @@ class _StickyFooter extends StatelessWidget {
         color: AppTheme.surface,
         border: Border(top: BorderSide(color: AppTheme.border, width: 1)),
       ),
-      child: GestureDetector(
+      child: LabTap(
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 12),

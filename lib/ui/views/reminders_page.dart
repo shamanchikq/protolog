@@ -5,6 +5,7 @@ import '../theme.dart';
 import '../../engine/calendar.dart';
 import '../../engine/reminder_schedule.dart';
 import '../../engine/library_stats.dart';
+import '../widgets/lab_tap.dart';
 
 class RemindersPage extends StatelessWidget {
   final List<Reminder> reminders;
@@ -167,8 +168,11 @@ class _SectionHeader extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(title.toUpperCase(), style: AppTheme.sans(size: 10, color: AppTheme.fgDim, letterSpacing: 1.1)),
-        if (meta != null) Text(meta!, style: AppTheme.sans(size: 10, color: AppTheme.fgDim, letterSpacing: 0.4)),
+        Semantics(
+          header: true,
+          child: Text(title.toUpperCase(), style: AppTheme.sans(size: 10, color: AppTheme.fgDimText, letterSpacing: 1.1)),
+        ),
+        if (meta != null) Text(meta!, style: AppTheme.sans(size: 10, color: AppTheme.fgDimText, letterSpacing: 0.4)),
       ],
     );
   }
@@ -195,6 +199,16 @@ class _WeekStrip extends StatelessWidget {
   }
 
   Widget _dayCell(DateTime d, bool today, List<Color> colors) {
+    // "Saturday 3, today, doses due" rather than "Sat", "3" and silent dots
+    // (one dot per compound color, so no count).
+    return Semantics(
+      label: '${weekdaysLong[d.weekday - 1]} ${d.day}${today ? ', today' : ''}'
+          '${colors.isEmpty ? '' : ', doses due'}',
+      child: ExcludeSemantics(child: _dayCellBox(d, today, colors)),
+    );
+  }
+
+  Widget _dayCellBox(DateTime d, bool today, List<Color> colors) {
     final fg = today ? AppTheme.paperInk : AppTheme.fg;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
@@ -204,7 +218,7 @@ class _WeekStrip extends StatelessWidget {
       ),
       child: Column(
         children: [
-          Text(weekdaysShort[d.weekday - 1], style: AppTheme.sans(size: 10, color: today ? AppTheme.paperInk : AppTheme.fgDim)),
+          Text(weekdaysShort[d.weekday - 1], style: AppTheme.sans(size: 10, color: today ? AppTheme.paperInk : AppTheme.fgDimText)),
           const SizedBox(height: 2),
           Text('${d.day}', style: AppTheme.sans(size: 17, weight: today ? FontWeight.w700 : FontWeight.w500, color: fg, height: 1.2)),
           const SizedBox(height: 8),
@@ -250,7 +264,7 @@ class _ReminderRow extends StatelessWidget {
         ReminderState.overdue => (AppTheme.warn, 'Overdue'),
         ReminderState.due => (AppTheme.warm, 'Due'),
         ReminderState.on => (AppTheme.accent, 'On'),
-        ReminderState.paused => (AppTheme.fgDim, 'Paused'),
+        ReminderState.paused => (AppTheme.fgDimText, 'Paused'),
       };
 
   String get _name => reminder.compoundEster.isEmpty || reminder.compoundEster.toLowerCase() == 'none'
@@ -266,65 +280,72 @@ class _ReminderRow extends StatelessWidget {
     final dose = expectedDose(reminder, now);
     final nextLabel = '${relativeDayLabel(dose, now)} ${formatHourMinute(dose.hour, dose.minute)}';
 
-    return GestureDetector(
+    // A paused row is dimmed, but its text stays readable (C3): the stripe
+    // and the switch fade; the text steps down one tone instead of fading
+    // below 4.5:1.
+    final nameColor = paused ? AppTheme.fgMute : AppTheme.fg;
+    final metaColor = paused ? AppTheme.fgDimText : AppTheme.fgMute;
+    return LabTap(
+      mergeSemantics: false,
+      hint: 'Edit reminder',
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Opacity(
-        opacity: paused ? 0.55 : 1,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-          decoration: BoxDecoration(
-            border: topBorder ? const Border(top: BorderSide(color: AppTheme.borderSoft, width: 1)) : null,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Container(width: 3, height: 32, color: color),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(_name, style: AppTheme.sans(size: 13, weight: FontWeight.w500)),
-                        const SizedBox(height: 2),
-                        Text(formatSchedule(reminder), style: AppTheme.sans(size: 11, color: AppTheme.fgMute)),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        decoration: BoxDecoration(
+          border: topBorder ? const Border(top: BorderSide(color: AppTheme.borderSoft, width: 1)) : null,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(width: 3, height: 32, color: paused ? color.withValues(alpha: 0.55) : color),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(stateLabel, style: AppTheme.sans(size: 11, weight: FontWeight.w600, color: stateColor)),
+                      Text(_name, style: AppTheme.sans(size: 13, weight: FontWeight.w500, color: nameColor)),
                       const SizedBox(height: 2),
-                      Text(nextLabel, style: AppTheme.sans(size: 11, color: AppTheme.fgMute)),
+                      Text(formatSchedule(reminder), style: AppTheme.sans(size: 11, color: metaColor)),
                     ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(stateLabel, style: AppTheme.sans(size: 11, weight: FontWeight.w600, color: stateColor)),
+                    const SizedBox(height: 2),
+                    Text(nextLabel, style: AppTheme.sans(size: 11, color: metaColor)),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 11),
+            Padding(
+              padding: const EdgeInsets.only(left: 17),
+              child: Row(
+                children: [
+                  if (actionable) ...[
+                    _ActionButton(label: 'Log now', filled: true, onTap: onLogNow),
+                    const SizedBox(width: 8),
+                    _ActionButton(label: 'Skip', filled: false, onTap: onSkip),
+                  ],
+                  const Spacer(),
+                  Opacity(
+                    opacity: paused ? 0.55 : 1,
+                    child: _PauseToggle(
+                        key: ValueKey('reminder-toggle-${reminder.id}'),
+                        paused: paused,
+                        label: '$_name reminder',
+                        onTap: onToggle),
                   ),
                 ],
               ),
-              const SizedBox(height: 11),
-              Padding(
-                padding: const EdgeInsets.only(left: 17),
-                child: Row(
-                  children: [
-                    if (actionable) ...[
-                      _ActionButton(label: 'Log now', filled: true, onTap: onLogNow),
-                      const SizedBox(width: 8),
-                      _ActionButton(label: 'Skip', filled: false, onTap: onSkip),
-                    ],
-                    const Spacer(),
-                    _PauseToggle(
-                        key: ValueKey('reminder-toggle-${reminder.id}'),
-                        paused: paused,
-                        onTap: onToggle),
-                  ],
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -338,9 +359,8 @@ class _ActionButton extends StatelessWidget {
   const _ActionButton({required this.label, required this.filled, required this.onTap});
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return LabTap(
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
         decoration: BoxDecoration(
@@ -353,15 +373,19 @@ class _ActionButton extends StatelessWidget {
   }
 }
 
+/// On/off switch for one reminder; spoken as "Testosterone Enanthate
+/// reminder, switch, on".
 class _PauseToggle extends StatelessWidget {
   final bool paused;
+  final String label;
   final VoidCallback onTap;
-  const _PauseToggle({super.key, required this.paused, required this.onTap});
+  const _PauseToggle({super.key, required this.paused, required this.label, required this.onTap});
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return LabTap(
+      toggled: !paused,
+      label: label,
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
       child: Container(
         width: 34,
         height: 19,
@@ -405,9 +429,8 @@ class _EmptyState extends StatelessWidget {
             style: AppTheme.sans(size: 12, color: AppTheme.fgMute, height: 1.5),
           ),
           const SizedBox(height: 18),
-          GestureDetector(
+          LabTap(
             onTap: onCreate,
-            behavior: HitTestBehavior.opaque,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
               color: AppTheme.accent,

@@ -5,6 +5,7 @@ import '../theme.dart';
 import '../widgets/lab_primitives.dart';
 import '../widgets/library_row.dart';
 import '../widgets/library_section.dart';
+import '../widgets/tap_target.dart';
 
 enum _LibFilter { all, steroid, oral, peptide, ancillary }
 
@@ -130,7 +131,7 @@ class _LibraryPageState extends State<LibraryPage> {
           child: Center(
             child: Text(
               'No ${_filterLabel().toLowerCase()} in protocol.',
-              style: AppTheme.sans(size: 12, color: AppTheme.fgDim),
+              style: AppTheme.sans(size: 12, color: AppTheme.fgDimText),
             ),
           ),
         ),
@@ -147,7 +148,7 @@ class _LibraryPageState extends State<LibraryPage> {
           child: Center(
             child: Text(
               'No ${_filterLabel().toLowerCase()} compounds.',
-              style: AppTheme.sans(size: 12, color: AppTheme.fgDim),
+              style: AppTheme.sans(size: 12, color: AppTheme.fgDimText),
             ),
           ),
         ),
@@ -265,44 +266,46 @@ class _ImportExportPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<String>(
-      color: AppTheme.surface2,
-      surfaceTintColor: Colors.transparent,
-      elevation: 2,
-      position: PopupMenuPosition.under,
-      shape: const RoundedRectangleBorder(
-        side: BorderSide(color: AppTheme.border, width: 1),
+    return TapTarget(
+      child: PopupMenuButton<String>(
+        color: AppTheme.surface2,
+        surfaceTintColor: Colors.transparent,
+        elevation: 2,
+        position: PopupMenuPosition.under,
+        shape: const RoundedRectangleBorder(
+          side: BorderSide(color: AppTheme.border, width: 1),
+        ),
+        onSelected: (v) {
+          if (v == 'export') onExport();
+          if (v == 'import') onImport();
+          if (v == 'backup') onBackup(_globalRect(context));
+          if (v == 'restore') onRestore();
+        },
+        itemBuilder: (_) => [
+          PopupMenuItem(
+            value: 'export',
+            child: Text('Export log to clipboard',
+                style: AppTheme.sans(size: 12, color: AppTheme.fg)),
+          ),
+          PopupMenuItem(
+            value: 'import',
+            child: Text('Import log from clipboard',
+                style: AppTheme.sans(size: 12, color: AppTheme.fg)),
+          ),
+          const PopupMenuDivider(),
+          PopupMenuItem(
+            value: 'backup',
+            child: Text('Back up everything to file…',
+                style: AppTheme.sans(size: 12, color: AppTheme.fg)),
+          ),
+          PopupMenuItem(
+            value: 'restore',
+            child: Text('Restore from backup file…',
+                style: AppTheme.sans(size: 12, color: AppTheme.fg)),
+          ),
+        ],
+        child: const LabPill(label: 'Import / export'),
       ),
-      onSelected: (v) {
-        if (v == 'export') onExport();
-        if (v == 'import') onImport();
-        if (v == 'backup') onBackup(_globalRect(context));
-        if (v == 'restore') onRestore();
-      },
-      itemBuilder: (_) => [
-        PopupMenuItem(
-          value: 'export',
-          child: Text('Export log to clipboard',
-              style: AppTheme.sans(size: 12, color: AppTheme.fg)),
-        ),
-        PopupMenuItem(
-          value: 'import',
-          child: Text('Import log from clipboard',
-              style: AppTheme.sans(size: 12, color: AppTheme.fg)),
-        ),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          value: 'backup',
-          child: Text('Back up everything to file…',
-              style: AppTheme.sans(size: 12, color: AppTheme.fg)),
-        ),
-        PopupMenuItem(
-          value: 'restore',
-          child: Text('Restore from backup file…',
-              style: AppTheme.sans(size: 12, color: AppTheme.fg)),
-        ),
-      ],
-      child: const LabPill(label: 'Import / export'),
     );
   }
 }

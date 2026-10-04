@@ -86,10 +86,10 @@ class _PaperPanel extends StatelessWidget {
       arrowColor = AppTheme.accentDeep;
     } else if (deltaTenths < 0) {
       arrow = '↘';
-      arrowColor = AppTheme.warn;
+      arrowColor = AppTheme.warnOnPaper;
     } else {
       arrow = '→';
-      arrowColor = AppTheme.paperInk.withValues(alpha: 0.55);
+      arrowColor = AppTheme.paperInkMute;
     }
     final deltaStr = showDelta
         ? '${deltaTenths < 0 ? '−' : '+'}${(deltaTenths.abs() / 10).toStringAsFixed(1)}'
@@ -99,6 +99,40 @@ class _PaperPanel extends StatelessWidget {
     final padV = 16.0 + (scale - 1.0) * 10.0;
     final padH = 18.0 + (scale - 1.0) * 6.0;
 
+    // One spoken sentence instead of number fragments and an arrow glyph.
+    final trend = !showDelta
+        ? 'unknown'
+        : deltaTenths > 0
+            ? 'up ${deltaStr.substring(1)} mg'
+            : deltaTenths < 0
+                ? 'down ${deltaStr.substring(1)} mg'
+                : 'flat';
+    final label = showTotal
+        ? 'Total load $whole.$frac mg. Injectables 7 day trend: $trend.'
+        : 'Total load unavailable.';
+
+    return Semantics(
+      container: true,
+      label: label,
+      child: ExcludeSemantics(
+        child: _paper(
+          padH: padH, padV: padV, showTotal: showTotal, whole: whole, frac: frac,
+          arrow: arrow, arrowColor: arrowColor, deltaStr: deltaStr,
+        ),
+      ),
+    );
+  }
+
+  Widget _paper({
+    required double padH,
+    required double padV,
+    required bool showTotal,
+    required int whole,
+    required int frac,
+    required String arrow,
+    required Color arrowColor,
+    required String deltaStr,
+  }) {
     return Stack(
       children: [
         Container(color: AppTheme.paper),
@@ -112,7 +146,7 @@ class _PaperPanel extends StatelessWidget {
                 'Total load',
                 style: AppTheme.sans(
                   size: 11 * scale,
-                  color: AppTheme.paperInk.withValues(alpha: 0.6),
+                  color: AppTheme.paperInkMute,
                 ),
               ),
               SizedBox(height: 6 * scale),
@@ -151,7 +185,7 @@ class _PaperPanel extends StatelessWidget {
                       'mg',
                       style: AppTheme.sans(
                         size: 12 * scale,
-                        color: AppTheme.paperInk.withValues(alpha: 0.55),
+                        color: AppTheme.paperInkMute,
                       ),
                     ),
                   ],
@@ -229,7 +263,8 @@ class _BreakdownPanel extends StatelessWidget {
               : [
                   for (int i = 0; i < rows.length; i++) ...[
                     if (i > 0) SizedBox(height: gap),
-                    _BreakdownRow(row: rows[i]),
+                    // "Testosterone 167" as one node.
+                    MergeSemantics(child: _BreakdownRow(row: rows[i])),
                   ],
                 ],
         ),

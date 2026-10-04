@@ -5,6 +5,8 @@ import '../../../engine/dose_math.dart';
 import '../../../engine/injection_draft.dart';
 import '../../theme.dart';
 import 'wizard_widgets.dart';
+import '../../widgets/lab_tap.dart';
+import '../../widgets/tap_target.dart';
 
 /// Opens the reconstitution calculator (amount per vial + diluent volume →
 /// concentration). Resolves to the concentration (per mL, in
@@ -87,89 +89,90 @@ class _ReconstitutionSheetState extends State<ReconstitutionSheet> {
         ? '≈ ${per10.toStringAsFixed(widget.doseUnit == Unit.mcg ? 0 : 2)} '
             '${widget.doseUnit.name} per 10 IU'
         : null;
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-        child: Container(
-          decoration: BoxDecoration(
-            color: AppTheme.bg,
-            border: Border(top: BorderSide(color: AppTheme.border, width: 1)),
-          ),
-          padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text('Reconstitute vial',
-                        style: AppTheme.serif(
-                            size: 18, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.3)),
-                  ),
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => Navigator.of(context).pop(),
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: Text('×', style: AppTheme.sans(size: 18, color: AppTheme.fgMute)),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+    return TapTargetScope(
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppTheme.bg,
+              border: Border(top: BorderSide(color: AppTheme.border, width: 1)),
+            ),
+            padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
                   children: [
-                    Expanded(child: _sheetField('${widget.massUnitLabel} per vial', _mg)),
-                    const SizedBox(width: 8),
-                    Expanded(child: _volField()),
+                    Expanded(
+                      child: Text('Reconstitute vial',
+                          style: AppTheme.serif(
+                              size: 18, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.3)),
+                    ),
+                    LabTap(
+                      label: 'Close',
+                      onTap: () => Navigator.of(context).pop(),
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Text('×', style: AppTheme.sans(size: 18, color: AppTheme.fgMute)),
+                      ),
+                    ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 18),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                decoration: BoxDecoration(
-                  color: AppTheme.surface,
-                  border: Border.all(color: AppTheme.border, width: 1),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      conc > 0
-                          ? '${conc.toStringAsFixed(2)} ${widget.massUnitLabel}/mL'
-                          : '— ${widget.massUnitLabel}/mL',
-                      style: AppTheme.mono(size: 22, weight: FontWeight.w500, color: AppTheme.fg),
-                    ),
-                    if (iuLine != null) ...[
-                      const SizedBox(height: 4),
-                      Text(iuLine, style: AppTheme.sans(size: 11, color: AppTheme.fgMute)),
+                const SizedBox(height: 14),
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(child: _sheetField('${widget.massUnitLabel} per vial', _mg)),
+                      const SizedBox(width: 8),
+                      Expanded(child: _volField()),
                     ],
-                    if (tooHigh) ConcentrationTooHighNote(unitLabel: '${widget.massUnitLabel}/mL'),
-                  ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: usable ? () => Navigator.of(context).pop(conc) : null,
-                child: Container(
-                  alignment: Alignment.center,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  color: usable ? AppTheme.accent : AppTheme.surface2,
-                  child: Text('Use this',
-                      style: AppTheme.sans(
-                          size: 13,
-                          weight: FontWeight.w600,
-                          color: usable ? AppTheme.bg : AppTheme.fgDim,
-                          letterSpacing: 0.3)),
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surface,
+                    border: Border.all(color: AppTheme.border, width: 1),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        conc > 0
+                            ? '${conc.toStringAsFixed(2)} ${widget.massUnitLabel}/mL'
+                            : '— ${widget.massUnitLabel}/mL',
+                        style: AppTheme.mono(size: 22, weight: FontWeight.w500, color: AppTheme.fg),
+                      ),
+                      if (iuLine != null) ...[
+                        const SizedBox(height: 4),
+                        Text(iuLine, style: AppTheme.sans(size: 11, color: AppTheme.fgMute)),
+                      ],
+                      if (tooHigh) ConcentrationTooHighNote(unitLabel: '${widget.massUnitLabel}/mL'),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 16),
+                LabTap(
+                  onTap: usable ? () => Navigator.of(context).pop(conc) : null,
+                  child: Container(
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    color: usable ? AppTheme.accent : AppTheme.surface2,
+                    child: Text('Use this',
+                        style: AppTheme.sans(
+                            size: 13,
+                            weight: FontWeight.w600,
+                            color: usable ? AppTheme.bg : AppTheme.fgDim,
+                            letterSpacing: 0.3)),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -194,12 +197,13 @@ class _ReconstitutionSheetState extends State<ReconstitutionSheet> {
               Flexible(
                 child: Text('RECONSTITUTION',
                     overflow: TextOverflow.ellipsis,
-                    style: AppTheme.sans(size: 10, color: AppTheme.fgDim, letterSpacing: 0.8)),
+                    style: AppTheme.sans(size: 10, color: AppTheme.fgDimText, letterSpacing: 0.8)),
               ),
               const SizedBox(width: 6),
               // Compact mL/IU toggle.
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
+              LabTap(
+                label: 'Volume unit, $_volUnit',
+                hint: 'Switches between mL and IU',
                 onTap: () => setState(() => _volUnit = _volUnit == 'mL' ? 'IU' : 'mL'),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -211,18 +215,21 @@ class _ReconstitutionSheetState extends State<ReconstitutionSheet> {
             ],
           ),
           const SizedBox(height: 4),
-          TextField(
-            controller: _vol,
-            onChanged: (_) => setState(() {}),
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            cursorColor: AppTheme.accent,
-            style: AppTheme.serif(
-                size: 22, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.4, height: 1.1),
-            decoration: const InputDecoration(
-              isDense: true,
-              contentPadding: EdgeInsets.zero,
-              border: InputBorder.none,
-              hintText: '0',
+          LabTextFieldTarget(
+            label: 'Reconstitution volume',
+            child: TextField(
+              controller: _vol,
+              onChanged: (_) => setState(() {}),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              cursorColor: AppTheme.accent,
+              style: AppTheme.serif(
+                  size: 22, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.4, height: 1.1),
+              decoration: const InputDecoration(
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+                border: InputBorder.none,
+                hintText: '0',
+              ),
             ),
           ),
         ],
@@ -242,20 +249,23 @@ class _ReconstitutionSheetState extends State<ReconstitutionSheet> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(label.toUpperCase(),
-              style: AppTheme.sans(size: 10, color: AppTheme.fgDim, letterSpacing: 0.8)),
+              style: AppTheme.sans(size: 10, color: AppTheme.fgDimText, letterSpacing: 0.8)),
           const SizedBox(height: 4),
-          TextField(
-            controller: ctl,
-            onChanged: (_) => setState(() {}),
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            cursorColor: AppTheme.accent,
-            style: AppTheme.serif(
-                size: 22, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.4, height: 1.1),
-            decoration: const InputDecoration(
-              isDense: true,
-              contentPadding: EdgeInsets.zero,
-              border: InputBorder.none,
-              hintText: '0',
+          LabTextFieldTarget(
+            label: label,
+            child: TextField(
+              controller: ctl,
+              onChanged: (_) => setState(() {}),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              cursorColor: AppTheme.accent,
+              style: AppTheme.serif(
+                  size: 22, weight: FontWeight.w500, color: AppTheme.fg, letterSpacing: -0.4, height: 1.1),
+              decoration: const InputDecoration(
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+                border: InputBorder.none,
+                hintText: '0',
+              ),
             ),
           ),
         ],
